@@ -1,0 +1,5 @@
+.env
+.spikes
+.copilot_token
+spikes/.copilot_token
+whisper/
