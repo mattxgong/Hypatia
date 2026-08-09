@@ -61,8 +61,9 @@ class _SubprocessPageState extends State<SubprocessPage> {
     setState(() {
       _log += '${DateTime.now().toIso8601String().substring(11, 19)} $message\n';
     });
-    Future.microtask(() {
-      if (_logController.hasClients) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logController.hasClients &&
+          _logController.position.hasContentDimensions) {
         _logController.animateTo(
           _logController.position.maxScrollExtent,
           duration: const Duration(milliseconds: 100),

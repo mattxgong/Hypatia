@@ -5,35 +5,37 @@ Tests whether the LLM can reliably produce XML-tagged wiki pages from source
 documents, and whether we can parse that output into discrete page objects.
 
 Usage:
-    python llm_parsing_test.py [--runs N]
+    python llm_parsing_test.py [--runs N] [--provider {copilot,ollama}] [--model MODEL]
 
 Requires:
-    - openai (pip install openai)
-    - Active GitHub Copilot subscription
+    - github-copilot-sdk (pip install github-copilot-sdk)
+    - The GitHub Copilot CLI (`copilot`), on PATH (installed separately, e.g. via winget)
 
-Auth: Uses the GitHub device code OAuth flow (same as the VS Code Copilot
-extension). On first run, you'll authorize in a browser. The token is cached
-in .copilot_token for subsequent runs.
+Auth:
+    - copilot provider: the SDK drives the local `copilot` CLI over JSON-RPC.
+      Authenticate once with `copilot login` (browser device flow), or set a
+      `GITHUB_TOKEN`/`COPILOT_GITHUB_TOKEN` env var to a fine-grained PAT with
+      "Copilot Requests" permission. Classic PATs (ghp_...) are not supported.
+    - ollama provider: no auth needed. Requires a local Ollama server
+      (http://localhost:11434) with the target model pulled, e.g.
+      `ollama pull qwen2.5:0.5b`. Uses the same SDK session API via a BYOK
+      (Bring Your Own Key) provider config pointed at Ollama's OpenAI-compatible
+      endpoint.
 """
 
 import argparse
-import json
-import os
+import asyncio
 import re
-import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
-from openai import OpenAI
+from copilot import CopilotClient, CopilotSession
+from copilot.session import ProviderConfig, PermissionHandler
 
-COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
-COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
-COPILOT_CHAT_URL = "https://api.individual.githubcopilot.com"
-MODEL = "gpt-4o"
-TOKEN_CACHE = Path(__file__).parent / ".copilot_token"
+DEFAULT_MODELS = {
+    "copilot": "gpt-5.4",
+    "ollama": "qwen2.5:0.5b",
+}
 
 SAMPLE_SOURCE = """\
 # Introduction to Neural Networks
@@ -142,122 +144,6 @@ class WikiPage:
     raw_frontmatter: str
 
 
-def device_code_auth() -> str:
-    """Run the GitHub device code OAuth flow. Returns an OAuth access token."""
-    print("Starting GitHub device code authorization...")
-    req = Request(
-        "https://github.com/login/device/code",
-        data=f"client_id={COPILOT_CLIENT_ID}&scope=copilot".encode(),
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
-    with urlopen(req, timeout=15) as resp:
-        data = json.loads(resp.read())
-
-    device_code = data["device_code"]
-    user_code = data["user_code"]
-    verification_uri = data["verification_uri"]
-    expires_in = data["expires_in"]
-    interval = data["interval"]
-
-    print()
-    print(f"  1. Open: {verification_uri}")
-    print(f"  2. Enter code: {user_code}")
-    print()
-    print("Waiting for authorization...", end="", flush=True)
-
-    deadline = time.time() + expires_in
-    while time.time() < deadline:
-        time.sleep(interval)
-        print(".", end="", flush=True)
-
-        req = Request(
-            "https://github.com/login/oauth/access_token",
-            data=(
-                f"client_id={COPILOT_CLIENT_ID}"
-                f"&device_code={device_code}"
-                f"&grant_type=urn:ietf:params:oauth:grant-type:device_code"
-            ).encode(),
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            method="POST",
-        )
-        with urlopen(req, timeout=15) as resp:
-            token_data = json.loads(resp.read())
-
-        if "access_token" in token_data:
-            print(" authorized!")
-            return token_data["access_token"]
-
-        error = token_data.get("error", "")
-        if error == "authorization_pending":
-            continue
-        elif error == "slow_down":
-            interval += 5
-        elif error == "expired_token":
-            raise RuntimeError("Device code expired. Please re-run the script.")
-        elif error == "access_denied":
-            raise RuntimeError("Authorization denied by user.")
-        else:
-            raise RuntimeError(f"Unexpected OAuth error: {error}")
-
-    raise RuntimeError("Authorization timed out.")
-
-
-def get_or_refresh_oauth_token() -> str:
-    """Get a cached OAuth token or run the device code flow."""
-    if TOKEN_CACHE.exists():
-        try:
-            cached = json.loads(TOKEN_CACHE.read_text())
-            token = cached.get("oauth_token", "")
-            if token:
-                req = Request(
-                    "https://api.github.com/user",
-                    headers={"Authorization": f"token {token}", "Accept": "application/json"},
-                )
-                try:
-                    with urlopen(req, timeout=10) as resp:
-                        resp.read()
-                    return token
-                except HTTPError:
-                    print("Cached OAuth token expired, re-authenticating...")
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    token = device_code_auth()
-    TOKEN_CACHE.write_text(json.dumps({"oauth_token": token}))
-    return token
-
-
-def get_copilot_session_token(oauth_token: str) -> str:
-    """Exchange an OAuth token for a Copilot session token."""
-    req = Request(
-        COPILOT_TOKEN_URL,
-        headers={
-            "Authorization": f"token {oauth_token}",
-            "Accept": "application/json",
-            "Editor-Version": "vscode/1.90.0",
-            "Editor-Plugin-Version": "copilot-chat/0.17.0",
-            "User-Agent": "GithubCopilot/1.200.0",
-        },
-    )
-    try:
-        with urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read())
-            return data["token"]
-    except HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")[:200]
-        raise RuntimeError(
-            f"Failed to get Copilot session token (HTTP {e.code}): {body}\n"
-            "Make sure you have an active GitHub Copilot subscription."
-        ) from e
-
-
 def parse_wiki_pages(llm_output: str) -> list[WikiPage]:
     """Parse XML-tagged wiki pages from LLM output."""
     pattern = r'<wiki-page\s+path="([^"]+)">\s*(.*?)\s*</wiki-page>'
@@ -299,25 +185,34 @@ def parse_wiki_pages(llm_output: str) -> list[WikiPage]:
     return pages
 
 
-def call_llm(client: OpenAI, source: str) -> str:
+async def call_llm(
+    client: CopilotClient, model: str, provider_config: ProviderConfig | None, source: str
+) -> str:
     """Send the wiki generation prompt to the LLM and return the response."""
     prompt = WIKI_GENERATION_PROMPT.format(source=source)
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=4096,
+    session: CopilotSession = await client.create_session(
+        model=model,
+        provider=provider_config,
+        on_permission_request=PermissionHandler.approve_all,
     )
-    return response.choices[0].message.content or ""
+    try:
+        response = await session.send_and_wait(prompt, timeout=120.0)
+        if response is None:
+            return ""
+        return getattr(response.data, "content", "") or ""
+    finally:
+        await session.disconnect()
 
 
-def run_single_test(client: OpenAI, run_num: int) -> dict:
+async def run_single_test(
+    client: CopilotClient, model: str, provider_config: ProviderConfig | None, run_num: int
+) -> dict:
     """Run a single parse test. Returns result dict."""
     print(f"  Run {run_num}...", end=" ", flush=True)
 
     start = time.perf_counter()
     try:
-        output = call_llm(client, SAMPLE_SOURCE)
+        output = await call_llm(client, model, provider_config, SAMPLE_SOURCE)
     except Exception as e:
         print(f"ERROR: {e}")
         return {"success": False, "error": str(e), "pages": 0, "elapsed": 0}
@@ -341,40 +236,36 @@ def run_single_test(client: OpenAI, run_num: int) -> dict:
     }
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Spike 0.5.2: LLM parsing validation")
     parser.add_argument("--runs", type=int, default=10, help="Number of test runs (default: 10)")
+    parser.add_argument(
+        "--provider", choices=["copilot", "ollama"], default="copilot",
+        help="Backend to use (default: copilot)",
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Model name (default: gpt-5.4 for copilot, qwen2.5:0.5b for ollama; "
+             "run `client.list_models()` or `copilot --help` to see valid IDs for your CLI/account)",
+    )
     args = parser.parse_args()
 
+    model = args.model or DEFAULT_MODELS[args.provider]
+    provider_config: ProviderConfig | None = None
+    if args.provider == "ollama":
+        provider_config = {"type": "openai", "base_url": "http://localhost:11434/v1"}
+
     print("=== Spike 0.5.2: LLM structured output parsing ===")
-    print(f"Provider: GitHub Copilot")
-    print(f"Model: {MODEL}")
+    print(f"Provider: {args.provider}")
+    print(f"Model: {model}")
     print()
-
-    print("Authenticating with GitHub Copilot...")
-    try:
-        oauth_token = get_or_refresh_oauth_token()
-        print("OAuth token ready.")
-    except RuntimeError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    print("Obtaining Copilot session token...")
-    try:
-        session_token = get_copilot_session_token(oauth_token)
-        print("Session token obtained.")
-    except RuntimeError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
-    print()
-
-    client = OpenAI(base_url=COPILOT_CHAT_URL, api_key=session_token)
 
     results = []
-    print(f"Running {args.runs} tests:")
-    for i in range(1, args.runs + 1):
-        result = run_single_test(client, i)
-        results.append(result)
+    async with CopilotClient() as client:
+        print(f"Running {args.runs} tests:")
+        for i in range(1, args.runs + 1):
+            result = await run_single_test(client, model, provider_config, i)
+            results.append(result)
 
     successes = sum(1 for r in results if r["success"])
     success_rate = successes / len(results) * 100
@@ -411,4 +302,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

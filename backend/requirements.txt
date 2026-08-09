@@ -1,0 +1,4 @@
+# Thin wrapper for production installs. The lockfile is the source of truth
+# for exact, reproducible versions; pyproject.toml carries the version-range
+# constraints for direct dependencies.
+-r requirements.lock

@@ -54,6 +54,7 @@ hypatia/
 - `python-multipart` (file uploads)
 - `anthropic` (default LLM provider)
 - `openai`, `httpx` (additional LLM providers)
+- `github-copilot-sdk` (Copilot provider — per spike 0.5.2, drives the local Copilot CLI over JSON-RPC rather than hand-rolled REST/OAuth)
 - `structlog` (structured logging)
 - `tiktoken` (token counting for context budget)
 - `keyring` (secure credential storage)
@@ -295,16 +296,43 @@ Set up logging infrastructure from day one in `app/utils/logging.py`:
 
 ## Sequencing
 
+Execution order in waves. Tasks within a wave have no dependency on each other and can
+run in parallel; each wave depends only on tasks from earlier waves.
+
 ```
-1.1 (monorepo) ──→ 1.2 (backend) ──→ 1.4 (db schema) ──→ 1.5 (db init)
-                                                      └──→ 1.6 (schemas)
-                                  ──→ 1.13 (logging) ← early, used everywhere
-               ──→ 1.3 (frontend) ──→ 1.9 (auto-launch) ← depends on 1.2 + 1.3
-               ──→ 1.7 (scripts) ← depends on 1.2 + 1.3
-               ──→ 1.8 (CLAUDE.md) ← last, summarizes everything
-1.10 (API contract) ← after 1.6, informs Phase 4 and 6
-1.11 (wiki git) ← after 1.2, used by Phase 3
-1.12 (CI) ← after 1.2 + 1.3, runs tests from the start
+Wave 1: 1.1  (monorepo skeleton)
+Wave 2: 1.2  (backend init)          │  1.3  (frontend init)
+Wave 3: 1.9  (auto-launch)           │  1.13 (logging)           │  1.11 (wiki git)
+Wave 4: 1.4  (db schema)
+Wave 5: 1.5  (db init/migrations)    │  1.6  (schemas)
+Wave 6: 1.10 (API contract)          │  1.7  (dev scripts)
+Wave 7: 1.12 (CI pipeline)
+Wave 8: 1.8  (CLAUDE.md)
 ```
 
-Tasks 1.1, then 1.2 and 1.3 can run in parallel. 1.4-1.6 depend on 1.2. 1.13 (logging) should be wired immediately after 1.2 so all subsequent code uses it. 1.7 depends on 1.2 + 1.3. 1.9 depends on 1.2 + 1.3 (needs both backend and frontend to exist). 1.10 depends on 1.6 (schemas define the contract shapes). 1.11 depends on 1.2 (needs backend structure). 1.12 depends on 1.2 + 1.3 (needs both projects to lint/test). 1.8 is last.
+- **Wave 1**: `1.1` unblocks everything else.
+- **Wave 2**: `1.2` and `1.3` are fully independent — backend and frontend init don't
+  touch each other.
+- **Wave 3**: three independent tracks that only need Wave 2 to exist:
+  - `1.9` (backend auto-launch) is pulled forward from its naive "needs everything"
+    position. Spike 0.5.3 already validated the full approach end-to-end in
+    `spikes/flutter_subprocess/` (Python discovery, port handling, health polling,
+    `taskkill /T /F`, graceful shutdown) — this task is now mostly porting that
+    validated code into `lib/services/backend_launcher.dart` against the `/health`
+    endpoint from 1.2, not building it from scratch. Lower risk, no reason to defer it.
+  - `1.13` (logging) should be wired immediately after 1.2 so the db/schema work in
+    Wave 4+ can use it from the start rather than being retrofitted.
+  - `1.11` (wiki git) only needs backend structure and is small/isolated.
+- **Wave 4**: `1.4` (db schema) is a single dependency root for the rest of the DB layer.
+- **Wave 5**: `1.5` (migrations) and `1.6` (Pydantic schemas) both depend only on `1.4`.
+- **Wave 6**: `1.10` (API contract) depends on `1.6` (schemas define the contract
+  shapes); `1.7` (dev scripts) depends on `1.2` + `1.3` (both already exist by now).
+- **Wave 7**: `1.12` (CI) should come after there's real lint config and a few tests to
+  run — wiring CI against an empty project has nothing to check.
+- **Wave 8**: `1.8` (CLAUDE.md) is last, since it documents the finished result.
+
+**Dependency note**: `1.2`'s dependency list now includes `github-copilot-sdk`
+(alongside `anthropic`/`openai`/`httpx`) per spike 0.5.2's finding that the Copilot
+provider should drive the official SDK/CLI rather than hand-rolled REST + OAuth —
+adding it during `1.2` avoids a later dependency-add pass when `copilot_provider.py`
+is implemented in Phase 3.

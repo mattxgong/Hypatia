@@ -1,0 +1,566 @@
+openapi: 3.0.3
+info:
+  title: Hypatia Backend API
+  description: >
+    Contract between the Flutter frontend and the FastAPI backend for the
+    Hypatia LLM wiki application. This is the Phase 1 minimal initial version
+    (Task 1.10) covering health, Classes CRUD, file upload/list, wiki
+    tree/page retrieval, and the chat WebSocket message protocol (including
+    the long-running operation progress protocol). Update this spec as new
+    endpoints are added in later phases (see docs/plan/04-backend-api.md).
+  version: "0.1.0"
+servers:
+  - url: http://127.0.0.1:8000
+    description: >-
+      Local dev backend. Port may vary 8000-8010 if 8000 is taken
+      (see Task 1.9 auto-launch/port management).
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Backend is up and ready to accept requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                required: [status]
+
+  /api/classes:
+    get:
+      summary: List all Classes
+      operationId: listClasses
+      responses:
+        "200":
+          description: All Classes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClassRead"
+    post:
+      summary: Create a new Class
+      operationId: createClass
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassCreate"
+      responses:
+        "201":
+          description: Class created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassRead"
+
+  /api/classes/{class_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: Get a single Class
+      operationId: getClass
+      responses:
+        "200":
+          description: Class details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a Class's name/description
+      operationId: updateClass
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassUpdate"
+      responses:
+        "200":
+          description: Updated Class
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a Class and all its data
+      operationId: deleteClass
+      responses:
+        "204":
+          description: Class deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/files:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: List all files in a Class
+      operationId: listFiles
+      responses:
+        "200":
+          description: Files in this Class
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileRead"
+    post:
+      summary: Upload one or more files to a Class
+      operationId: uploadFiles
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+              required: [files]
+      responses:
+        "202":
+          description: Files accepted; conversion/processing runs asynchronously
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FileUploadResponse"
+
+  /api/classes/{class_id}/wiki/tree:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: Get the wiki page tree structure for the sidebar
+      operationId: getWikiTree
+      responses:
+        "200":
+          description: Flat list of wiki page summaries (frontend groups into a tree by path)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WikiPageSummary"
+
+  /api/classes/{class_id}/wiki/pages/{page_path}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - name: page_path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          Slash-separated relative path to the wiki page, e.g.
+          concepts/gradient-descent.md
+    get:
+      summary: Get the content of a specific wiki page
+      operationId: getWikiPage
+      responses:
+        "200":
+          description: Wiki page content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WikiPageRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/chat:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: >-
+        WebSocket chat connection (documented here for discoverability;
+        OpenAPI 3.0 has no native WebSocket support). Upgrade this
+        connection to a WebSocket to exchange the messages described in
+        the ChatWs* schemas below.
+      description: See the "Chat WebSocket protocol" schemas for message formats.
+      operationId: chatWebSocket
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket upgrade)
+
+components:
+  parameters:
+    ClassId:
+      name: class_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+      required: [detail]
+
+    ClassCreate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+      required: [name]
+
+    ClassUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+
+    ClassRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, description, created_at, updated_at]
+
+    FileType:
+      type: string
+      enum: [pdf, docx, pptx, xlsx, image, video, audio, markdown, other]
+
+    FileStatus:
+      type: string
+      enum: [pending, processing, ready, error]
+
+    FileRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        original_filename:
+          type: string
+        file_type:
+          $ref: "#/components/schemas/FileType"
+        file_size_bytes:
+          type: integer
+        raw_path:
+          type: string
+        converted_path:
+          type: string
+          nullable: true
+        status:
+          $ref: "#/components/schemas/FileStatus"
+        error_message:
+          type: string
+          nullable: true
+        metadata_json:
+          type: object
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - class_id
+        - original_filename
+        - file_type
+        - file_size_bytes
+        - raw_path
+        - status
+        - created_at
+        - updated_at
+
+    FileUploadResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        original_filename:
+          type: string
+        status:
+          $ref: "#/components/schemas/FileStatus"
+      required: [id, class_id, original_filename, status]
+
+    WikiCategory:
+      type: string
+      enum: [source-summary, concept, entity, synthesis, index, log]
+
+    WikiPageRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        title:
+          type: string
+        category:
+          $ref: "#/components/schemas/WikiCategory"
+        content:
+          type: string
+        source_file_ids:
+          type: array
+          items:
+            type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - class_id
+        - path
+        - title
+        - category
+        - content
+        - created_at
+        - updated_at
+
+    WikiPageSummary:
+      type: object
+      description: Lightweight page metadata used to render the wiki tree/sidebar.
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        title:
+          type: string
+        category:
+          $ref: "#/components/schemas/WikiCategory"
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, class_id, path, title, category, updated_at]
+
+    ChatRole:
+      type: string
+      enum: [user, assistant, system]
+
+    ChatMessageRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/ChatRole"
+        content:
+          type: string
+        command:
+          type: string
+          nullable: true
+          description: >-
+            Slash command that produced this message, if any
+            (e.g. ask, summarize, remove, lint, rebuild, export).
+        metadata_json:
+          type: object
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, class_id, role, content, created_at, updated_at]
+
+    # --- Chat WebSocket protocol -------------------------------------------
+    # OpenAPI 3.0 has no native WebSocket support, so the /api/classes/{class_id}/chat
+    # message formats are documented here as plain schemas rather than as a
+    # request/response pair. Every WS frame is a JSON object with a "type"
+    # discriminator matching one of the ChatWs* schemas below.
+
+    ChatWsMessage:
+      description: >-
+        Client -> server. A chat message, optionally invoking a slash
+        command (/ask, /summarize, /remove, /lint, /rebuild, /export).
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [message]
+        content:
+          type: string
+      required: [type, content]
+
+    ChatWsChunk:
+      description: >-
+        Server -> client. One streamed chunk of an in-progress assistant
+        reply. Multiple chunk frames precede a single complete frame.
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [chunk]
+        content:
+          type: string
+      required: [type, content]
+
+    ChatWsComplete:
+      description: Server -> client. Signals the assistant reply is finished.
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [complete]
+        message_id:
+          type: string
+          format: uuid
+        citations:
+          type: array
+          items:
+            type: object
+      required: [type, message_id]
+
+    ChatWsError:
+      description: Server -> client. An error occurred processing the message/command.
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [error]
+        message:
+          type: string
+        code:
+          type: string
+          nullable: true
+      required: [type, message]
+
+    ChatWsProgress:
+      description: >-
+        Server -> client. Progress update for a long-running operation
+        (e.g. /rebuild). operation_id correlates with the client's
+        ChatWsCancel message so a specific in-flight operation can be
+        cancelled.
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [progress]
+        operation:
+          type: string
+          example: rebuild
+        operation_id:
+          type: string
+        percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 45
+        message:
+          type: string
+          example: "Processing page 3/7..."
+      required: [type, operation, percent, message]
+      example:
+        type: progress
+        operation: rebuild
+        operation_id: "b3f1c2..."
+        percent: 45
+        message: "Processing page 3/7..."
+
+    ChatWsCancel:
+      description: >-
+        Client -> server. Requests cancellation of a running operation
+        identified by operation_id (as sent in a prior ChatWsProgress frame).
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [cancel]
+        operation_id:
+          type: string
+      required: [type, operation_id]
+      example:
+        type: cancel
+        operation_id: "b3f1c2..."
+
+    CommandRequest:
+      type: object
+      description: HTTP-side representation of a slash command (used outside the chat WS, if needed).
+      properties:
+        command:
+          type: string
+        args:
+          type: object
+          nullable: true
+      required: [command]
+
+    CommandResponse:
+      type: object
+      properties:
+        chat_message:
+          $ref: "#/components/schemas/ChatMessageRead"
+        updated_wiki_paths:
+          type: array
+          items:
+            type: string
+      required: [chat_message]

@@ -3,3 +3,31 @@
 .copilot_token
 spikes/.copilot_token
 whisper/
+faster-whisper-base/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+
+# Runtime user data (per-machine, not shipped)
+data/*
+!data/.gitkeep
+
+# Flutter global tool-state cache (written to CWD if LOCALAPPDATA is unset)
+.flutter
+.flutter_tool_state
