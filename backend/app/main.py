@@ -11,6 +11,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from app.config import settings
 from app.database import run_migrations
+from app.routers import files as files_router
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
 
 configure_logging()
@@ -27,6 +28,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Hypatia Backend", lifespan=lifespan)
+app.include_router(files_router.router)
 
 
 @app.middleware("http")

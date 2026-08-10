@@ -33,5 +33,7 @@ class Settings(BaseSettings):
 
     whisper_model_size: str = "base"
 
+    max_upload_size_bytes: int = 3 * 1024 * 1024 * 1024  # 3GB, per Task 2.9
+
 
 settings = Settings()

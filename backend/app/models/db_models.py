@@ -6,7 +6,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -81,7 +81,9 @@ class File(Base):
     __tablename__ = "files"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    class_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("classes.id"), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classes.id"), nullable=False, index=True
+    )
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_type: Mapped[FileType] = mapped_column(
         Enum(FileType, values_callable=_enum_values), nullable=False
@@ -106,9 +108,12 @@ class File(Base):
 
 class WikiPage(Base):
     __tablename__ = "wiki_pages"
+    __table_args__ = (UniqueConstraint("class_id", "path", name="uq_wiki_pages_class_id_path"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    class_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("classes.id"), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classes.id"), nullable=False, index=True
+    )
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[WikiCategory] = mapped_column(
@@ -128,7 +133,9 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    class_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("classes.id"), nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("classes.id"), nullable=False, index=True
+    )
     role: Mapped[ChatRole] = mapped_column(
         Enum(ChatRole, values_callable=_enum_values), nullable=False
     )

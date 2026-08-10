@@ -146,6 +146,28 @@ paths:
                 items:
                   $ref: "#/components/schemas/FileUploadResponse"
 
+  /api/classes/{class_id}/files/{file_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - name: file_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a single file's status/details (for polling conversion progress)
+      operationId: getFile
+      responses:
+        "200":
+          description: File details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/classes/{class_id}/wiki/tree:
     parameters:
       - $ref: "#/components/parameters/ClassId"

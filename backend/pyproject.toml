@@ -19,6 +19,9 @@ dependencies = [
     "structlog>=24.0,<25.0",
     "tiktoken>=0.7,<1.0",
     "keyring>=25.0,<26.0",
+    "markitdown[pdf,docx,pptx,xlsx]>=0.0.1a3,<1.0",
+    "numpy<2.5",
+    "faster-whisper>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +43,9 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
