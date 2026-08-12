@@ -10,8 +10,9 @@ from fastapi.responses import Response
 from starlette.middleware.base import RequestResponseEndpoint
 
 from app.config import settings
-from app.database import run_migrations
+from app.database import engine, run_migrations
 from app.routers import files as files_router
+from app.services.wiki_search import ensure_fts_index
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
 
 configure_logging()
@@ -22,6 +23,7 @@ logger = get_logger()
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     await run_migrations()
+    await ensure_fts_index(engine)
     logger.info("app_startup", data_dir=str(settings.data_dir))
     yield
     logger.info("app_shutdown")

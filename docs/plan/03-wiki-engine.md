@@ -6,6 +6,12 @@
 
 **Outputs**: Given a converted source file, the wiki engine generates wiki pages (summary, concepts, entities), maintains an index and log, supports querying with citations, and preserves user-edited content.
 
+**Key findings from Phase 0.5 spike** (see `spikes/findings.md`):
+- The `github-copilot-sdk` is the validated LLM integration path. It handles auth, routes to the Copilot model catalog (gpt-5.4, claude-sonnet-5, gemini-3.6-flash, etc.), and supports BYOK Ollama via the same session API.
+- Model catalogs are dynamic — use `client.list_models()` for discovery; don't hardcode model IDs.
+- The XML+YAML-frontmatter output format parses at 100% success rate (10/10 runs) with gpt-5.4.
+- Classic PATs cannot access the Copilot inference API; auth is via `copilot login` or fine-grained PAT with "Copilot Requests" permission.
+
 ---
 
 ## Phase 3A: Wiki Engine Spike
@@ -21,18 +27,28 @@ Create `app/services/llm_service.py` and `app/services/llm_providers/`:
 - Define an abstract `LLMProvider` interface:
   ```python
   class LLMProvider(ABC):
-      async def complete(self, system_prompt: str, user_prompt: str, max_tokens: int) -> str: ...
-      async def stream(self, system_prompt: str, user_prompt: str) -> AsyncIterator[str]: ...
+      async def complete(self, system_prompt: str, user_prompt: str, max_tokens: int = 8192) -> str: ...
+      async def list_models(self) -> list[str]: ...
   ```
-- Implement concrete providers:
-  - `AnthropicProvider` — uses `anthropic` SDK (Claude). **This is the default provider.**
-  - `OpenAIProvider` — uses `openai` SDK (GPT-4o, GPT-4o-mini)
-  - `OllamaProvider` — uses `httpx` to call local Ollama API
-  - `CopilotProvider` — uses GitHub Copilot API
-- Factory function: `get_llm_provider(config) -> LLMProvider`
-- Configuration via `app/config.py`: provider name (default: `anthropic`), model name, API key, base URL.
+- Implement three concrete providers:
+  - **`CopilotProvider`** (default) — Uses `github-copilot-sdk` (`CopilotClient`/`CopilotSession`). Wraps `session.send_and_wait()` for non-streaming completion. Supports Copilot's full model catalog AND Ollama via BYOK `ProviderConfig`. Auth handled by the Copilot CLI (one-time `copilot login` or `GITHUB_TOKEN`/`COPILOT_GITHUB_TOKEN` env var). Includes `list_models()` via `client.list_models()` for dynamic model discovery.
+  - **`AnthropicProvider`** — Direct `anthropic` SDK for users with their own Anthropic API key. Calls `client.messages.create()`. Does not require the Copilot CLI.
+  - **`OpenAIProvider`** — Direct `openai` SDK. Also works as a generic OpenAI-compatible provider (set `base_url` to Ollama's `http://localhost:11434/v1` for local models without the Copilot CLI).
+- Factory function: `get_llm_provider(settings) -> LLMProvider` — dispatches on `settings.llm_provider`:
+  - `"copilot"` (default): `CopilotProvider` with Copilot's model catalog.
+  - `"copilot-ollama"`: `CopilotProvider` with BYOK `ProviderConfig` pointed at Ollama.
+  - `"anthropic"`: `AnthropicProvider` with direct API key auth.
+  - `"openai"`: `OpenAIProvider` with direct API key auth.
+  - `"ollama"`: `OpenAIProvider` pointed at `ollama_base_url/v1` (no Copilot CLI needed).
+- Configuration additions to `app/config.py`:
+  - `llm_model: str | None = None` — override model name (None = provider default).
+  - `llm_max_tokens: int = 8192` — max output tokens.
+  - `llm_temperature: float = 0.3` — temperature for wiki generation (low for consistency).
+  - `copilot_model: str = "gpt-5.4"` — default model when using the Copilot provider.
 
-**Acceptance**: Can send a prompt and receive a response from all four providers. Streaming works. Default is Claude.
+**Design note**: The separate `OllamaProvider` from the original plan is dropped. Ollama is reachable two ways: (1) via `CopilotProvider` BYOK config (requires Copilot CLI), or (2) via `OpenAIProvider` pointed at Ollama's OpenAI-compatible endpoint (no Copilot CLI needed). Both paths were validated in the spike.
+
+**Acceptance**: Can send a prompt and receive a response from all three providers. Factory correctly routes based on config. `list_models()` returns the current catalog for the Copilot provider.
 
 ---
 
@@ -81,40 +97,50 @@ Create `app/services/citation_service.py`:
 
 ### 3A.4 Implement LLM output parsing
 In `app/services/wiki_parser.py`:
-- The LLM will return structured output indicating which pages to create/update.
-- Define a response format using XML-tagged blocks:
+- **Port the validated parser from `spikes/llm_parsing_test.py:parse_wiki_pages()`** — the regex pattern and frontmatter extraction logic achieved 100% success rate across 10 runs with gpt-5.4.
+- The LLM returns structured output using XML-tagged blocks:
   ```
   <wiki-page path="pages/source-summaries/lecture-1.md">
   ---
   title: "Lecture 1: Intro to Neural Networks"
-  ...
+  type: source-summary
+  sources: [file-id-1]
+  tags: [neural-networks, introduction]
   ---
   # Content here...
   </wiki-page>
 
   <wiki-page path="pages/concepts/neural-networks.md" action="update">
+  ---
+  title: "Neural Networks"
   ...
+  ---
+  Updated content...
   </wiki-page>
   ```
-- Parse this output to extract individual page contents.
+- Parse this output to extract individual page contents using the spike's regex:
+  ```python
+  pattern = r'<wiki-page\s+path="([^"]+)"(?:\s+action="([^"]+)")?>\s*(.*?)\s*</wiki-page>'
+  ```
 - Apply creates and updates to the filesystem and database.
 - Handle parse failures gracefully (log the raw output, retry once, then report error).
+- Validate frontmatter fields (`title` required, `type` must be a valid WikiCategory, `sources` must reference existing file IDs).
 
-**Acceptance**: LLM output is reliably parsed into discrete page operations.
+**Acceptance**: LLM output is reliably parsed into discrete page operations. Parser handles all valid formats from the spike.
 
 ---
 
 ### 3A.5 Implement source ingestion workflow
 Create the core ingestion pipeline in `app/services/wiki_engine.py`:
 - `ingest_source(class_id, file_id) -> IngestResult`:
-  1. Read the converted markdown file for this source.
+  1. Read the **full converted markdown file** for this source (`converted/{stem}.md`, NOT the `.summary.md` — the summary is a heuristic excerpt for quick reference; the LLM needs the full content).
   2. Read the current wiki schema, index, and relevant existing pages.
   3. **Context budget allocation** (see architectural decision #16):
      - Always include: schema (~500 tokens) + index (~1000 tokens) = ~10% of context.
      - Source content: up to ~50% of context window. If the source exceeds this, chunk it (see below).
      - Existing related pages (found via FTS5): up to ~30% of context. Select top-N pages by relevance until budget is filled.
      - Reserve ~10% for LLM output.
-     - Use `tiktoken` (or provider-specific tokenizer) to count tokens before sending.
+     - Use `tiktoken` (already in pyproject.toml) to count tokens before sending.
   4. Prompt the LLM to:
      a. Write a source-summary page for this file.
      b. Identify key concepts and entities mentioned.
@@ -125,7 +151,7 @@ Create the core ingestion pipeline in `app/services/wiki_engine.py`:
   7. Update `index.md` with new/modified pages.
   8. Append an entry to `log.md`.
   9. Update `wiki_pages` table in the database.
-  10. Auto-commit wiki changes via git (Task 1.11).
+  10. Auto-commit wiki changes via git (Task 1.11, `wiki_git.commit_wiki_change()`).
 - **Chunking strategy for large sources**: If source exceeds ~50% of context budget:
   - Split by headings or every ~3000 words.
   - Process chunks sequentially: first chunk creates pages, subsequent chunks update them.
@@ -156,17 +182,37 @@ Create a basic search capability in `app/services/wiki_search.py` that the wiki 
 
 ### 3A.7 Implement /ask command handler
 In `app/services/wiki_engine.py`:
-- `handle_ask(class_id, query) -> AsyncIterator[str]`:
+- `handle_ask(class_id, query) -> str`:
   1. Search wiki pages using FTS5 (Task 3A.6) to find relevant pages.
   2. **Context budget for /ask**: Select top pages by FTS5 rank, filling up to ~70% of context window. Always include the index for orientation. Reserve ~20% for LLM response.
   3. Read the content of selected pages (typically 5-10, fewer if pages are large).
   4. Prompt the LLM with the query and the relevant page content as context.
-  5. Stream the response back with citations.
+  5. Return the complete response (non-streaming, via `provider.complete()`).
   6. Save the query and response to `chat_messages` table.
 - The LLM must cite specific wiki pages and, through them, original sources.
 - Response should be markdown with inline citations.
+- **Streaming deferred to Phase 3B** (Task 3B.13). In 3A, the response is returned all at once after `send_and_wait()` completes.
 
 **Acceptance**: `/ask "What is backpropagation?"` returns a cited answer drawn from wiki pages.
+
+---
+
+### 3A.8 Implement ingestion queue
+Create `app/services/ingestion_queue.py` to manage concurrent file processing:
+- `enqueue_ingestion(class_id, file_id)` — adds a file to the processing queue.
+- Queue processes files **one at a time** per Class (prevents LLM rate limit issues and ensures wiki consistency).
+- Multiple Classes can process in parallel (they're independent).
+- Queue state:
+  - `pending` — waiting in queue, shows queue position.
+  - `processing` — currently being ingested.
+  - `complete` — done.
+  - `failed` — error occurred (stored for display).
+- Frontend polls file status and shows queue position: "Processing (2 of 5)".
+- If the backend restarts, pending items are re-queued from the database (files with `status: "pending"`).
+- Respects LLM provider rate limits: if rate-limited, back off and retry with exponential delay.
+- Prevents double-ingestion: check if a file is already queued/processing before adding.
+
+**Acceptance**: Multiple file uploads are queued and processed sequentially. Queue position is visible. Rate limits are handled gracefully.
 
 ---
 
@@ -191,28 +237,9 @@ In `app/services/wiki_engine.py`:
 
 ---
 
-### 3A.8 Implement ingestion queue
-Create `app/services/ingestion_queue.py` to manage concurrent file processing:
-- `enqueue_ingestion(class_id, file_id)` — adds a file to the processing queue.
-- Queue processes files **one at a time** per Class (prevents LLM rate limit issues and ensures wiki consistency).
-- Multiple Classes can process in parallel (they're independent).
-- Queue state:
-  - `pending` — waiting in queue, shows queue position.
-  - `processing` — currently being ingested.
-  - `complete` — done.
-  - `failed` — error occurred (stored for display).
-- Frontend polls file status and shows queue position: "Processing (2 of 5)".
-- If the backend restarts, pending items are re-queued from the database (files with `status: "pending"`).
-- Respects LLM provider rate limits: if rate-limited, back off and retry with exponential delay.
-- Prevents double-ingestion: check if a file is already queued/processing before adding.
-
-**Acceptance**: Multiple file uploads are queued and processed sequentially. Queue position is visible. Rate limits are handled gracefully.
-
----
-
 ## Phase 3B: Wiki Engine Full
 
-**Goal**: Add remaining commands (/summarize, /remove, /lint, /rebuild, /export), user edit tracking, wiki page CRUD, and prompt regression testing.
+**Goal**: Add remaining commands (/summarize, /remove, /lint, /rebuild, /export), user edit tracking, wiki page CRUD, prompt regression testing, and streaming support.
 
 **Prerequisites**: Phase 3A (basic ingestion + /ask working).
 
@@ -376,6 +403,7 @@ Create a prompts module at `app/services/prompts/`:
 - `lint_prompt.py` — system prompt for /lint (instructs LLM on contradiction detection and health assessment).
 - Prompts should include the wiki schema as context.
 - Prompts should be testable and iterable — expect refinement over time.
+- **Model-catalog awareness**: Prompts should be model-agnostic but may note which model was used in log entries (useful for diagnosing quality differences when users switch providers).
 
 **Acceptance**: Prompts are well-structured, produce consistent wiki output, and correctly instruct the LLM on citation format.
 
@@ -430,6 +458,29 @@ Add infrastructure for operations that take significant time (/rebuild, /lint, l
 
 ---
 
+### 3B.13 Implement streaming support
+Add streaming responses to `/ask` and `/summarize` for real-time token delivery:
+- Extend the `LLMProvider` interface:
+  ```python
+  async def stream(self, system_prompt: str, user_prompt: str, max_tokens: int = 8192) -> AsyncIterator[str]: ...
+  ```
+- Implement streaming for each provider:
+  - **`CopilotProvider`**: Use the Copilot SDK's streaming session API (event-based iteration over `session.send()` with partial content events).
+  - **`AnthropicProvider`**: Use `client.messages.stream()` and iterate `async for text in stream.text_stream`.
+  - **`OpenAIProvider`**: Use `stream=True` on `client.chat.completions.create()` and iterate delta chunks.
+- Update `handle_ask()` and `handle_summarize()` to return `AsyncIterator[str]` instead of `str`.
+- Wire streaming into the WebSocket chat protocol:
+  ```json
+  {"type": "stream_start", "message_id": "..."}
+  {"type": "stream_chunk", "message_id": "...", "content": "partial text..."}
+  {"type": "stream_end", "message_id": "..."}
+  ```
+- Graceful fallback: if streaming fails mid-response, save what was received and notify the user.
+
+**Acceptance**: `/ask` streams tokens in real-time via WebSocket. Frontend receives incremental updates. All three providers support streaming.
+
+---
+
 ## 3B Sequencing
 
 ```
@@ -445,12 +496,14 @@ Add infrastructure for operations that take significant time (/rebuild, /lint, l
 3B.10 (prompt testing) ← depends on 3B.9
 3B.11 (tests)     — after all above
 3B.12 (task manager) — early, used by /rebuild and /lint
+3B.13 (streaming) — independent, can start once 3A.7 works; wire into WebSocket after 3B.12
 ```
 
 - 3B.7 (CRUD) and 3B.12 (task manager) can start immediately.
 - 3B.1 and 3B.9 refine work from 3A.
 - 3B.2, 3B.3, 3B.4, 3B.6 can be built in parallel after 3B.1/3B.9.
 - 3B.5 (/rebuild) depends on 3B.8 + 3B.12.
+- 3B.13 (streaming) is independent of other 3B tasks but should be wired into WebSocket after 3B.12.
 - 3B.10 and 3B.11 are last.
 
 ---
@@ -459,9 +512,12 @@ Add infrastructure for operations that take significant time (/rebuild, /lint, l
 
 | Risk | Mitigation |
 |------|------------|
-| LLM produces inconsistent page formats | Strong prompt engineering. Parse-and-validate output before writing. Prompt regression tests (3B.10) catch regressions. |
+| LLM produces inconsistent page formats | Strong prompt engineering. Parse-and-validate output before writing. Prompt regression tests (3B.10) catch regressions. Validated at 100% in spike. |
 | LLM hallucinates citations | Validate that cited files/timestamps exist before writing. |
 | Large source files exceed LLM context window | Chunk the source, ingest chunks sequentially, merge results. |
 | /remove leaves orphan references | Implement a link-checking pass after removal. /lint detects orphans. |
 | Wiki pages get out of sync with database | Make filesystem the source of truth; database is a cache that can be rebuilt. Git history provides an additional safety net. |
 | Provider switch produces different quality output | Recommend /rebuild after provider change. Prompt regression tests verify structural consistency across providers. |
+| Copilot CLI not installed | Clear error message: "The default LLM provider requires the GitHub Copilot CLI. Install it via `winget install GitHub.CopilotCLI` or switch to provider 'anthropic'/'openai'/'ollama' in settings." |
+| Model catalog changes break hardcoded defaults | Use `list_models()` for discovery. Log a warning if the configured model is not in the catalog. |
+| Copilot auth expires or token is revoked | Detect auth errors and surface a clear message: "Run `copilot login` to re-authenticate." Graceful degradation for non-LLM features. |

@@ -17,12 +17,15 @@ jobs:
       # Test API key stored as a repository secret — never committed to code.
       TEST_LLM_API_KEY: ${{ secrets.TEST_LLM_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install backend dependencies
         run: python -m pip install -e ".[dev]"

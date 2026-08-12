@@ -30,6 +30,15 @@ backend/            FastAPI Python backend
       schemas.py      Pydantic API schemas (request/response bodies)
     services/
       wiki_git.py     Per-Class git repo for wiki version history (init/commit/history/revert)
+      file_converter.py  MarkItDown-based document-to-markdown conversion
+      video_processor.py ffmpeg + faster-whisper transcription pipeline
+      storage_service.py Per-Class file storage with path-traversal-safe filenames
+      summary_generator.py Heuristic source summaries (no LLM)
+      llm_service.py     LLM provider abstraction + factory (Phase 3)
+      llm_providers/     Concrete LLM implementations (Phase 3):
+        copilot_provider.py   Default: github-copilot-sdk (Copilot CLI + BYOK Ollama)
+        anthropic_provider.py Direct Anthropic SDK
+        openai_provider.py    Direct OpenAI SDK (also Ollama via base_url)
     utils/
       logging.py      structlog JSON logging setup (rotating file handler + stdout)
   alembic/            Alembic migration environment + versions/

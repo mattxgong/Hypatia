@@ -25,7 +25,11 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: Path.home() / ".hypatia" / "logs")
     log_level: str = "INFO"
 
-    llm_provider: str = "anthropic"
+    llm_provider: str = "copilot"
+    llm_model: str | None = None
+    llm_max_tokens: int = 8192
+    llm_temperature: float = 0.3
+    copilot_model: str = "gpt-5.4"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     github_token: str | None = None
