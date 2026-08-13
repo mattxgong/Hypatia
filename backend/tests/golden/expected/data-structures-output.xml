@@ -1,0 +1,89 @@
+<wiki-page path="pages/source-summaries/data-structures-trees-graphs.md">
+---
+title: "Data Structures: Trees and Graphs"
+type: source-summary
+sources: [ds-file-id]
+tags: [data-structures, trees, graphs, algorithms]
+user_edited: false
+---
+
+# Data Structures: Trees and Graphs
+
+Covers hierarchical (tree) and network (graph) data structures with their properties, operations, and key algorithms.
+
+## Binary Trees
+
+- Height, balance, and completeness properties
+- BST operations: search, insert, delete — all O(log n) average [source](hypatia://cite?file=data-structures.pdf&page=1)
+- Traversals: in-order, pre-order, post-order, level-order
+
+## Graphs
+
+- Types: directed/undirected, weighted/unweighted, cyclic/acyclic
+- Representations: adjacency matrix vs adjacency list [source](hypatia://cite?file=data-structures.pdf&page=2)
+- Algorithms: BFS, DFS, Dijkstra's, Bellman-Ford, MST
+
+See also: [[binary-search-tree]], [[graph-algorithms]]
+</wiki-page>
+
+<wiki-page path="pages/concepts/binary-search-tree.md">
+---
+title: "Binary Search Tree"
+type: concept
+sources: [ds-file-id]
+tags: [data-structures, trees, bst, search]
+user_edited: false
+---
+
+# Binary Search Tree
+
+A binary tree where left child < parent < right child [source](hypatia://cite?file=data-structures.pdf&page=1).
+
+## Complexity
+
+| Operation | Average | Worst |
+|-----------|---------|-------|
+| Search    | O(log n) | O(n) |
+| Insert    | O(log n) | O(n) |
+| Delete    | O(log n) | O(n) |
+
+## Traversals
+
+- **In-order**: Produces sorted output
+- **Pre-order**: Useful for tree copying
+- **Post-order**: Useful for deletion
+- **Level-order**: BFS using a queue
+
+See also: [[graph-algorithms]], [[data-structures-trees-graphs]]
+</wiki-page>
+
+<wiki-page path="pages/concepts/graph-algorithms.md">
+---
+title: "Graph Algorithms"
+type: concept
+sources: [ds-file-id]
+tags: [graphs, algorithms, bfs, dfs, dijkstra, shortest-path]
+user_edited: false
+---
+
+# Graph Algorithms
+
+Key algorithms for traversing and analyzing graphs [source](hypatia://cite?file=data-structures.pdf&page=2).
+
+## Traversal
+
+- **BFS**: Shortest path in unweighted graphs, O(V + E)
+- **DFS**: Topological sort, cycle detection, O(V + E)
+
+## Shortest Path
+
+- **Dijkstra's**: Weighted graphs, non-negative weights, O((V + E) log V)
+- **Bellman-Ford**: Handles negative weights, O(V * E)
+
+## Minimum Spanning Tree
+
+- **Kruskal's**: Sort edges, union-find
+- **Prim's**: Grow tree from vertex
+
+See also: [[binary-search-tree]], [[data-structures-trees-graphs]]
+</wiki-page>

@@ -107,3 +107,29 @@ class CommandRequest(BaseModel):
 class CommandResponse(BaseModel):
     chat_message: ChatMessageRead
     updated_wiki_paths: list[str] = Field(default_factory=list)
+
+
+class WikiTreeNodeRead(BaseModel):
+    path: str
+    title: str
+    category: WikiCategory
+    user_edited: bool
+
+
+class WikiPageUpdate(BaseModel):
+    content: str
+
+
+class TaskStatusRead(BaseModel):
+    task_id: str
+    operation: str
+    class_id: str
+    percent: int
+    message: str
+    state: str
+    error: str | None = None
+
+
+class ExportResponse(BaseModel):
+    export_path: str
+    page_count: int

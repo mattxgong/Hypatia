@@ -8,6 +8,8 @@ supported.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from copilot import CopilotClient
 from copilot.session import PermissionHandler, ProviderConfig, SystemMessageReplaceConfig
 
@@ -63,6 +65,36 @@ class CopilotProvider(LLMProvider):
                 logger.warning("copilot_empty_response", model=self._model)
                 return ""
             return getattr(response.data, "content", "") or ""
+        finally:
+            await session.disconnect()
+
+    async def stream(
+        self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
+    ) -> AsyncIterator[str]:
+        client = await self._get_client()
+        sys_msg: SystemMessageReplaceConfig = {
+            "mode": "replace",
+            "content": system_prompt,
+        }
+        session = await client.create_session(
+            model=self._model,
+            system_message=sys_msg,
+            provider=self._provider_config,
+            on_permission_request=PermissionHandler.approve_all,
+        )
+        try:
+            if hasattr(session, "send") and callable(getattr(session, "send", None)):
+                async for event in session.send(user_prompt):  # type: ignore[attr-defined]
+                    if hasattr(event, "data") and hasattr(event.data, "content"):
+                        chunk = event.data.content
+                        if chunk:
+                            yield chunk
+            else:
+                response = await session.send_and_wait(user_prompt, timeout=180.0)
+                if response is not None:
+                    content = getattr(response.data, "content", "") or ""
+                    if content:
+                        yield content
         finally:
             await session.disconnect()
 

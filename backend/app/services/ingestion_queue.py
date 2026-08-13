@@ -195,9 +195,7 @@ class IngestionQueue:
         """
         count = 0
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(File).where(File.status == FileStatus.PROCESSING)
-            )
+            result = await session.execute(select(File).where(File.status == FileStatus.PROCESSING))
             stuck_files = result.scalars().all()
             for f in stuck_files:
                 f.status = FileStatus.READY

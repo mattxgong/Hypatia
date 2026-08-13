@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import anthropic
 
 from app.utils.logging import get_logger
@@ -38,6 +40,19 @@ class AnthropicProvider(LLMProvider):
             return ""
         block = response.content[0]
         return block.text if hasattr(block, "text") else ""
+
+    async def stream(
+        self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
+    ) -> AsyncIterator[str]:
+        async with self._client.messages.stream(
+            model=self._model,
+            max_tokens=max_tokens,
+            temperature=self._temperature,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
 
     async def list_models(self) -> list[str]:
         return [self._model]

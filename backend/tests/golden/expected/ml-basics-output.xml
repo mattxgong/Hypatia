@@ -1,0 +1,105 @@
+<wiki-page path="pages/source-summaries/ml-basics.md">
+---
+title: "Machine Learning Basics"
+type: source-summary
+sources: [ml-basics-file-id]
+tags: [machine-learning, supervised-learning, neural-networks, regularization]
+user_edited: false
+---
+
+# Machine Learning Basics
+
+This chapter provides a comprehensive introduction to fundamental machine learning concepts.
+
+## Key Topics
+
+- **Supervised Learning**: Uses labeled data to learn input-output mappings. Algorithms include linear regression, logistic regression, decision trees, and random forests [source](hypatia://cite?file=ml-basics.pdf&page=1).
+- **Neural Networks**: Layered architectures with neurons, activation functions, and backpropagation for training [source](hypatia://cite?file=ml-basics.pdf&page=2).
+- **Overfitting & Regularization**: Techniques to prevent memorization including L1/L2 penalties, dropout, and early stopping [source](hypatia://cite?file=ml-basics.pdf&page=3).
+- **Evaluation Metrics**: Accuracy, precision, recall, F1, and AUC-ROC for measuring model performance [source](hypatia://cite?file=ml-basics.pdf&page=3).
+
+## Connections
+
+See also: [[supervised-learning]], [[neural-networks]], [[overfitting]]
+</wiki-page>
+
+<wiki-page path="pages/concepts/supervised-learning.md">
+---
+title: "Supervised Learning"
+type: concept
+sources: [ml-basics-file-id]
+tags: [machine-learning, supervised-learning, classification, regression]
+user_edited: false
+---
+
+# Supervised Learning
+
+Supervised learning is a machine learning paradigm that uses labeled training data to learn a mapping from inputs to outputs [source](hypatia://cite?file=ml-basics.pdf&page=1).
+
+## Algorithms
+
+- **Linear Regression**: Fits a linear model for continuous prediction
+- **Logistic Regression**: Uses sigmoid function for classification
+- **Decision Trees**: Splits feature space using information gain
+- **Random Forests**: Ensemble of decision trees reducing overfitting
+
+## Objective
+
+The goal is to minimize a loss function measuring the difference between predictions and true labels.
+
+See also: [[neural-networks]], [[overfitting]]
+</wiki-page>
+
+<wiki-page path="pages/concepts/neural-networks.md">
+---
+title: "Neural Networks"
+type: concept
+sources: [ml-basics-file-id]
+tags: [neural-networks, deep-learning, backpropagation]
+user_edited: false
+---
+
+# Neural Networks
+
+Neural networks are composed of layers of interconnected neurons that transform input features through learned weights [source](hypatia://cite?file=ml-basics.pdf&page=2).
+
+## Architecture
+
+- **Input layer**: Receives raw features
+- **Hidden layers**: Transform features through learned weights
+- **Output layer**: Produces final predictions
+- **Activation functions**: ReLU, sigmoid, tanh for non-linearity
+
+## Training
+
+Training uses backpropagation to compute gradients of the loss with respect to each weight, then gradient descent to update weights.
+
+See also: [[supervised-learning]], [[overfitting]]
+</wiki-page>
+
+<wiki-page path="pages/concepts/overfitting.md">
+---
+title: "Overfitting and Regularization"
+type: concept
+sources: [ml-basics-file-id]
+tags: [overfitting, regularization, dropout, early-stopping]
+user_edited: false
+---
+
+# Overfitting and Regularization
+
+Overfitting occurs when a model memorizes training data rather than learning general patterns [source](hypatia://cite?file=ml-basics.pdf&page=3).
+
+## Signs
+
+High training accuracy but low test accuracy.
+
+## Regularization Techniques
+
+- **L1 (Lasso)**: Absolute weight penalty, encourages sparsity
+- **L2 (Ridge)**: Squared weight penalty, prevents large weights
+- **Dropout**: Randomly disables neurons during training
+- **Early stopping**: Halts when validation loss plateaus
+
+See also: [[neural-networks]], [[supervised-learning]]
+</wiki-page>

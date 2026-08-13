@@ -1,0 +1,81 @@
+<wiki-page path="pages/source-summaries/french-revolution-transcript.md">
+---
+title: "Lecture 2: The French Revolution"
+type: source-summary
+sources: [french-rev-file-id]
+tags: [history, french-revolution, europe, 18th-century]
+user_edited: false
+---
+
+# Lecture 2: The French Revolution
+
+A lecture covering the French Revolution from its causes through its legacy.
+
+## Timeline
+
+- **1789**: Storming of the Bastille (July 14), National Assembly declared [source](hypatia://cite?file=french-revolution.mp4&t=75)
+- **1789-1792**: Constitutional Monarchy phase [source](hypatia://cite?file=french-revolution.mp4&t=380)
+- **1792-1794**: Radical Republic and Reign of Terror [source](hypatia://cite?file=french-revolution.mp4&t=510)
+- **1794**: Execution of Robespierre, end of Terror [source](hypatia://cite?file=french-revolution.mp4&t=510)
+- **1799**: Napoleon's coup d'état [source](hypatia://cite?file=french-revolution.mp4&t=795)
+
+## Key Themes
+
+- Economic crisis and inequality as revolutionary catalysts
+- The Declaration of the Rights of Man
+- The Napoleonic Code and modern citizenship
+
+See also: [[louis-xvi]], [[robespierre]], [[napoleon-bonaparte]]
+</wiki-page>
+
+<wiki-page path="pages/entities/louis-xvi.md">
+---
+title: "Louis XVI"
+type: entity
+sources: [french-rev-file-id]
+tags: [french-revolution, monarchy, france]
+user_edited: false
+---
+
+# Louis XVI
+
+King of France whose reign ended with the Revolution. His extravagance and the economic crisis contributed to revolutionary sentiment [source](hypatia://cite?file=french-revolution.mp4&t=75).
+
+See also: [[french-revolution-transcript]], [[robespierre]]
+</wiki-page>
+
+<wiki-page path="pages/entities/robespierre.md">
+---
+title: "Maximilien Robespierre"
+type: entity
+sources: [french-rev-file-id]
+tags: [french-revolution, reign-of-terror, politics]
+user_edited: false
+---
+
+# Maximilien Robespierre
+
+Led the Committee of Public Safety during the Reign of Terror (1792-1794). Between 16,000 and 40,000 people were executed under his leadership [source](hypatia://cite?file=french-revolution.mp4&t=510). He was himself executed in July 1794.
+
+See also: [[french-revolution-transcript]], [[napoleon-bonaparte]]
+</wiki-page>
+
+<wiki-page path="pages/entities/napoleon-bonaparte.md">
+---
+title: "Napoleon Bonaparte"
+type: entity
+sources: [french-rev-file-id]
+tags: [french-revolution, napoleon, france, military]
+user_edited: false
+---
+
+# Napoleon Bonaparte
+
+Seized power in 1799 through a coup d'état, establishing the Consulate and later the First French Empire [source](hypatia://cite?file=french-revolution.mp4&t=795). Spread Revolutionary ideals across Europe through military conquest.
+
+## Legacy
+
+The Napoleonic Code influenced legal systems worldwide.
+
+See also: [[french-revolution-transcript]], [[robespierre]]
+</wiki-page>

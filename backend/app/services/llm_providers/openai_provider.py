@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import openai
 
 from app.utils.logging import get_logger
@@ -44,6 +46,23 @@ class OpenAIProvider(LLMProvider):
         if choice and choice.message and choice.message.content:
             return choice.message.content
         return ""
+
+    async def stream(
+        self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
+    ) -> AsyncIterator[str]:
+        response = await self._client.chat.completions.create(
+            model=self._model,
+            max_tokens=max_tokens,
+            temperature=self._temperature,
+            stream=True,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     async def list_models(self) -> list[str]:
         models = await self._client.models.list()
