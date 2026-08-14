@@ -120,9 +120,7 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
     async with async_session_factory() as session:
         try:
             session.add(
-                ChatMessage(
-                    class_id=class_id, role=ChatRole.USER, content=f"/summarize {topic}"
-                )
+                ChatMessage(class_id=class_id, role=ChatRole.USER, content=f"/summarize {topic}")
             )
             await session.commit()
 
@@ -160,9 +158,7 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
     async with async_session_factory() as session:
         try:
             session.add(
-                ChatMessage(
-                    class_id=class_id, role=ChatRole.USER, content=f"/remove {filename}"
-                )
+                ChatMessage(class_id=class_id, role=ChatRole.USER, content=f"/remove {filename}")
             )
             await session.commit()
 
