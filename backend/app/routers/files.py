@@ -1,10 +1,4 @@
-"""File upload/list/status endpoints (Task 2.9).
-
-Upload persists the raw file and creates a ``pending`` File row
-synchronously, then dispatches conversion to ``file_converter.process_file``
-as a background task so the request returns immediately; status is then
-polled via the get-by-id endpoint until it reaches ``ready``/``error``.
-"""
+"""File upload/list/status/serving endpoints (Tasks 2.9, 4.3)."""
 
 from __future__ import annotations
 
@@ -12,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,3 +115,77 @@ async def get_file(
     if file_ is None or file_.class_id != class_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return FileRead.model_validate(file_)
+
+
+@router.get("/{file_id}/raw")
+async def get_file_raw(
+    class_id: uuid.UUID, file_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> FileResponse:
+    file_ = await session.get(FileRecord, file_id)
+    if file_ is None or file_.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    raw_path = Path(file_.raw_path)
+    if not raw_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file missing")
+    return FileResponse(raw_path, filename=file_.original_filename)
+
+
+@router.get("/{file_id}/converted")
+async def get_file_converted(
+    class_id: uuid.UUID, file_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> FileResponse:
+    file_ = await session.get(FileRecord, file_id)
+    if file_ is None or file_.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    if not file_.converted_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No converted file available"
+        )
+    converted_path = Path(file_.converted_path)
+    if not converted_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Converted file missing")
+    return FileResponse(converted_path, filename=f"{Path(file_.original_filename).stem}.md")
+
+
+@router.get("/{file_id}/open")
+async def open_file_with_location(
+    class_id: uuid.UUID,
+    file_id: uuid.UUID,
+    loc: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> FileResponse:
+    file_ = await session.get(FileRecord, file_id)
+    if file_ is None or file_.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    raw_path = Path(file_.raw_path)
+    if not raw_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file missing")
+    response = FileResponse(raw_path, filename=file_.original_filename)
+    if loc:
+        response.headers["X-Location"] = loc
+    return response
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(
+    class_id: uuid.UUID, file_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+) -> None:
+    file_ = await session.get(FileRecord, file_id)
+    if file_ is None or file_.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    from app.services.wiki_engine import handle_remove
+
+    await handle_remove(session, class_id, file_.original_filename)
+
+    raw_path = Path(file_.raw_path)
+    if raw_path.exists():
+        raw_path.unlink()
+    if file_.converted_path:
+        converted_path = Path(file_.converted_path)
+        if converted_path.exists():
+            converted_path.unlink()
+
+    await session.delete(file_)
+    await session.commit()
+    logger.info("file_deleted", class_id=str(class_id), file_id=str(file_id))

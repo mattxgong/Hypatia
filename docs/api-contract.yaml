@@ -3,12 +3,10 @@ info:
   title: Hypatia Backend API
   description: >
     Contract between the Flutter frontend and the FastAPI backend for the
-    Hypatia LLM wiki application. This is the Phase 1 minimal initial version
-    (Task 1.10) covering health, Classes CRUD, file upload/list, wiki
-    tree/page retrieval, and the chat WebSocket message protocol (including
-    the long-running operation progress protocol). Update this spec as new
-    endpoints are added in later phases (see docs/plan/04-backend-api.md).
-  version: "0.1.0"
+    Hypatia LLM wiki application. Covers health, Classes CRUD, file
+    upload/serve/delete, wiki tree/page CRUD/search/export/lint/rebuild,
+    chat WebSocket + history, task status, and class backup/import.
+  version: "0.4.0"
 servers:
   - url: http://127.0.0.1:8000
     description: >-
@@ -149,18 +147,73 @@ paths:
   /api/classes/{class_id}/files/{file_id}:
     parameters:
       - $ref: "#/components/parameters/ClassId"
-      - name: file_id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: "#/components/parameters/FileId"
     get:
-      summary: Get a single file's status/details (for polling conversion progress)
+      summary: Get a single file's status/details
       operationId: getFile
       responses:
         "200":
           description: File details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a file and trigger wiki cleanup
+      operationId: deleteFile
+      responses:
+        "204":
+          description: File deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/files/{file_id}/raw:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/FileId"
+    get:
+      summary: Serve the raw uploaded file
+      operationId: getFileRaw
+      responses:
+        "200":
+          description: Raw file content
+          content:
+            application/octet-stream: {}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/files/{file_id}/converted:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/FileId"
+    get:
+      summary: Serve the converted markdown version
+      operationId: getFileConverted
+      responses:
+        "200":
+          description: Converted markdown content
+          content:
+            text/markdown: {}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/files/{file_id}/open:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/FileId"
+    get:
+      summary: Deep-link to file with Location header for frontend navigation
+      operationId: openFile
+      responses:
+        "200":
+          description: File metadata with optional Location header
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URI for the file's converted content if available
           content:
             application/json:
               schema:
@@ -176,13 +229,31 @@ paths:
       operationId: getWikiTree
       responses:
         "200":
-          description: Flat list of wiki page summaries (frontend groups into a tree by path)
+          description: Flat list of wiki page summaries
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/WikiPageSummary"
+                  $ref: "#/components/schemas/WikiTreeNode"
+
+  /api/classes/{class_id}/wiki/index:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: Get the wiki index page content
+      operationId: getWikiIndex
+      responses:
+        "200":
+          description: Index page content (empty string if no index exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+                required: [content]
 
   /api/classes/{class_id}/wiki/pages/{page_path}:
     parameters:
@@ -192,11 +263,9 @@ paths:
         required: true
         schema:
           type: string
-        description: >-
-          Slash-separated relative path to the wiki page, e.g.
-          concepts/gradient-descent.md
+        description: Slash-separated relative path to the wiki page
     get:
-      summary: Get the content of a specific wiki page
+      summary: Get a wiki page
       operationId: getWikiPage
       responses:
         "200":
@@ -207,26 +276,248 @@ paths:
                 $ref: "#/components/schemas/WikiPageRead"
         "404":
           $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a wiki page (user edit)
+      operationId: updateWikiPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WikiPageUpdate"
+      responses:
+        "200":
+          description: Updated wiki page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WikiPageRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/wiki/search:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: Full-text search wiki pages
+      operationId: searchWiki
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WikiSearchResult"
+
+  /api/classes/{class_id}/wiki/export:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Export all wiki pages as a ZIP
+      operationId: exportWiki
+      responses:
+        "200":
+          description: ZIP file containing wiki pages
+          content:
+            application/zip: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/classes/{class_id}/wiki/lint:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Run LLM-powered lint on wiki pages
+      operationId: lintWiki
+      responses:
+        "200":
+          description: Lint report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LintReport"
+        "503":
+          $ref: "#/components/responses/LLMUnavailable"
+
+  /api/classes/{class_id}/wiki/rebuild:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Rebuild the wiki (preview or confirm)
+      operationId: rebuildWiki
+      parameters:
+        - name: confirm
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: >-
+            Without confirm: rebuild preview. With confirm: task started.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RebuildPreview"
+                  - $ref: "#/components/schemas/TaskStarted"
+        "503":
+          $ref: "#/components/responses/LLMUnavailable"
 
   /api/classes/{class_id}/chat:
     parameters:
       - $ref: "#/components/parameters/ClassId"
     get:
       summary: >-
-        WebSocket chat connection (documented here for discoverability;
-        OpenAPI 3.0 has no native WebSocket support). Upgrade this
-        connection to a WebSocket to exchange the messages described in
-        the ChatWs* schemas below.
-      description: See the "Chat WebSocket protocol" schemas for message formats.
+        WebSocket chat connection (OpenAPI 3.0 has no native WebSocket
+        support). See ChatWs* schemas for message formats.
       operationId: chatWebSocket
       responses:
         "101":
           description: Switching Protocols (WebSocket upgrade)
 
+  /api/classes/{class_id}/chat/history:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: Get paginated chat history
+      operationId: getChatHistory
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Chat messages (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatMessageRead"
+    delete:
+      summary: Clear chat history for a Class
+      operationId: clearChatHistory
+      responses:
+        "204":
+          description: Chat history cleared
+
+  /api/classes/{class_id}/backup:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Export a Class as a backup ZIP
+      operationId: backupClass
+      responses:
+        "200":
+          description: Backup ZIP file
+          content:
+            application/zip: {}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/import:
+    post:
+      summary: Import a Class from a backup ZIP
+      operationId: importClass
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        "201":
+          description: Class imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/tasks:
+    get:
+      summary: List all background tasks
+      operationId: listTasks
+      responses:
+        "200":
+          description: All tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskStatus"
+
+  /api/tasks/{task_id}:
+    parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get a task's status
+      operationId: getTask
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/tasks/{task_id}/cancel:
+    parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      summary: Cancel a running task
+      operationId: cancelTask
+      responses:
+        "202":
+          description: Cancellation requested
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     ClassId:
       name: class_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    FileId:
+      name: file_id
       in: path
       required: true
       schema:
@@ -240,6 +531,26 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    LLMUnavailable:
+      description: LLM provider is unavailable
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail:
+                type: string
+                example: LLM provider is unavailable
+              code:
+                type: string
+                example: LLM_UNAVAILABLE
+            required: [detail, code]
 
   schemas:
     ErrorResponse:
@@ -249,7 +560,7 @@ components:
           type: string
         code:
           type: string
-      required: [detail]
+      required: [detail, code]
 
     ClassCreate:
       type: object
@@ -400,14 +711,17 @@ components:
         - created_at
         - updated_at
 
-    WikiPageSummary:
+    WikiPageUpdate:
       type: object
-      description: Lightweight page metadata used to render the wiki tree/sidebar.
+      properties:
+        content:
+          type: string
+      required: [content]
+
+    WikiTreeNode:
+      type: object
       properties:
         id:
-          type: string
-          format: uuid
-        class_id:
           type: string
           format: uuid
         path:
@@ -419,7 +733,107 @@ components:
         updated_at:
           type: string
           format: date-time
-      required: [id, class_id, path, title, category, updated_at]
+      required: [id, path, title, category, updated_at]
+
+    WikiSearchResult:
+      type: object
+      properties:
+        page_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        title:
+          type: string
+        snippet:
+          type: string
+        rank:
+          type: number
+      required: [page_id, path, title, snippet, rank]
+
+    LintReport:
+      type: object
+      properties:
+        success:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: object
+            properties:
+              page_path:
+                type: string
+              severity:
+                type: string
+              message:
+                type: string
+            required: [page_path, severity, message]
+        error:
+          type: string
+          nullable: true
+      required: [success, issues]
+
+    RebuildPreview:
+      type: object
+      properties:
+        page_count:
+          type: integer
+        file_count:
+          type: integer
+        estimated_seconds:
+          type: integer
+      required: [page_count, file_count]
+
+    TaskStarted:
+      type: object
+      properties:
+        task_id:
+          type: string
+        status:
+          type: string
+          enum: [started]
+      required: [task_id, status]
+
+    TaskStatus:
+      type: object
+      properties:
+        task_id:
+          type: string
+        operation:
+          type: string
+        class_id:
+          type: string
+        status:
+          type: string
+          enum: [running, completed, failed, cancelled]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [task_id, operation, class_id, status, created_at]
+
+    ImportResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        file_count:
+          type: integer
+        page_count:
+          type: integer
+        message_count:
+          type: integer
+      required: [id, name, file_count, page_count, message_count]
 
     ChatRole:
       type: string
@@ -441,9 +855,6 @@ components:
         command:
           type: string
           nullable: true
-          description: >-
-            Slash command that produced this message, if any
-            (e.g. ask, summarize, remove, lint, rebuild, export).
         metadata_json:
           type: object
           nullable: true
@@ -456,15 +867,8 @@ components:
       required: [id, class_id, role, content, created_at, updated_at]
 
     # --- Chat WebSocket protocol -------------------------------------------
-    # OpenAPI 3.0 has no native WebSocket support, so the /api/classes/{class_id}/chat
-    # message formats are documented here as plain schemas rather than as a
-    # request/response pair. Every WS frame is a JSON object with a "type"
-    # discriminator matching one of the ChatWs* schemas below.
-
     ChatWsMessage:
-      description: >-
-        Client -> server. A chat message, optionally invoking a slash
-        command (/ask, /summarize, /remove, /lint, /rebuild, /export).
+      description: Client -> server. A chat message or slash command.
       type: object
       properties:
         type:
@@ -475,9 +879,7 @@ components:
       required: [type, content]
 
     ChatWsChunk:
-      description: >-
-        Server -> client. One streamed chunk of an in-progress assistant
-        reply. Multiple chunk frames precede a single complete frame.
+      description: Server -> client. One streamed chunk of assistant reply.
       type: object
       properties:
         type:
@@ -488,7 +890,7 @@ components:
       required: [type, content]
 
     ChatWsComplete:
-      description: Server -> client. Signals the assistant reply is finished.
+      description: Server -> client. Assistant reply finished.
       type: object
       properties:
         type:
@@ -501,10 +903,13 @@ components:
           type: array
           items:
             type: object
+        result:
+          type: object
+          nullable: true
       required: [type, message_id]
 
     ChatWsError:
-      description: Server -> client. An error occurred processing the message/command.
+      description: Server -> client. Error processing message/command.
       type: object
       properties:
         type:
@@ -518,11 +923,7 @@ components:
       required: [type, message]
 
     ChatWsProgress:
-      description: >-
-        Server -> client. Progress update for a long-running operation
-        (e.g. /rebuild). operation_id correlates with the client's
-        ChatWsCancel message so a specific in-flight operation can be
-        cancelled.
+      description: Server -> client. Progress for long-running operation.
       type: object
       properties:
         type:
@@ -530,29 +931,18 @@ components:
           enum: [progress]
         operation:
           type: string
-          example: rebuild
         operation_id:
           type: string
         percent:
           type: integer
           minimum: 0
           maximum: 100
-          example: 45
         message:
           type: string
-          example: "Processing page 3/7..."
       required: [type, operation, percent, message]
-      example:
-        type: progress
-        operation: rebuild
-        operation_id: "b3f1c2..."
-        percent: 45
-        message: "Processing page 3/7..."
 
     ChatWsCancel:
-      description: >-
-        Client -> server. Requests cancellation of a running operation
-        identified by operation_id (as sent in a prior ChatWsProgress frame).
+      description: Client -> server. Cancel a running operation.
       type: object
       properties:
         type:
@@ -561,28 +951,3 @@ components:
         operation_id:
           type: string
       required: [type, operation_id]
-      example:
-        type: cancel
-        operation_id: "b3f1c2..."
-
-    CommandRequest:
-      type: object
-      description: HTTP-side representation of a slash command (used outside the chat WS, if needed).
-      properties:
-        command:
-          type: string
-        args:
-          type: object
-          nullable: true
-      required: [command]
-
-    CommandResponse:
-      type: object
-      properties:
-        chat_message:
-          $ref: "#/components/schemas/ChatMessageRead"
-        updated_wiki_paths:
-          type: array
-          items:
-            type: string
-      required: [chat_message]

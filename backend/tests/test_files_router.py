@@ -227,3 +227,120 @@ async def test_get_file_returns_404_when_class_id_mismatches(
     response = await client.get(f"/api/classes/{other_class_id}/files/{file_id}")
 
     assert response.status_code == 404
+
+
+# --- Task 4.3: extended file serving/delete endpoints ---
+
+
+async def _make_file_on_disk(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> File:
+    """Helper: create a class + file record with actual files on disk."""
+    class_id = await _make_class(session_factory)
+    raw_dir = tmp_path / "classes" / str(class_id) / "raw"
+    raw_dir.mkdir(parents=True)
+    raw_file = raw_dir / "notes.txt"
+    raw_file.write_text("Hello, world!")
+
+    converted_dir = tmp_path / "classes" / str(class_id) / "converted"
+    converted_dir.mkdir(parents=True)
+    converted_file = converted_dir / "notes.md"
+    converted_file.write_text("# Notes\n\nHello, world!")
+
+    async with session_factory() as session:
+        file_ = File(
+            class_id=class_id,
+            original_filename="notes.txt",
+            file_type=FileType.MARKDOWN,
+            file_size_bytes=13,
+            raw_path=str(raw_file),
+            converted_path=str(converted_file),
+            status=FileStatus.READY,
+        )
+        session.add(file_)
+        await session.commit()
+        await session.refresh(file_)
+        return file_
+
+
+async def test_get_file_raw_serves_content(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    resp = await client.get(f"/api/classes/{file_.class_id}/files/{file_.id}/raw")
+    assert resp.status_code == 200
+    assert b"Hello, world!" in resp.content
+
+
+async def test_get_file_raw_not_found(client: AsyncClient) -> None:
+    fake_class = UUID("00000000-0000-0000-0000-000000000000")
+    fake_file = UUID("11111111-1111-1111-1111-111111111111")
+    resp = await client.get(f"/api/classes/{fake_class}/files/{fake_file}/raw")
+    assert resp.status_code == 404
+
+
+async def test_get_file_converted_serves_markdown(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    resp = await client.get(f"/api/classes/{file_.class_id}/files/{file_.id}/converted")
+    assert resp.status_code == 200
+    assert b"# Notes" in resp.content
+
+
+async def test_get_file_converted_404_when_no_conversion(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    class_id = await _make_class(session_factory)
+    raw_dir = tmp_path / "classes" / str(class_id) / "raw"
+    raw_dir.mkdir(parents=True)
+    raw_file = raw_dir / "video.mp4"
+    raw_file.write_bytes(b"\x00" * 10)
+
+    async with session_factory() as session:
+        file_ = File(
+            class_id=class_id,
+            original_filename="video.mp4",
+            file_type=FileType.VIDEO,
+            file_size_bytes=10,
+            raw_path=str(raw_file),
+            converted_path=None,
+            status=FileStatus.PENDING,
+        )
+        session.add(file_)
+        await session.commit()
+        await session.refresh(file_)
+
+    resp = await client.get(f"/api/classes/{class_id}/files/{file_.id}/converted")
+    assert resp.status_code == 404
+
+
+async def test_open_file_with_location_header(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    resp = await client.get(f"/api/classes/{file_.class_id}/files/{file_.id}/open?loc=00:05:30")
+    assert resp.status_code == 200
+    assert resp.headers.get("x-location") == "00:05:30"
+
+
+async def test_open_file_without_location(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    resp = await client.get(f"/api/classes/{file_.class_id}/files/{file_.id}/open")
+    assert resp.status_code == 200
+    assert "x-location" not in resp.headers
+
+
+async def test_delete_file_calls_remove_and_deletes(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    with patch("app.services.wiki_engine.handle_remove", new_callable=AsyncMock) as mock_remove:
+        from app.services.wiki_engine import RemoveResult
+
+        mock_remove.return_value = RemoveResult(success=True)
+        resp = await client.delete(f"/api/classes/{file_.class_id}/files/{file_.id}")
+        assert resp.status_code == 204
+        mock_remove.assert_called_once()

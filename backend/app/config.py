@@ -39,5 +39,8 @@ class Settings(BaseSettings):
 
     max_upload_size_bytes: int = 3 * 1024 * 1024 * 1024  # 3GB, per Task 2.9
 
+    cors_origins: list[str] = []
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
 
 settings = Settings()

@@ -2,194 +2,192 @@
 
 **Goal**: Expose all backend services (Classes, Files, Wiki, Chat) through a clean REST + WebSocket API that the Flutter frontend can consume. Includes a progress protocol for long-running operations.
 
-**Prerequisites**: Phase 3A (wiki engine spike — ingest + /ask working). Phase 3B can continue in parallel.
+**Prerequisites**: Phase 3A (wiki engine spike — ingest + /ask working). Phase 3B completed in parallel.
 
 **Outputs**: A complete API layer that the frontend can integrate against. API documentation auto-generated via FastAPI's OpenAPI.
+
+**What already exists** (from earlier phases):
+- `app/routers/files.py` — upload, list, get-by-id with background processing (Phase 2, Task 2.9)
+- `app/main.py` — correlation-ID + request-timing logging middleware (Phase 1)
+- `app/services/wiki_engine.py` — all command handlers: `ingest_source`, `handle_ask`, `handle_ask_stream`, `handle_summarize`, `handle_remove`, `handle_lint`, `handle_rebuild_preview`, `handle_rebuild`, `handle_export` (Phases 3A + 3B)
+- `app/services/task_manager.py` — in-memory task registry with start/update/cancel/complete/fail/get/list (Phase 3B)
+- `app/services/ingestion_queue.py` — per-Class sequential queue with asyncio background tasks (Phase 3A)
+- `app/services/llm_providers/base.py` — `LLMProvider.stream()` returns `AsyncIterator[str]` (Phase 3A)
+- `docs/api-contract.yaml` — WebSocket protocol schemas (ChatWsMessage/Chunk/Complete/Error/Progress/Cancel) designed in Phase 1
 
 ---
 
 ## Tasks
 
-### 4.1 Implement Classes router
+### 4.1 Add CORS and error-handling middleware
+In `app/main.py` and `app/config.py`:
+- Add `CORSMiddleware` allowing `localhost:*` origins (Flutter dev) + configurable `HYPATIA_CORS_ORIGINS` list setting.
+- Add exception handlers: `HTTPException` → `{"detail": "...", "code": "ERROR_CODE"}` JSON; unhandled exceptions → 500 with generic message (log full traceback).
+- Define `LLMUnavailableError` (custom exception mapping to 503, `code: "LLM_UNAVAILABLE"`).
+- The existing correlation-ID middleware stays as-is.
+
+**Acceptance**: Flutter app can call the backend without CORS errors. All error responses are structured JSON with `detail` + `code`.
+
+---
+
+### 4.2 Implement Classes router
 Create `app/routers/classes.py`:
-- `POST /api/classes` — create a new Class (name, description). Creates the data directory structure.
+- `POST /api/classes` — create a new Class (name, description). Creates the data directory tree (`raw/`, `converted/`, `wiki/`, `thumbnails/`) via `storage_service`. Initializes wiki git repo via `wiki_git.init_wiki_repo()`.
 - `GET /api/classes` — list all Classes.
-- `GET /api/classes/{class_id}` — get a single Class with stats (file count, page count).
+- `GET /api/classes/{class_id}` — get a single Class with stats (file count, page count from DB counts).
 - `PUT /api/classes/{class_id}` — update Class name/description.
-- `DELETE /api/classes/{class_id}` — delete a Class and all its data (with confirmation).
+- `DELETE /api/classes/{class_id}` — delete a Class, remove its entire data directory, cascade-delete DB records (files, wiki_pages, chat_messages).
 
-**Acceptance**: Full CRUD on Classes via API. Creating a Class creates the directory tree.
+Register router in `app/main.py`.
 
----
-
-### 4.2 Implement Files router
-Create `app/routers/files.py`:
-- `POST /api/classes/{class_id}/files` — upload one or more files. Saves to `raw/`, creates DB record with `status: "pending"`, kicks off background processing.
-- `GET /api/classes/{class_id}/files` — list all files in a Class with status.
-- `GET /api/classes/{class_id}/files/{file_id}` — get file details (metadata, status, paths).
-- `GET /api/classes/{class_id}/files/{file_id}/raw` — serve the original raw file for download/viewing.
-- `GET /api/classes/{class_id}/files/{file_id}/converted` — serve the markdown conversion.
-- `DELETE /api/classes/{class_id}/files/{file_id}` — triggers the /remove workflow (file + wiki cleanup).
-- Handle multipart file upload with size limits.
-- Return processing status so the frontend can show progress.
-
-**Acceptance**: Can upload files, track processing status, download raw/converted versions, delete with cleanup.
+**Acceptance**: Full CRUD on Classes via API. Creating a Class creates the directory tree and git-initialized wiki.
 
 ---
 
-### 4.3 Implement Wiki router
+### 4.3 Extend Files router
+Add missing endpoints to the existing `app/routers/files.py`:
+- `GET /api/classes/{class_id}/files/{file_id}/raw` — serve the original raw file via `FileResponse`.
+- `GET /api/classes/{class_id}/files/{file_id}/converted` — serve the converted markdown via `FileResponse`.
+- `DELETE /api/classes/{class_id}/files/{file_id}` — call `wiki_engine.handle_remove()` for wiki cleanup, delete raw/converted files from disk, remove DB record.
+- `GET /api/classes/{class_id}/files/{file_id}/open?loc=...` — serve raw file with `X-Location` response header containing the location hint (for deep-link citations: `page:5`, `t:342`, `line:42`).
+
+**Acceptance**: Can download raw/converted files, delete files with wiki cleanup, and resolve citation deep-links.
+
+---
+
+### 4.4 Implement Wiki router
 Create `app/routers/wiki.py`:
-- `GET /api/classes/{class_id}/wiki/tree` — returns the wiki page tree structure for the sidebar.
-- `GET /api/classes/{class_id}/wiki/pages/{page_path}` — returns the content of a specific wiki page.
-- `GET /api/classes/{class_id}/wiki/index` — returns the wiki index page.
-- `POST /api/classes/{class_id}/wiki/rebuild` — triggers a full wiki rebuild (re-ingest all sources).
-- `GET /api/classes/{class_id}/wiki/search?q=...` — search wiki pages (basic text match initially, upgraded in Phase 7).
-- `PUT /api/classes/{class_id}/wiki/pages/{page_path}` — update a wiki page (user edit). Marks the page as user-edited.
-- `POST /api/classes/{class_id}/wiki/export` — triggers wiki export, returns download URL.
-- `POST /api/classes/{class_id}/wiki/lint` — triggers wiki health check, returns lint report.
+- `GET /api/classes/{class_id}/wiki/tree` — query `wiki_pages` table, return `list[WikiPageSummary]` (frontend groups by path into a tree).
+- `GET /api/classes/{class_id}/wiki/pages/{page_path:path}` — return full `WikiPageRead` for a specific page.
+- `GET /api/classes/{class_id}/wiki/index` — return the index page content (shorthand for the `index` category page).
+- `PUT /api/classes/{class_id}/wiki/pages/{page_path:path}` — user edit: update DB content, write to disk, commit via `wiki_git.commit_wiki_change()`.
+- `GET /api/classes/{class_id}/wiki/search?q=...` — delegate to `wiki_search.search_wiki_pages()`.
+- `POST /api/classes/{class_id}/wiki/export` — call `handle_export()`, return the ZIP as a streaming `FileResponse`.
+- `POST /api/classes/{class_id}/wiki/lint` — call `handle_lint()`, return lint report as JSON.
+- `POST /api/classes/{class_id}/wiki/rebuild` — default returns preview via `handle_rebuild_preview()`; with `?confirm=true`, dispatches `handle_rebuild()` as a background task (tracked via `task_manager`).
 
-**Acceptance**: Can browse the wiki tree, read any page, edit pages, trigger a rebuild, export, and lint. Pages contain rendered markdown with citations.
+Register router in `app/main.py`.
+
+**Acceptance**: Can browse the wiki tree, read any page, edit pages, trigger search/export/lint/rebuild. Rebuild uses task_manager for progress.
 
 ---
 
-### 4.4 Implement Chat router with WebSocket
+### 4.5 Implement command parser
+Create `app/utils/command_parser.py`:
+- Parse chat input for known commands: `/ask`, `/summarize`, `/remove`, `/lint`, `/rebuild`, `/export`.
+- Return `ParsedCommand(command="ask", args="the query text")`.
+- Bare messages (no `/` prefix) default to `command="ask"` with the full text as args.
+- Unknown `/foo` commands raise `ValueError` with a message listing valid commands.
+
+**Acceptance**: All six commands parse correctly. Bare messages default to /ask. Invalid commands produce helpful errors.
+
+---
+
+### 4.6 Implement Chat router with WebSocket
 Create `app/routers/chat.py`:
-- `WebSocket /api/classes/{class_id}/chat` — real-time chat connection:
-  - Client sends: `{"type": "message", "content": "/ask what is backpropagation?"}`
-  - Server streams back: `{"type": "chunk", "content": "Backpropagation is..."}` (token-by-token)
-  - Server sends final: `{"type": "complete", "message_id": "...", "citations": [...]}`
-- `GET /api/classes/{class_id}/chat/history` — returns past chat messages (paginated).
-- `DELETE /api/classes/{class_id}/chat/history` — clears chat history for a Class.
-- Parse incoming messages for commands: `/ask`, `/summarize`, `/remove`.
-- Route commands to the appropriate wiki engine handler.
-- Non-command messages are treated as `/ask` by default.
+- `WebSocket /api/classes/{class_id}/chat` — real-time chat connection implementing the protocol from `docs/api-contract.yaml`:
+  - Receive `ChatWsMessage` → parse with command_parser → route to handler.
+  - `/ask`: iterate `handle_ask_stream()`, send `ChatWsChunk` per yielded token, then `ChatWsComplete` with message_id + citations.
+  - `/summarize`, `/lint`, `/export`, `/remove`: run handler synchronously, send result as `ChatWsComplete`.
+  - `/rebuild`: start as background task via `task_manager`; spawn asyncio polling loop (every 500ms) that pushes `ChatWsProgress` frames; support `ChatWsCancel` to call `task_manager.cancel_task()`.
+  - On error: send `ChatWsError` with message + code.
+  - Persist user messages and assistant responses to `chat_messages` table.
+- `GET /api/classes/{class_id}/chat/history?limit=50&offset=0` — paginated chat history (newest first).
+- `DELETE /api/classes/{class_id}/chat/history` — clear chat history for a Class.
 
-**Acceptance**: WebSocket connects, commands are parsed and routed, LLM responses stream back in real-time.
+Register router in `app/main.py`.
 
----
-
-### 4.5 Implement command parsing
-Create a command parser (can live in `app/routers/chat.py` or `app/utils/`):
-- Parse chat input for known commands:
-  - `/ask "<query>"` or `/ask <query>` — route to `wiki_engine.handle_ask()`
-  - `/summarize <topic>` — route to `wiki_engine.handle_summarize()`
-  - `/remove <file-path>` — route to `wiki_engine.handle_remove()`
-  - `/lint` — route to `wiki_engine.handle_lint()`
-  - `/rebuild` — route to `wiki_engine.handle_rebuild()` (with confirmation)
-  - `/export` — route to `wiki_engine.handle_export()`
-  - No command prefix — treat as `/ask` with the full message as query
-- Return structured parse result: `{command: str, args: str}` or `{command: "ask", args: "raw input"}`.
-- Handle invalid commands with a helpful error message.
-
-**Acceptance**: All six commands parse correctly. Bare messages default to /ask. Invalid commands return errors.
+**Acceptance**: WebSocket connects, commands are parsed and routed, LLM responses stream back in real-time, progress frames push for rebuild, cancel stops the operation.
 
 ---
 
-### 4.6 Configure CORS and middleware
-In `app/main.py`:
-- Add CORS middleware to allow the Flutter app to connect (localhost during dev, configurable origins).
-- Add request logging middleware.
-- Add error handling middleware (convert exceptions to proper HTTP error responses).
-- Configure max upload size (3GB).
+### 4.7 Implement task status REST endpoints
+Create `app/routers/tasks.py`:
+- `GET /api/classes/{class_id}/tasks` — list active/recent tasks (delegates to `task_manager.list_tasks(class_id)`).
+- `GET /api/classes/{class_id}/tasks/{task_id}` — get single task status.
+- `POST /api/classes/{class_id}/tasks/{task_id}/cancel` — cancel a running task.
 
-**Acceptance**: Flutter app can make API calls without CORS errors. Errors are returned as structured JSON. Upload limit is enforced.
+Register router in `app/main.py`.
 
----
-
-### 4.7 Implement file serving with deep-link support
-Extend `app/routers/files.py`:
-- `GET /api/classes/{class_id}/files/{file_id}/open?loc=...` — serves the raw file with location hint.
-  - For PDFs: `?loc=page:5` — the frontend uses this to open the PDF at page 5.
-  - For videos: `?loc=t:342` — the frontend uses this to seek the video to timestamp 342.
-  - For text/markdown: `?loc=line:42` — the frontend uses this to scroll to line 42.
-- This endpoint resolves the `hypatia://cite` URIs from wiki pages into actual file access.
-
-**Acceptance**: Citation links in wiki pages can be resolved to file access with location information.
+**Acceptance**: Task status is queryable via REST. Cancel request stops the operation.
 
 ---
 
-### 4.8 Add API error handling and validation
-- Validate all inputs with Pydantic (request body, path params, query params).
-- Return consistent error format: `{"detail": "message", "code": "ERROR_CODE"}`.
-- Handle: Class not found, File not found, Wiki page not found, Processing in progress, LLM error, File too large, Unsupported format.
-- Add rate limiting for LLM-powered endpoints (prevent rapid-fire expensive calls).
-- **Graceful degradation** — classify endpoints by LLM dependency:
-  - **LLM-independent** (always work): GET classes/files/wiki, search, /export, /remove, settings, health. These must never fail due to LLM issues.
-  - **LLM-dependent** (may fail gracefully): /ask, /summarize, /lint, /rebuild, ingest. When LLM is unavailable, return `503 Service Unavailable` with `{"detail": "LLM provider unavailable", "code": "LLM_UNAVAILABLE", "suggestion": "Check your API key or try again later"}`.
-- Frontend uses this classification to show/disable features appropriately.
-
-**Acceptance**: All error cases return appropriate HTTP status codes and structured error messages. LLM-independent endpoints work even when the LLM provider is down.
-
----
-
-### 4.9 Implement class backup (full import/export)
-Add endpoints for full Class portability:
-- `POST /api/classes/{class_id}/backup` — export the entire Class as a portable archive:
-  - Includes: raw files, converted files, wiki directory (with git history), thumbnails, database records (serialized as JSON).
-  - Returns a ZIP or tar.gz file.
-  - Strips absolute paths — all paths are relative to the class root.
+### 4.8 Implement Class backup and import
+Add to `app/routers/classes.py` (or separate `app/routers/backup.py` if needed):
+- `POST /api/classes/{class_id}/backup` — export entire Class as a portable ZIP archive:
+  - Includes: raw files, converted files, wiki directory (with git history), thumbnails, DB records serialized as JSON manifest.
+  - Strips absolute paths (all relative to class root).
+  - Returns ZIP as streaming download.
 - `POST /api/classes/import` — import a Class from a backup archive:
-  - Extracts archive to a new class directory.
-  - Rebuilds database records from the serialized JSON.
-  - Assigns a new class_id (avoids collisions).
-  - Validates integrity (file counts match, wiki index is consistent).
-- This is distinct from `/export` (which only exports wiki markdown). This is a full machine-to-machine transfer.
-- Use case: move a Class to a new computer, share with a colleague, backup before risky operations.
+  - Extracts to a new class directory, assigns new class_id.
+  - Rebuilds DB records from the JSON manifest.
+  - Validates integrity (file counts, wiki index consistency).
 
 **Acceptance**: Can backup a Class on one machine and restore it on another with all data intact.
 
 ---
 
-### 4.10 Implement long-running operation progress endpoints
-Create infrastructure for progress reporting and cancellation of expensive operations:
-- **WebSocket progress events**: Extend the chat WebSocket (or create a separate `/api/classes/{class_id}/events` WebSocket) to push progress updates:
-  ```json
-  {"type": "progress", "task_id": "abc123", "operation": "rebuild", "percent": 45, "message": "Processing page 3/7..."}
-  {"type": "progress", "task_id": "abc123", "operation": "rebuild", "percent": 100, "message": "Complete"}
-  {"type": "error", "task_id": "abc123", "operation": "rebuild", "message": "LLM provider error: rate limited"}
-  ```
-- `POST /api/classes/{class_id}/tasks/{task_id}/cancel` — request cancellation of a running operation.
-- `GET /api/classes/{class_id}/tasks` — list active/recent tasks with their status.
-- `GET /api/classes/{class_id}/tasks/{task_id}` — get status of a specific task.
-- Operations that support progress: `/rebuild`, `/lint`, large file ingestion, `/export`.
-- Frontend shows: progress bar, operation description, cancel button.
-- On cancellation: operation rolls back to previous git commit (clean state).
+### 4.9 Add graceful degradation
+- Create a `check_llm_available()` FastAPI dependency:
+  - Attempts a minimal LLM call (`provider.complete("test", "ping", max_tokens=1)`) with a short timeout.
+  - Caches result for 30 seconds to avoid repeated probes.
+  - On failure, raises `LLMUnavailableError` (→ 503).
+- Apply to LLM-dependent chat commands (`/ask`, `/summarize`, `/lint`, `/rebuild`) and wiki rebuild.
+- LLM-independent endpoints (GET classes/files/wiki, search, `/export`, `/remove`, health) never check LLM availability.
+- Frontend uses this classification to show/disable features appropriately.
 
-**Acceptance**: Long-running operations push progress to the client. Cancel request stops the operation and rolls back. Task status is queryable.
+**Acceptance**: LLM-independent endpoints work even when the LLM provider is down. LLM-dependent endpoints return 503 with `LLM_UNAVAILABLE` code when the provider is unreachable.
+
+---
+
+### 4.10 Update API contract
+Update `docs/api-contract.yaml` to reflect all implemented endpoints:
+- Add Classes CRUD, file serving/delete/deep-link, wiki CRUD/commands, chat history, task status, backup/import.
+- Add new schemas: `ClassReadWithStats`, `TaskStatus`, `LintReport`, `RebuildPreview`, `BackupManifest`.
+- Keep existing WebSocket protocol schemas (already correct).
+
+**Acceptance**: `api-contract.yaml` matches the actual implemented routes and response shapes.
 
 ---
 
 ### 4.11 Write API integration tests
-- Test each endpoint with `httpx.AsyncClient` (FastAPI test client).
-- Test file upload + processing flow end-to-end.
-- Test WebSocket chat connection and message flow.
-- Test command parsing and routing.
-- Test error cases (missing class, bad file, invalid command).
-- Test CORS headers.
+Test each endpoint with `httpx.AsyncClient` (FastAPI test client) and WebSocket test session:
+- Classes CRUD (create with directory setup, list, get with stats, update, delete with cascade).
+- Files: raw/converted serving, delete with wiki cleanup, deep-link location header.
+- Wiki: tree, page read, user edit + git commit, search, export, lint, rebuild (preview + confirmed).
+- Chat WebSocket: connect, message → chunks → complete flow, command parsing, error frames, progress + cancel for rebuild.
+- Tasks REST: list, get, cancel.
+- CORS headers present in responses.
+- Error format consistency (all errors have `detail` + `code`).
+- Graceful degradation: mock LLM unavailable → 503 on dependent endpoints, 200 on independent ones.
 
-**Acceptance**: All API endpoints are tested. WebSocket flow is tested.
+**Acceptance**: All API endpoints are tested. WebSocket flow is tested. Graceful degradation is tested.
 
 ---
 
 ## Sequencing
 
 ```
-4.6 (CORS/middleware) — do first, needed by everything
-4.1 (classes) ──→ 4.2 (files) ──→ 4.7 (deep links)
-             ──→ 4.3 (wiki)
-             ──→ 4.4 (chat) ←── 4.5 (command parsing)
-             ──→ 4.9 (class backup) ← depends on 4.1 + 4.2
-4.8 (error handling + degradation) — applied throughout, finalized last
-4.10 (progress endpoints) — after 4.4 (extends WebSocket)
-4.11 (tests) — after all above
+4.1 (CORS + error middleware) ─── do first, all routes depend on it
+  │
+  ├── 4.2 (classes router) ─── foundation, other routers need class_id
+  │     │
+  │     ├── 4.3 (extend files router)
+  │     ├── 4.4 (wiki router)
+  │     ├── 4.5 (command parser) ──┐
+  │     │                          ├── 4.6 (chat WebSocket)
+  │     ├── 4.7 (task status REST)─┘
+  │     └── 4.8 (class backup/import)
+  │
+  ├── 4.9 (graceful degradation) ─── applied after LLM-dependent routes exist
+  └── 4.10 (update API contract) ─── after all endpoints implemented
+       └── 4.11 (integration tests) ─── last
 ```
 
-- 4.6 first (middleware).
-- 4.1 (classes) is the foundation (other routers are scoped to a class).
-- 4.2, 4.3, 4.4 can be built in parallel after 4.1.
-- 4.5 feeds into 4.4.
-- 4.7 extends 4.2.
-- 4.8 is applied throughout but finalized last (includes graceful degradation classification).
-- 4.9 (class backup) depends on classes + files existing.
-- 4.10 extends the WebSocket for progress reporting.
-- 4.11 is last.
+- 4.1 first (middleware foundation).
+- 4.2 next (classes are the root resource; all other routers are scoped to a class).
+- 4.3, 4.4, 4.5, 4.7, 4.8 can proceed in parallel after 4.2.
+- 4.6 depends on 4.5 (command parser).
+- 4.9 applied after the LLM-dependent routes exist.
+- 4.10 and 4.11 are finalization tasks.
