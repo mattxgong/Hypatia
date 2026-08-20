@@ -6,6 +6,20 @@
 
 **Outputs**: A navigable Flutter app with the correct layout, class dropdown, sidebar, wiki viewer panel, and chat panel — all rendering static/mock content.
 
+**Status**: COMPLETE
+
+---
+
+## Implementation Notes (deviations from original plan)
+
+1. **BackendGate preserved**: The existing `BackendGate` widget from Phase 1 (Task 1.9) remains the app's startup gate. The `HypatiaShell` (with `MaterialApp.router` + GoRouter) only renders after `BackendStatus.ready`. This avoids duplicating the backend lifecycle management.
+2. **`shared_preferences` added**: Required for theme persistence (not in the original Phase 1 deps).
+3. **`ProviderScope` wrapping**: Added at the `runApp` level in `main()` for Riverpod to work.
+4. **Enum naming**: `WikiCategory.index` conflicted with Dart's built-in `Enum.index` getter — renamed to `WikiCategory.wikiIndex` and `WikiCategory.wikiLog`.
+5. **Class creation dialog**: Integrated directly into `class_dropdown.dart` rather than a separate file, since it's only accessible from the dropdown.
+6. **`DropdownButtonFormField.value`**: Deprecated in Flutter 3.33+ — use `initialValue` instead.
+7. **`Color.withOpacity`**: Deprecated — replaced with `Color.withValues(alpha: ...)` throughout.
+
 ---
 
 ## UI Reference
