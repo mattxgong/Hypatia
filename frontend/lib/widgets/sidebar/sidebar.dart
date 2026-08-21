@@ -14,7 +14,7 @@ class Sidebar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
 
-    return Container(
+    return Material(
       color: theme.colorScheme.surfaceContainerLowest,
       child: Column(
         children: [

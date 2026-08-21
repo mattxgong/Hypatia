@@ -18,7 +18,7 @@ class ChatPanel extends ConsumerWidget {
         : null;
     final theme = Theme.of(context);
 
-    return Container(
+    return Material(
       color: theme.colorScheme.surfaceContainerLowest,
       child: Column(
         children: [

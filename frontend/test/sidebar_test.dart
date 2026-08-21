@@ -28,7 +28,15 @@ void main() {
     );
   }
 
+  void setLargeTestSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
   testWidgets('Sidebar renders class dropdown and search bar', (tester) async {
+    setLargeTestSurface(tester);
     await tester.pumpWidget(
       wrapWithProviders(const Sidebar(), classId: 'class-1'),
     );
@@ -40,6 +48,7 @@ void main() {
   });
 
   testWidgets('Sidebar shows wiki tree categories', (tester) async {
+    setLargeTestSurface(tester);
     await tester.pumpWidget(
       wrapWithProviders(const Sidebar(), classId: 'class-1'),
     );
@@ -52,6 +61,7 @@ void main() {
   });
 
   testWidgets('Wiki tree shows pages under categories', (tester) async {
+    setLargeTestSurface(tester);
     await tester.pumpWidget(
       wrapWithProviders(const Sidebar(), classId: 'class-1'),
     );
@@ -63,6 +73,7 @@ void main() {
   });
 
   testWidgets('Sidebar shows Add Files button', (tester) async {
+    setLargeTestSurface(tester);
     await tester.pumpWidget(
       wrapWithProviders(const Sidebar(), classId: 'class-1'),
     );
@@ -72,6 +83,7 @@ void main() {
   });
 
   testWidgets('Sidebar shows theme toggle', (tester) async {
+    setLargeTestSurface(tester);
     await tester.pumpWidget(
       wrapWithProviders(const Sidebar(), classId: 'class-1'),
     );
