@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../models/hypatia_class.dart';
 import '../../providers/class_provider.dart';
 
 class ClassDropdown extends ConsumerWidget {
@@ -10,47 +9,54 @@ class ClassDropdown extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final classes = ref.watch(classListProvider);
+    final classesAsync = ref.watch(classListProvider);
     final currentId = ref.watch(currentClassIdProvider);
     final theme = Theme.of(context);
 
-    return DropdownButtonFormField<String>(
-      initialValue: currentId,
-      decoration: InputDecoration(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide.none,
+    return classesAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (e, _) => Text('Error: $e', style: theme.textTheme.bodySmall),
+      data: (classes) => DropdownButtonFormField<String>(
+        initialValue: currentId,
+        decoration: InputDecoration(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide.none,
+          ),
+          filled: true,
+          fillColor: theme.colorScheme.surfaceContainerHigh,
         ),
-        filled: true,
-        fillColor: theme.colorScheme.surfaceContainerHigh,
+        isExpanded: true,
+        items: [
+          ...classes.map(
+            (c) => DropdownMenuItem<String>(
+              value: c.id,
+              child: Text(c.name, overflow: TextOverflow.ellipsis),
+            ),
+          ),
+          const DropdownMenuItem<String>(
+            value: '__new__',
+            child: Row(
+              children: [
+                Icon(Icons.add, size: 16),
+                SizedBox(width: 8),
+                Text('New Class'),
+              ],
+            ),
+          ),
+        ],
+        onChanged: (value) {
+          if (value == '__new__') {
+            _showCreateClassDialog(context, ref);
+          } else if (value != null) {
+            context.go('/class/$value');
+          }
+        },
       ),
-      isExpanded: true,
-      items: [
-        ...classes.map(
-          (c) => DropdownMenuItem<String>(
-            value: c.id,
-            child: Text(c.name, overflow: TextOverflow.ellipsis),
-          ),
-        ),
-        const DropdownMenuItem<String>(
-          value: '__new__',
-          child: Row(
-            children: [
-              Icon(Icons.add, size: 16),
-              SizedBox(width: 8),
-              Text('New Class'),
-            ],
-          ),
-        ),
-      ],
-      onChanged: (value) {
-        if (value == '__new__') {
-          _showCreateClassDialog(context, ref);
-        } else if (value != null) {
-          context.go('/class/$value');
-        }
-      },
     );
   }
 
@@ -83,25 +89,15 @@ class ClassDropdown extends ConsumerWidget {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               final name = nameController.text.trim();
               if (name.isEmpty) return;
-              final id = 'class-${DateTime.now().millisecondsSinceEpoch}';
-              final now = DateTime.now();
-              ref
+              final newClass = await ref
                   .read(classListProvider.notifier)
-                  .addClass(
-                    HypatiaClass(
-                      id: id,
-                      name: name,
-                      description: descController.text.trim(),
-                      createdAt: now,
-                      updatedAt: now,
-                    ),
-                  );
-              Navigator.pop(dialogContext);
+                  .create(name: name, description: descController.text.trim());
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
               if (context.mounted) {
-                context.go('/class/$id');
+                context.go('/class/${newClass.id}');
               }
             },
             child: const Text('Create'),

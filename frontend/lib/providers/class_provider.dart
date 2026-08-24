@@ -1,9 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/hypatia_class.dart';
+import '../services/api_client.dart';
 
 final classListProvider =
-    NotifierProvider<ClassListNotifier, List<HypatiaClass>>(
+    AsyncNotifierProvider<ClassListNotifier, List<HypatiaClass>>(
       ClassListNotifier.new,
     );
 
@@ -12,42 +13,37 @@ final currentClassIdProvider = StateProvider<String?>((ref) => null);
 final currentClassProvider = Provider<HypatiaClass?>((ref) {
   final classId = ref.watch(currentClassIdProvider);
   if (classId == null) return null;
-  final classes = ref.watch(classListProvider);
-  return classes.where((c) => c.id == classId).firstOrNull;
+  final classesAsync = ref.watch(classListProvider);
+  return classesAsync.valueOrNull?.where((c) => c.id == classId).firstOrNull;
 });
 
-class ClassListNotifier extends Notifier<List<HypatiaClass>> {
+class ClassListNotifier extends AsyncNotifier<List<HypatiaClass>> {
   @override
-  List<HypatiaClass> build() {
-    return _mockClasses;
+  Future<List<HypatiaClass>> build() async {
+    final apiClient = ref.read(apiClientProvider);
+    return apiClient.listClasses();
   }
 
-  void addClass(HypatiaClass newClass) {
-    state = [...state, newClass];
+  Future<HypatiaClass> create({
+    required String name,
+    String? description,
+  }) async {
+    final apiClient = ref.read(apiClientProvider);
+    final newClass = await apiClient.createClass(
+      name: name,
+      description: description,
+    );
+    ref.invalidateSelf();
+    return newClass;
   }
 
-  void removeClass(String classId) {
-    state = state.where((c) => c.id != classId).toList();
+  Future<void> delete(String classId) async {
+    final apiClient = ref.read(apiClientProvider);
+    await apiClient.deleteClass(classId);
+    ref.invalidateSelf();
+  }
+
+  Future<void> refresh() async {
+    ref.invalidateSelf();
   }
 }
-
-final _mockClasses = [
-  HypatiaClass(
-    id: 'class-1',
-    name: 'Machine Learning',
-    description: 'CS229 lecture notes and papers',
-    fileCount: 5,
-    pageCount: 12,
-    createdAt: DateTime(2024, 9, 1),
-    updatedAt: DateTime(2024, 9, 15),
-  ),
-  HypatiaClass(
-    id: 'class-2',
-    name: 'Organic Chemistry',
-    description: 'CHEM 301 materials',
-    fileCount: 3,
-    pageCount: 8,
-    createdAt: DateTime(2024, 9, 5),
-    updatedAt: DateTime(2024, 9, 10),
-  ),
-];

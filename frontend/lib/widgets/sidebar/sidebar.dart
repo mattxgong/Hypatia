@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/theme_provider.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
-import 'search_bar.dart' as sidebar;
+import 'search_bar.dart';
 import 'wiki_tree.dart';
 
 class Sidebar extends ConsumerWidget {
@@ -13,6 +13,7 @@ class Sidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final searchQuery = ref.watch(searchQueryProvider);
 
     return Material(
       color: theme.colorScheme.surfaceContainerLowest,
@@ -21,10 +22,14 @@ class Sidebar extends ConsumerWidget {
           const Padding(padding: EdgeInsets.all(12), child: ClassDropdown()),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
-            child: sidebar.SidebarSearchBar(),
+            child: SidebarSearchBar(),
           ),
           const SizedBox(height: 8),
-          const Expanded(child: WikiTree()),
+          Expanded(
+            child: searchQuery.isNotEmpty
+                ? const SearchResults()
+                : const WikiTree(),
+          ),
           const Divider(height: 1),
           const Padding(padding: EdgeInsets.all(12), child: AddFileButton()),
           Padding(

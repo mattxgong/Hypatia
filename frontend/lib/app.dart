@@ -8,19 +8,12 @@ import 'providers/theme_provider.dart';
 import 'screens/home_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
-  final classes = ref.read(classListProvider);
-  final defaultClassId = classes.isNotEmpty ? classes.first.id : null;
-
   return GoRouter(
     initialLocation: '/',
     routes: [
       GoRoute(
         path: '/',
-        redirect: (context, state) {
-          if (defaultClassId != null) return '/class/$defaultClassId';
-          return null;
-        },
-        builder: (context, state) => const _NoClassesScreen(),
+        builder: (context, state) => const _ClassRedirectScreen(),
       ),
       GoRoute(
         path: '/class/:classId',
@@ -32,6 +25,31 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+class _ClassRedirectScreen extends ConsumerWidget {
+  const _ClassRedirectScreen();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final classesAsync = ref.watch(classListProvider);
+
+    return classesAsync.when(
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
+      error: (e, _) =>
+          Scaffold(body: Center(child: Text('Error loading classes: $e'))),
+      data: (classes) {
+        if (classes.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) context.go('/class/${classes.first.id}');
+          });
+          return const Scaffold(body: SizedBox.shrink());
+        }
+        return const _NoClassesScreen();
+      },
+    );
+  }
+}
 
 class _ClassRouteSync extends ConsumerStatefulWidget {
   const _ClassRouteSync({required this.classId, required this.child});
@@ -70,11 +88,11 @@ class _ClassRouteSyncState extends ConsumerState<_ClassRouteSync> {
   Widget build(BuildContext context) => widget.child;
 }
 
-class _NoClassesScreen extends StatelessWidget {
+class _NoClassesScreen extends ConsumerWidget {
   const _NoClassesScreen();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: Center(
         child: Column(
@@ -92,8 +110,61 @@ class _NoClassesScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             const Text('Create a class to get started.'),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () => _showCreateDialog(context, ref),
+              icon: const Icon(Icons.add),
+              label: const Text('Create Class'),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showCreateDialog(BuildContext context, WidgetRef ref) {
+    final nameController = TextEditingController();
+    final descController = TextEditingController();
+
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('New Class'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: 'Name'),
+              autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: descController,
+              decoration: const InputDecoration(labelText: 'Description'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              if (name.isEmpty) return;
+              final newClass = await ref
+                  .read(classListProvider.notifier)
+                  .create(name: name, description: descController.text.trim());
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              if (context.mounted) {
+                context.go('/class/${newClass.id}');
+              }
+            },
+            child: const Text('Create'),
+          ),
+        ],
       ),
     );
   }

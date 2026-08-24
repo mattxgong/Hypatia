@@ -208,3 +208,35 @@ Design empty states for each panel:
 - 6.3 second (connects UI to data).
 - 6.4-6.11 can be built in parallel after 6.3, though 6.6 and 6.10 depend on 6.5, and 6.7 depends on 6.2.
 - 6.12 and 6.13 are polish, done throughout and finalized last.
+
+---
+
+## Implementation Notes (Post-Completion)
+
+**Status**: Phase 6 complete. All tasks implemented and passing `flutter analyze` + `dart format`.
+
+### Key decisions and deviations from original plan
+
+1. **Dio chosen over `http`** for the API client — multipart upload, interceptors, and structured error parsing are much easier with Dio.
+
+2. **Model alignment was substantial**: Frontend models diverged significantly from the API contract during Phase 5 (mock data). All models were rewritten with `fromJson`/`toJson` and field additions (`fileSizeBytes`, `rawPath`, `convertedPath`, `errorMessage`, `metadataJson`, `updatedAt` on SourceFile; `id`/`classId`/`sourceFileIds` on WikiPage; `synthesis` WikiCategory).
+
+3. **file_picker v12 breaking changes**: The `FilePicker.platform.pickFiles()` API from earlier versions was replaced with static `FilePicker.pickFiles()`. The `allowMultiple` parameter is deprecated (multi-select is now the default for `pickFiles`).
+
+4. **Source viewer is scaffolding only**: Full video playback (`media_kit`) and PDF rendering (`pdfrx`/`syncfusion`) require heavy native dependencies and platform-specific setup. The current implementation fetches converted text content and displays it in a monospace dialog. Full media support is deferred to Phase 8.
+
+5. **Drag-and-drop (`desktop_drop`) deferred**: Not added in this phase to avoid additional native dependencies. Can be added incrementally later.
+
+6. **Provider architecture**: All providers migrated from sync `Notifier`/`StateProvider` to `AsyncNotifierProvider`, `FutureProvider.family`, or `NotifierProvider.family` to properly handle loading/error states with `AsyncValue.when()`.
+
+7. **WebSocket auto-reconnect**: Implemented with exponential backoff (1s → 2s → 4s → ... → 32s cap). Connection state exposed as an enum stream.
+
+8. **`backendBaseUrlProvider`**: Introduced as a `StateProvider<String>` set by `BackendGate` when the backend becomes ready, rather than hardcoding port 8000.
+
+### Deferred to later phases
+
+- Full media playback in source viewer (media_kit + pdfrx native deps) → Phase 8
+- Drag-and-drop file upload (desktop_drop) → Phase 8
+- Upload progress percentage (Dio progress callback wired to UI) → Phase 8
+- `backup` and `tasks` API integration → Phase 8
+- Class stats display in dropdown → Phase 8

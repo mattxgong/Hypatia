@@ -13,9 +13,6 @@ class ChatPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final classId = ref.watch(currentClassIdProvider);
-    final messages = classId != null
-        ? ref.watch(chatMessagesProvider(classId))
-        : null;
     final theme = Theme.of(context);
 
     return Material(
@@ -25,25 +22,76 @@ class ChatPanel extends ConsumerWidget {
           _ChatHeader(
             onNewChat: () {
               if (classId != null) {
-                ref.read(chatMessagesProvider(classId).notifier).clear();
+                ref.read(chatMessagesProvider(classId).notifier).clearHistory();
               }
             },
           ),
-          Expanded(
-            child: messages == null || messages.isEmpty
-                ? const StarterCards()
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    reverse: true,
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[messages.length - 1 - index];
-                      return MessageBubble(message: message);
-                    },
-                  ),
-          ),
+          Expanded(child: _ChatBody(classId: classId)),
           const CommandInput(),
         ],
+      ),
+    );
+  }
+}
+
+class _ChatBody extends ConsumerWidget {
+  const _ChatBody({required this.classId});
+
+  final String? classId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (classId == null) return const StarterCards();
+
+    final messagesAsync = ref.watch(chatMessagesProvider(classId!));
+    final streamingContent = ref.watch(chatStreamingContentProvider);
+
+    return messagesAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error loading chat: $e')),
+      data: (messages) {
+        if (messages.isEmpty && streamingContent.isEmpty) {
+          return const StarterCards();
+        }
+
+        final itemCount =
+            messages.length + (streamingContent.isNotEmpty ? 1 : 0);
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          reverse: true,
+          itemCount: itemCount,
+          itemBuilder: (context, index) {
+            if (index == 0 && streamingContent.isNotEmpty) {
+              return _StreamingBubble(content: streamingContent);
+            }
+            final msgIndex = streamingContent.isNotEmpty ? index - 1 : index;
+            final message = messages[messages.length - 1 - msgIndex];
+            return MessageBubble(message: message);
+          },
+        );
+      },
+    );
+  }
+}
+
+class _StreamingBubble extends StatelessWidget {
+  const _StreamingBubble({required this.content});
+
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(content, style: theme.textTheme.bodyMedium),
       ),
     );
   }

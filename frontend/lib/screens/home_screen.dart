@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../widgets/chat_panel/chat_panel.dart';
 import '../widgets/sidebar/sidebar.dart';
+import '../widgets/source_viewer/source_viewer.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
 
 final _sidebarWidthProvider = StateProvider<double>((ref) => 250);
@@ -10,11 +11,22 @@ final _chatPanelWidthProvider = StateProvider<double>((ref) => 350);
 final _sidebarCollapsedProvider = StateProvider<bool>((ref) => false);
 final _chatPanelCollapsedProvider = StateProvider<bool>((ref) => false);
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(sourceViewerRequestProvider, (prev, next) {
+      if (next != null) {
+        showSourceViewer(context, next);
+        ref.read(sourceViewerRequestProvider.notifier).state = null;
+      }
+    });
     final sidebarWidth = ref.watch(_sidebarWidthProvider);
     final chatWidth = ref.watch(_chatPanelWidthProvider);
     final sidebarCollapsed = ref.watch(_sidebarCollapsedProvider);

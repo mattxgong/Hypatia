@@ -17,82 +17,93 @@ class WikiTree extends ConsumerWidget {
       return const Center(child: Text('Select a class'));
     }
 
-    final pages = ref.watch(wikiTreeProvider(classId));
-    final files = ref.watch(fileListProvider(classId));
+    final pagesAsync = ref.watch(wikiTreeProvider(classId));
+    final filesAsync = ref.watch(fileListProvider(classId));
     final currentPath = ref.watch(currentWikiPagePathProvider);
 
-    final concepts = pages
-        .where((p) => p.category == WikiCategory.concept)
-        .toList();
-    final summaries = pages
-        .where((p) => p.category == WikiCategory.sourceSummary)
-        .toList();
-    final entities = pages
-        .where((p) => p.category == WikiCategory.entity)
-        .toList();
-    final indexPage = pages.where((p) => p.category == WikiCategory.wikiIndex);
+    return pagesAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Error: $e')),
+      data: (pages) {
+        final files = filesAsync.valueOrNull ?? [];
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      children: [
-        if (indexPage.isNotEmpty)
-          _PageTile(
-            page: indexPage.first,
-            isSelected: currentPath == indexPage.first.path,
-            onTap: () => ref.read(currentWikiPagePathProvider.notifier).state =
-                indexPage.first.path,
-          ),
-        _CategorySection(
-          title: 'Concepts',
-          icon: Icons.lightbulb_outline,
-          children: concepts
-              .map(
-                (p) => _PageTile(
-                  page: p,
-                  isSelected: currentPath == p.path,
-                  onTap: () =>
-                      ref.read(currentWikiPagePathProvider.notifier).state =
-                          p.path,
-                ),
-              )
-              .toList(),
-        ),
-        _CategorySection(
-          title: 'Source Summaries',
-          icon: Icons.description_outlined,
-          children: summaries
-              .map(
-                (p) => _PageTile(
-                  page: p,
-                  isSelected: currentPath == p.path,
-                  onTap: () =>
-                      ref.read(currentWikiPagePathProvider.notifier).state =
-                          p.path,
-                ),
-              )
-              .toList(),
-        ),
-        _CategorySection(
-          title: 'Entities',
-          icon: Icons.person_outline,
-          children: entities
-              .map(
-                (p) => _PageTile(
-                  page: p,
-                  isSelected: currentPath == p.path,
-                  onTap: () =>
-                      ref.read(currentWikiPagePathProvider.notifier).state =
-                          p.path,
-                ),
-              )
-              .toList(),
-        ),
-        _CategorySection(
-          title: 'Source Files',
-          icon: Icons.folder_outlined,
-          children: files.map((f) => _FileTile(file: f)).toList(),
-        ),
-      ],
+        final concepts = pages
+            .where((p) => p.category == WikiCategory.concept)
+            .toList();
+        final summaries = pages
+            .where((p) => p.category == WikiCategory.sourceSummary)
+            .toList();
+        final entities = pages
+            .where((p) => p.category == WikiCategory.entity)
+            .toList();
+        final indexPage = pages.where(
+          (p) => p.category == WikiCategory.wikiIndex,
+        );
+
+        return ListView(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          children: [
+            if (indexPage.isNotEmpty)
+              _PageTile(
+                page: indexPage.first,
+                isSelected: currentPath == indexPage.first.path,
+                onTap: () =>
+                    ref.read(currentWikiPagePathProvider.notifier).state =
+                        indexPage.first.path,
+              ),
+            _CategorySection(
+              title: 'Concepts',
+              icon: Icons.lightbulb_outline,
+              children: concepts
+                  .map(
+                    (p) => _PageTile(
+                      page: p,
+                      isSelected: currentPath == p.path,
+                      onTap: () =>
+                          ref.read(currentWikiPagePathProvider.notifier).state =
+                              p.path,
+                    ),
+                  )
+                  .toList(),
+            ),
+            _CategorySection(
+              title: 'Source Summaries',
+              icon: Icons.description_outlined,
+              children: summaries
+                  .map(
+                    (p) => _PageTile(
+                      page: p,
+                      isSelected: currentPath == p.path,
+                      onTap: () =>
+                          ref.read(currentWikiPagePathProvider.notifier).state =
+                              p.path,
+                    ),
+                  )
+                  .toList(),
+            ),
+            _CategorySection(
+              title: 'Entities',
+              icon: Icons.person_outline,
+              children: entities
+                  .map(
+                    (p) => _PageTile(
+                      page: p,
+                      isSelected: currentPath == p.path,
+                      onTap: () =>
+                          ref.read(currentWikiPagePathProvider.notifier).state =
+                              p.path,
+                    ),
+                  )
+                  .toList(),
+            ),
+            _CategorySection(
+              title: 'Source Files',
+              icon: Icons.folder_outlined,
+              children: files.map((f) => _FileTile(file: f)).toList(),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -183,7 +194,7 @@ class _FileTile extends StatelessWidget {
       dense: true,
       visualDensity: VisualDensity.compact,
       title: Text(
-        file.name,
+        file.originalFilename,
         style: theme.textTheme.bodySmall,
         overflow: TextOverflow.ellipsis,
       ),

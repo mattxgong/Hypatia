@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'providers/theme_provider.dart';
+import 'services/api_client.dart';
 import 'services/backend_launcher.dart';
 
 Future<void> main() async {
@@ -56,14 +57,14 @@ class HypatiaApp extends StatelessWidget {
   }
 }
 
-class BackendGate extends StatefulWidget {
+class BackendGate extends ConsumerStatefulWidget {
   const BackendGate({super.key});
 
   @override
-  State<BackendGate> createState() => _BackendGateState();
+  ConsumerState<BackendGate> createState() => _BackendGateState();
 }
 
-class _BackendGateState extends State<BackendGate> {
+class _BackendGateState extends ConsumerState<BackendGate> {
   late final BackendLauncher _launcher;
   StreamSubscription<BackendStatus>? _statusSub;
   StreamSubscription<String>? _logSub;
@@ -81,7 +82,12 @@ class _BackendGateState extends State<BackendGate> {
     }
 
     _statusSub = _launcher.onStatusChange.listen((status) {
-      if (mounted) setState(() => _status = status);
+      if (mounted) {
+        setState(() => _status = status);
+        if (status == BackendStatus.ready) {
+          ref.read(backendBaseUrlProvider.notifier).state = _launcher.baseUrl;
+        }
+      }
     });
     _logSub = _launcher.onLog.listen((line) {
       _log.add(line);

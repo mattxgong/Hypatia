@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 
@@ -47,17 +46,7 @@ class _CommandInputState extends ConsumerState<CommandInput> {
     final classId = ref.read(currentClassIdProvider);
     if (classId == null) return;
 
-    ref
-        .read(chatMessagesProvider(classId).notifier)
-        .addMessage(
-          ChatMessage(
-            id: 'msg-${DateTime.now().millisecondsSinceEpoch}',
-            role: ChatRole.user,
-            content: text,
-            command: text.startsWith('/') ? text.split(' ').first : null,
-            createdAt: DateTime.now(),
-          ),
-        );
+    ref.read(chatMessagesProvider(classId).notifier).sendMessage(text);
 
     _controller.clear();
     _focusNode.requestFocus();
