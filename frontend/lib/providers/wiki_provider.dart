@@ -98,4 +98,108 @@ First introduced in the course in [Lecture 1](hypatia://cite?file=lecture-1.mp4&
 ''',
     updatedAt: DateTime(2024, 9, 14),
   ),
+  'pages/concepts/backpropagation': WikiPage(
+    path: 'pages/concepts/backpropagation',
+    title: 'Backpropagation',
+    category: WikiCategory.concept,
+    content: '''# Backpropagation
+
+Backpropagation is the algorithm used to compute gradients of the loss
+function with respect to each weight in a neural network.
+
+## How it Works
+
+1. **Forward pass**: compute predictions and loss
+2. **Backward pass**: propagate error gradients from output to input
+3. **Update**: adjust weights using gradient descent
+
+## Chain Rule
+
+Backpropagation relies on the chain rule of calculus to efficiently compute
+partial derivatives through each layer.
+
+## Citations
+
+Covered in [Lecture 2](hypatia://cite?file=lecture-2.mp4&loc=t:120).
+''',
+    updatedAt: DateTime(2024, 9, 13),
+  ),
+  'pages/source-summaries/lecture-1': WikiPage(
+    path: 'pages/source-summaries/lecture-1',
+    title: 'Lecture 1 — Intro to ML',
+    category: WikiCategory.sourceSummary,
+    content: '''# Lecture 1 — Introduction to Machine Learning
+
+## Overview
+
+This lecture introduces the fundamental concepts of machine learning,
+including supervised and unsupervised learning paradigms.
+
+## Key Topics
+
+- What is machine learning?
+- Supervised vs. unsupervised learning
+- Regression and classification
+- Introduction to neural networks
+
+## Summary
+
+The lecture provides a high-level overview of the ML landscape and sets the
+stage for deeper dives into specific algorithms in subsequent lectures.
+''',
+    updatedAt: DateTime(2024, 9, 10),
+  ),
+  'pages/source-summaries/lecture-2': WikiPage(
+    path: 'pages/source-summaries/lecture-2',
+    title: 'Lecture 2 — Linear Regression',
+    category: WikiCategory.sourceSummary,
+    content: '''# Lecture 2 — Linear Regression
+
+## Overview
+
+This lecture covers linear regression, the simplest supervised learning
+algorithm for predicting continuous values.
+
+## Key Topics
+
+- Hypothesis function: h(x) = θ₀ + θ₁x
+- Cost function (MSE)
+- Gradient descent algorithm
+- Normal equation
+
+## Summary
+
+Linear regression serves as the foundation for understanding more complex
+models. The gradient descent optimization technique introduced here is reused
+throughout the course.
+''',
+    updatedAt: DateTime(2024, 9, 11),
+  ),
+  'pages/entities/geoffrey-hinton': WikiPage(
+    path: 'pages/entities/geoffrey-hinton',
+    title: 'Geoffrey Hinton',
+    category: WikiCategory.entity,
+    content: '''# Geoffrey Hinton
+
+Geoffrey Hinton is a computer scientist and cognitive psychologist, known as
+one of the "Godfathers of Deep Learning."
+
+## Contributions
+
+- **Backpropagation**: popularized the algorithm for training neural networks
+- **Boltzmann machines**: co-invented with Terry Sejnowski
+- **Deep belief networks**: pioneered layer-wise pre-training
+- **Dropout**: regularization technique to prevent overfitting
+
+## Recognition
+
+- 2018 Turing Award (shared with Yoshua Bengio and Yann LeCun)
+- Fellow of the Royal Society
+
+## References
+
+Mentioned in [Lecture 1](hypatia://cite?file=lecture-1.mp4&loc=t:85).
+''',
+    updatedAt: DateTime(2024, 9, 12),
+  ),
 };

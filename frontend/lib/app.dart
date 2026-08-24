@@ -48,7 +48,9 @@ class _ClassRouteSyncState extends ConsumerState<_ClassRouteSync> {
   void initState() {
     super.initState();
     Future.microtask(() {
-      ref.read(currentClassIdProvider.notifier).state = widget.classId;
+      if (mounted) {
+        ref.read(currentClassIdProvider.notifier).state = widget.classId;
+      }
     });
   }
 
@@ -56,7 +58,11 @@ class _ClassRouteSyncState extends ConsumerState<_ClassRouteSync> {
   void didUpdateWidget(covariant _ClassRouteSync oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.classId != widget.classId) {
-      ref.read(currentClassIdProvider.notifier).state = widget.classId;
+      Future.microtask(() {
+        if (mounted) {
+          ref.read(currentClassIdProvider.notifier).state = widget.classId;
+        }
+      });
     }
   }
 
