@@ -3,8 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:frontend/main.dart';
+import 'package:frontend/app.dart';
+import 'package:frontend/models/hypatia_class.dart';
+import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/theme_provider.dart';
+
+class _EmptyClassListNotifier extends ClassListNotifier {
+  @override
+  Future<List<HypatiaClass>> build() async => [];
+}
 
 void main() {
   late SharedPreferences prefs;
@@ -14,23 +21,25 @@ void main() {
     prefs = await SharedPreferences.getInstance();
   });
 
-  ProviderScope wrapWithProviders(Widget child) {
-    return ProviderScope(
-      overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
-      child: child,
-    );
-  }
-
   testWidgets('App renders without throwing', (tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(wrapWithProviders(const HypatiaApp()));
-    await tester.pump();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          classListProvider.overrideWith(() => _EmptyClassListNotifier()),
+        ],
+        child: const HypatiaShell(),
+      ),
+    );
+    await tester.pumpAndSettle();
 
     expect(find.byType(Scaffold), findsOneWidget);
+    expect(find.text('Welcome to Hypatia'), findsOneWidget);
   });
 
   testWidgets('Theme toggle persists preference', (tester) async {

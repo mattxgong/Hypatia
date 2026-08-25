@@ -30,9 +30,8 @@ void main() {
   }
 
   testWidgets('Chat panel shows starter cards when empty', (tester) async {
-    await tester.pumpWidget(
-      wrapWithProviders(const ChatPanel(), classId: 'class-1'),
-    );
+    // No classId → shows StarterCards without triggering API-backed chat provider
+    await tester.pumpWidget(wrapWithProviders(const ChatPanel()));
     await tester.pumpAndSettle();
 
     expect(find.text('Ask about my wiki'), findsOneWidget);
@@ -41,9 +40,7 @@ void main() {
   });
 
   testWidgets('Chat panel shows header with new chat button', (tester) async {
-    await tester.pumpWidget(
-      wrapWithProviders(const ChatPanel(), classId: 'class-1'),
-    );
+    await tester.pumpWidget(wrapWithProviders(const ChatPanel()));
     await tester.pumpAndSettle();
 
     expect(find.text('Chat'), findsOneWidget);
