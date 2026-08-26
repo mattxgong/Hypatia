@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import 'config/theme.dart';
 import 'providers/class_provider.dart';
 import 'providers/theme_provider.dart';
+import 'screens/class_settings_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/sidebar/class_dropdown.dart' show showCreateClassDialog;
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -20,6 +22,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final classId = state.pathParameters['classId']!;
           return _ClassRouteSync(classId: classId, child: const HomeScreen());
+        },
+      ),
+      GoRoute(
+        path: '/class/:classId/settings',
+        builder: (context, state) {
+          final classId = state.pathParameters['classId']!;
+          return _ClassRouteSync(
+            classId: classId,
+            child: const ClassSettingsScreen(),
+          );
         },
       ),
     ],
@@ -112,59 +124,12 @@ class _NoClassesScreen extends ConsumerWidget {
             const Text('Create a class to get started.'),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: () => _showCreateDialog(context, ref),
+              onPressed: () => showCreateClassDialog(context, ref),
               icon: const Icon(Icons.add),
               label: const Text('Create Class'),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _showCreateDialog(BuildContext context, WidgetRef ref) {
-    final nameController = TextEditingController();
-    final descController = TextEditingController();
-
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('New Class'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
-              autofocus: true,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: descController,
-              decoration: const InputDecoration(labelText: 'Description'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final name = nameController.text.trim();
-              if (name.isEmpty) return;
-              final newClass = await ref
-                  .read(classListProvider.notifier)
-                  .create(name: name, description: descController.text.trim());
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              if (context.mounted) {
-                context.go('/class/${newClass.id}');
-              }
-            },
-            child: const Text('Create'),
-          ),
-        ],
       ),
     );
   }

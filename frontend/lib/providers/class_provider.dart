@@ -37,6 +37,21 @@ class ClassListNotifier extends AsyncNotifier<List<HypatiaClass>> {
     return newClass;
   }
 
+  Future<HypatiaClass> updateClass(
+    String classId, {
+    String? name,
+    String? description,
+  }) async {
+    final apiClient = ref.read(apiClientProvider);
+    final updated = await apiClient.updateClass(
+      classId,
+      name: name,
+      description: description,
+    );
+    ref.invalidateSelf();
+    return updated;
+  }
+
   Future<void> delete(String classId) async {
     final apiClient = ref.read(apiClientProvider);
     await apiClient.deleteClass(classId);

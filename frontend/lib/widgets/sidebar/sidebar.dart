@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/theme_provider.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
+import 'provider_selector.dart';
 import 'search_bar.dart';
 import 'wiki_tree.dart';
 
@@ -32,6 +33,11 @@ class Sidebar extends ConsumerWidget {
           ),
           const Divider(height: 1),
           const Padding(padding: EdgeInsets.all(12), child: AddFileButton()),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: ProviderSelector(),
+          ),
+          const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
             child: Row(

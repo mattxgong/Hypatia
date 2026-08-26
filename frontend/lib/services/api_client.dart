@@ -371,6 +371,35 @@ class ApiClient {
     }
   }
 
+  // --- Settings ---
+
+  Future<Map<String, dynamic>> getSettings() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>('/api/settings');
+      return response.data!;
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> updateSettings({
+    String? llmProvider,
+    String? llmModel,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (llmProvider != null) body['llm_provider'] = llmProvider;
+      if (llmModel != null) body['llm_model'] = llmModel;
+      final response = await _dio.put<Map<String, dynamic>>(
+        '/api/settings',
+        data: body,
+      );
+      return response.data!;
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
   // --- WebSocket URL helper ---
 
   String getChatWebSocketUrl(String classId) {
