@@ -295,10 +295,7 @@ class _ImageViewer extends StatelessWidget {
 }
 
 class _TextViewer extends ConsumerWidget {
-  const _TextViewer({
-    required this.classId,
-    required this.fileId,
-  });
+  const _TextViewer({required this.classId, required this.fileId});
 
   final String classId;
   final String fileId;

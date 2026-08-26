@@ -206,10 +206,7 @@ class SearchResults extends ConsumerWidget {
               ),
               subtitle: result.snippet.isNotEmpty
                   ? RichText(
-                      text: _buildHighlightedSnippet(
-                        result.snippet,
-                        theme,
-                      ),
+                      text: _buildHighlightedSnippet(result.snippet, theme),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     )
@@ -227,7 +224,8 @@ class SearchResults extends ConsumerWidget {
   }
 
   TextSpan _buildHighlightedSnippet(String snippet, ThemeData theme) {
-    final baseStyle = theme.textTheme.bodySmall?.copyWith(
+    final baseStyle =
+        theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
         ) ??
         const TextStyle();
@@ -239,20 +237,24 @@ class SearchResults extends ConsumerWidget {
 
     for (final match in regex.allMatches(snippet)) {
       if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: _stripTags(snippet.substring(lastEnd, match.start)),
-          style: baseStyle,
-        ));
+        spans.add(
+          TextSpan(
+            text: _stripTags(snippet.substring(lastEnd, match.start)),
+            style: baseStyle,
+          ),
+        );
       }
       spans.add(TextSpan(text: match.group(1), style: boldStyle));
       lastEnd = match.end;
     }
 
     if (lastEnd < snippet.length) {
-      spans.add(TextSpan(
-        text: _stripTags(snippet.substring(lastEnd)),
-        style: baseStyle,
-      ));
+      spans.add(
+        TextSpan(
+          text: _stripTags(snippet.substring(lastEnd)),
+          style: baseStyle,
+        ),
+      );
     }
 
     return TextSpan(children: spans);

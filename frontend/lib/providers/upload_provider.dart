@@ -56,8 +56,7 @@ class UploadProgressNotifier extends Notifier<UploadState> {
 
     _lastPaths = paths;
     _cancelToken = CancelToken();
-    final fileNames =
-        paths.map((p) => p.split(RegExp(r'[/\\]')).last).toList();
+    final fileNames = paths.map((p) => p.split(RegExp(r'[/\\]')).last).toList();
 
     state = UploadState(
       status: UploadStatus.uploading,
