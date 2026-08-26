@@ -38,10 +38,43 @@ from app.services.prompts.summarize_prompt import SUMMARIZE_SYSTEM_PROMPT
 from app.services.prompts.wiki_schema import WIKI_SCHEMA
 from app.services.wiki_git import commit_wiki_change, init_wiki_repo, wiki_dir
 from app.services.wiki_parser import ParsedWikiPage, parse_llm_output
-from app.services.wiki_search import delete_fts_page, search_wiki_pages, sync_fts_page
+from app.services.wiki_search import (
+    delete_fts_page,
+    hybrid_search,
+    sync_fts_page,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger()
+
+
+async def _upsert_embedding_safe(
+    session: AsyncSession, page_id: uuid.UUID | str, content: str
+) -> None:
+    """Upsert embedding, silently skipping if unavailable or table missing."""
+    try:
+        from app.services.embedding_service import upsert_embedding
+
+        async with session.begin_nested():
+            await upsert_embedding(session, page_id, content)
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("embedding_upsert_skipped", page_id=str(page_id))
+
+
+async def _delete_embedding_safe(session: AsyncSession, page_id: uuid.UUID | str) -> None:
+    """Delete embedding, silently skipping if unavailable or table missing."""
+    try:
+        from app.services.embedding_service import delete_embedding
+
+        async with session.begin_nested():
+            await delete_embedding(session, page_id)
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("embedding_delete_skipped", page_id=str(page_id))
+
 
 _ENCODER: tiktoken.Encoding | None = None
 
@@ -279,7 +312,7 @@ async def handle_ask(
     """Answer a user question by searching the wiki and prompting the LLM."""
     cid = str(class_id)
 
-    search_results = await search_wiki_pages(session, class_id, query, limit=10)
+    search_results = await hybrid_search(session, class_id, query, limit=10)
 
     wiki_path = wiki_dir(cid)
     pages_context: list[str] = []
@@ -388,7 +421,7 @@ async def _get_related_pages_context(
 ) -> str:
     """Find existing related pages to include as context for the LLM."""
     budget = int(_DEFAULT_CONTEXT_WINDOW * 0.30)
-    results = await search_wiki_pages(session, class_id, query_hint, limit=5)
+    results = await hybrid_search(session, class_id, query_hint, limit=5)
 
     wiki_path = wiki_dir(str(class_id))
     pages_text: list[str] = []
@@ -469,6 +502,7 @@ async def _write_wiki_page(
         content=page.content,
         tags=page.tags,
     )
+    await _upsert_embedding_safe(session, db_page.id, page.content)
 
 
 def _render_page_content(page: ParsedWikiPage, file_id: uuid.UUID) -> str:
@@ -762,6 +796,7 @@ async def update_wiki_page(
         content=content,
         tags=tags,
     )
+    await _upsert_embedding_safe(session, db_page.id, content)
     await session.commit()
 
     if is_user_edit:
@@ -902,7 +937,7 @@ async def handle_summarize(
     cid = str(class_id)
     wp = wiki_dir(cid)
 
-    search_results = await search_wiki_pages(session, class_id, topic, limit=10)
+    search_results = await hybrid_search(session, class_id, topic, limit=10)
     if not search_results:
         return SummarizeResult(success=False, error="No wiki pages found for this topic")
 
@@ -977,6 +1012,7 @@ async def handle_summarize(
         content=page.content,
         tags=page.tags,
     )
+    await _upsert_embedding_safe(session, db_page.id, page.content)
 
     index_content = _rebuild_index_from_disk(wp)
     _write_index(wp, index_content)
@@ -1036,6 +1072,7 @@ async def handle_remove(
             if page_file.exists():
                 page_file.unlink()
             await delete_fts_page(session, page.id)
+            await _delete_embedding_safe(session, page.id)
             await session.delete(page)
             result.pages_deleted.append(page.path)
         else:
@@ -1370,7 +1407,7 @@ async def handle_ask_stream(
     """Stream an /ask response token-by-token."""
     cid = str(class_id)
 
-    search_results = await search_wiki_pages(session, class_id, query, limit=10)
+    search_results = await hybrid_search(session, class_id, query, limit=10)
 
     wp = wiki_dir(cid)
     pages_context: list[str] = []

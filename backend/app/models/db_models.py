@@ -6,7 +6,17 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -148,3 +158,13 @@ class ChatMessage(Base):
     )
 
     class_: Mapped[Class] = relationship(back_populates="chat_messages")
+
+
+class WikiPageEmbedding(Base):
+    __tablename__ = "wiki_page_embeddings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    page_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("wiki_pages.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

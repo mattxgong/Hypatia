@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../providers/search_provider.dart';
 import '../../providers/theme_provider.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
@@ -25,6 +26,12 @@ class Sidebar extends ConsumerWidget {
             padding: EdgeInsets.symmetric(horizontal: 12),
             child: SidebarSearchBar(),
           ),
+          if (searchQuery.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            const SearchModeSelector(),
+            const SizedBox(height: 4),
+            const SearchCategoryFilter(),
+          ],
           const SizedBox(height: 8),
           Expanded(
             child: searchQuery.isNotEmpty

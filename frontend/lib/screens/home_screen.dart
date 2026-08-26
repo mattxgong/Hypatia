@@ -1,7 +1,11 @@
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../providers/class_provider.dart';
+import '../providers/upload_provider.dart';
 import '../widgets/chat_panel/chat_panel.dart';
+import '../widgets/sidebar/add_file_button.dart';
 import '../widgets/sidebar/sidebar.dart';
 import '../widgets/source_viewer/source_viewer.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
@@ -19,6 +23,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _isDragging = false;
+
   @override
   Widget build(BuildContext context) {
     ref.listen(sourceViewerRequestProvider, (prev, next) {
@@ -33,56 +39,155 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final chatCollapsed = ref.watch(_chatPanelCollapsedProvider);
 
     return Scaffold(
-      body: Row(
-        children: [
-          if (!sidebarCollapsed) ...[
-            SizedBox(width: sidebarWidth, child: const Sidebar()),
-            _DraggableDivider(
-              onDrag: (dx) {
-                final current = ref.read(_sidebarWidthProvider);
-                ref.read(_sidebarWidthProvider.notifier).state = (current + dx)
-                    .clamp(180, 400);
-              },
-            ),
-          ] else
-            _CollapsedPanelStrip(
-              icon: Icons.menu,
-              onTap: () =>
-                  ref.read(_sidebarCollapsedProvider.notifier).state = false,
-            ),
-          Expanded(
-            child: Column(
+      body: DropTarget(
+        onDragEntered: (_) => setState(() => _isDragging = true),
+        onDragExited: (_) => setState(() => _isDragging = false),
+        onDragDone: (details) {
+          setState(() => _isDragging = false);
+          _handleDrop(details);
+        },
+        child: Stack(
+          children: [
+            Row(
               children: [
-                _TopBar(
-                  sidebarCollapsed: sidebarCollapsed,
-                  chatCollapsed: chatCollapsed,
-                  onToggleSidebar: () =>
-                      ref.read(_sidebarCollapsedProvider.notifier).state =
-                          !sidebarCollapsed,
-                  onToggleChat: () =>
-                      ref.read(_chatPanelCollapsedProvider.notifier).state =
-                          !chatCollapsed,
+                if (!sidebarCollapsed) ...[
+                  SizedBox(width: sidebarWidth, child: const Sidebar()),
+                  _DraggableDivider(
+                    onDrag: (dx) {
+                      final current = ref.read(_sidebarWidthProvider);
+                      ref.read(_sidebarWidthProvider.notifier).state =
+                          (current + dx).clamp(180, 400);
+                    },
+                  ),
+                ] else
+                  _CollapsedPanelStrip(
+                    icon: Icons.menu,
+                    onTap: () =>
+                        ref.read(_sidebarCollapsedProvider.notifier).state =
+                            false,
+                  ),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _TopBar(
+                        sidebarCollapsed: sidebarCollapsed,
+                        chatCollapsed: chatCollapsed,
+                        onToggleSidebar: () =>
+                            ref.read(_sidebarCollapsedProvider.notifier).state =
+                                !sidebarCollapsed,
+                        onToggleChat: () =>
+                            ref
+                                    .read(_chatPanelCollapsedProvider.notifier)
+                                    .state =
+                                !chatCollapsed,
+                      ),
+                      const Expanded(child: WikiViewer()),
+                    ],
+                  ),
                 ),
-                const Expanded(child: WikiViewer()),
+                if (!chatCollapsed) ...[
+                  _DraggableDivider(
+                    onDrag: (dx) {
+                      final current = ref.read(_chatPanelWidthProvider);
+                      ref.read(_chatPanelWidthProvider.notifier).state =
+                          (current - dx).clamp(280, 500);
+                    },
+                  ),
+                  SizedBox(width: chatWidth, child: const ChatPanel()),
+                ] else
+                  _CollapsedPanelStrip(
+                    icon: Icons.chat_bubble_outline,
+                    onTap: () =>
+                        ref.read(_chatPanelCollapsedProvider.notifier).state =
+                            false,
+                  ),
               ],
             ),
+            if (_isDragging) const _DropOverlay(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleDrop(DropDoneDetails details) {
+    final classId = ref.read(currentClassIdProvider);
+    if (classId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Select a class first')));
+      return;
+    }
+
+    final paths = <String>[];
+    final rejected = <String>[];
+
+    for (final file in details.files) {
+      final path = file.path;
+      final ext = path.split('.').last.toLowerCase();
+      if (allowedExtensions.contains(ext)) {
+        paths.add(path);
+      } else {
+        rejected.add(path.split(RegExp(r'[/\\]')).last);
+      }
+    }
+
+    if (rejected.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unsupported: ${rejected.take(3).join(", ")}${rejected.length > 3 ? "..." : ""}',
           ),
-          if (!chatCollapsed) ...[
-            _DraggableDivider(
-              onDrag: (dx) {
-                final current = ref.read(_chatPanelWidthProvider);
-                ref.read(_chatPanelWidthProvider.notifier).state =
-                    (current - dx).clamp(280, 500);
-              },
-            ),
-            SizedBox(width: chatWidth, child: const ChatPanel()),
-          ] else
-            _CollapsedPanelStrip(
-              icon: Icons.chat_bubble_outline,
-              onTap: () =>
-                  ref.read(_chatPanelCollapsedProvider.notifier).state = false,
-            ),
-        ],
+        ),
+      );
+    }
+
+    if (paths.isNotEmpty) {
+      ref.read(uploadProgressProvider.notifier).uploadFiles(paths);
+    }
+  }
+}
+
+class _DropOverlay extends StatelessWidget {
+  const _DropOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      color: theme.colorScheme.primary.withValues(alpha: 0.1),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: theme.colorScheme.primary, width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: theme.colorScheme.primary.withValues(alpha: 0.2),
+                blurRadius: 20,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.cloud_upload_outlined,
+                size: 48,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Drop files to upload',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

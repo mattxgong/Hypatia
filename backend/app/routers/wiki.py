@@ -14,10 +14,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session_factory, get_session
 from app.dependencies import check_llm_available
 from app.models.db_models import WikiPage
-from app.models.schemas import WikiPageRead, WikiPageUpdate, WikiTreeNodeRead
+from app.models.schemas import (
+    WikiPageRead,
+    WikiPageUpdate,
+    WikiSearchResponse,
+    WikiSearchResultRead,
+    WikiTreeNodeRead,
+)
 from app.services import wiki_engine
 from app.services.task_manager import task_manager
-from app.services.wiki_search import search_wiki_pages
+from app.services.wiki_search import (
+    SearchMode,
+    count_wiki_search_results,
+    hybrid_search,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -76,14 +86,35 @@ async def update_wiki_page(
     return WikiPageRead.model_validate(db_page)
 
 
-@router.get("/search")
+@router.get("/search", response_model=WikiSearchResponse)
 async def search_wiki(
     class_id: uuid.UUID,
     q: str = Query(..., min_length=1),
+    category: str | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    mode: SearchMode = Query("hybrid"),  # noqa: B008
     session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    results = await search_wiki_pages(session, class_id, q, limit=20)
-    return [asdict(r) for r in results]
+) -> WikiSearchResponse:
+    results = await hybrid_search(
+        session, class_id, q, limit=limit, category=category, offset=offset, mode=mode
+    )
+    total_count = await count_wiki_search_results(session, class_id, q, category=category)
+    return WikiSearchResponse(
+        results=[
+            WikiSearchResultRead(
+                page_id=r.page_id,
+                class_id=r.class_id,
+                path=r.path,
+                title=r.title,
+                category=r.category,
+                rank=r.rank,
+                snippet=r.snippet,
+            )
+            for r in results
+        ],
+        total_count=total_count,
+    )
 
 
 @router.post("/export")

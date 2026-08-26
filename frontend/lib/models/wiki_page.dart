@@ -113,6 +113,7 @@ class WikiSearchResult {
     required this.title,
     required this.snippet,
     required this.rank,
+    this.category,
   });
 
   factory WikiSearchResult.fromJson(Map<String, dynamic> json) {
@@ -122,6 +123,7 @@ class WikiSearchResult {
       title: json['title'] as String,
       snippet: json['snippet'] as String,
       rank: (json['rank'] as num).toDouble(),
+      category: json['category'] as String?,
     );
   }
 
@@ -130,4 +132,5 @@ class WikiSearchResult {
   final String title;
   final String snippet;
   final double rank;
+  final String? category;
 }

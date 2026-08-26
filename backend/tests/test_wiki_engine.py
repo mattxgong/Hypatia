@@ -191,6 +191,19 @@ async def test_handle_ask_with_pages(db_session: AsyncSession, tmp_path: Path):
     (pages_dir / "unit-testing.md").write_text(page_content, encoding="utf-8")
     (wiki_path / "index.md").write_text("# Index\n- Unit Testing\n", encoding="utf-8")
 
+    from app.models.db_models import WikiCategory
+
+    db_page = WikiPage(
+        id=page_id,
+        class_id=class_id,
+        path="pages/concepts/unit-testing.md",
+        title="Unit Testing",
+        category=WikiCategory.CONCEPT,
+        content="Unit testing verifies individual components work correctly.",
+    )
+    db_session.add(db_page)
+    await db_session.flush()
+
     await sync_fts_page(
         db_session,
         page_id=page_id,

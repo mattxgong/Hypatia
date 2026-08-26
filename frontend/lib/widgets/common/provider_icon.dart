@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class ProviderIcon extends StatelessWidget {
   const ProviderIcon({super.key, required this.providerId, this.size = 20});
@@ -8,25 +9,52 @@ class ProviderIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (icon, color) = _iconFor(providerId, context);
-    return Icon(icon, size: size, color: color);
+    final assetName = _assetFor(providerId);
+    final color = _colorFor(providerId, context);
+
+    return SvgPicture.asset(
+      assetName,
+      width: size,
+      height: size,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
   }
 
-  (IconData, Color?) _iconFor(String id, BuildContext context) {
+  String _assetFor(String id) {
+    switch (id) {
+      case 'copilot':
+      case 'copilot-ollama':
+        return 'assets/icons/copilot.svg';
+      case 'anthropic':
+        return 'assets/icons/anthropic.svg';
+      case 'openai':
+        return 'assets/icons/openai.svg';
+      case 'ollama':
+        return 'assets/icons/ollama.svg';
+      default:
+        return 'assets/icons/openai.svg';
+    }
+  }
+
+  Color _colorFor(String id, BuildContext context) {
     final theme = Theme.of(context);
     switch (id) {
       case 'copilot':
-        return (Icons.auto_awesome, theme.colorScheme.primary);
+        return theme.brightness == Brightness.dark
+            ? const Color(0xFF79C0FF)
+            : const Color(0xFF24292F);
       case 'anthropic':
-        return (Icons.psychology, const Color(0xFFD97706));
+        return const Color(0xFFD97706);
       case 'openai':
-        return (Icons.hub, const Color(0xFF10A37F));
+        return const Color(0xFF10A37F);
       case 'ollama':
-        return (Icons.computer, theme.colorScheme.tertiary);
+        return theme.brightness == Brightness.dark
+            ? Colors.white70
+            : const Color(0xFF333333);
       case 'copilot-ollama':
-        return (Icons.device_hub, theme.colorScheme.secondary);
+        return theme.colorScheme.secondary;
       default:
-        return (Icons.smart_toy, null);
+        return theme.colorScheme.onSurface;
     }
   }
 }

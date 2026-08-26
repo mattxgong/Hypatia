@@ -137,6 +137,7 @@ class ApiClient {
     String classId,
     List<String> filePaths, {
     void Function(int sent, int total)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     final formData = FormData();
     for (final path in filePaths) {
@@ -147,6 +148,7 @@ class ApiClient {
         '/api/classes/$classId/files',
         data: formData,
         onSendProgress: onProgress,
+        cancelToken: cancelToken,
       );
       return response.data!.cast<Map<String, dynamic>>();
     } on DioException catch (e) {
@@ -260,14 +262,19 @@ class ApiClient {
 
   Future<List<WikiSearchResult>> searchWiki(
     String classId,
-    String query,
-  ) async {
+    String query, {
+    String? category,
+    String mode = 'hybrid',
+  }) async {
     try {
-      final response = await _dio.get<List<dynamic>>(
+      final params = <String, dynamic>{'q': query, 'mode': mode};
+      if (category != null) params['category'] = category;
+      final response = await _dio.get<Map<String, dynamic>>(
         '/api/classes/$classId/wiki/search',
-        queryParameters: {'q': query},
+        queryParameters: params,
       );
-      return response.data!
+      final results = response.data!['results'] as List<dynamic>;
+      return results
           .map((e) => WikiSearchResult.fromJson(e as Map<String, dynamic>))
           .toList();
     } on DioException catch (e) {

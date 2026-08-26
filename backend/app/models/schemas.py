@@ -133,3 +133,18 @@ class TaskStatusRead(BaseModel):
 class ExportResponse(BaseModel):
     export_path: str
     page_count: int
+
+
+class WikiSearchResultRead(BaseModel):
+    page_id: str
+    class_id: str
+    path: str
+    title: str
+    category: str
+    rank: float
+    snippet: str
+
+
+class WikiSearchResponse(BaseModel):
+    results: list[WikiSearchResultRead]
+    total_count: int

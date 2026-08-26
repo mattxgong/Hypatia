@@ -165,21 +165,32 @@ class TestWikiSearch:
         self, client: AsyncClient, class_with_pages: tuple[uuid.UUID, list[WikiPage]]
     ) -> None:
         class_id, _ = class_with_pages
-        with patch("app.routers.wiki.search_wiki_pages", new_callable=AsyncMock) as mock_search:
+        with (
+            patch("app.routers.wiki.hybrid_search", new_callable=AsyncMock) as mock_search,
+            patch(
+                "app.routers.wiki.count_wiki_search_results", new_callable=AsyncMock
+            ) as mock_count,
+        ):
 
             @dataclass
             class FakeResult:
+                page_id: str = "fake-page-id"
+                class_id: str = "fake-class-id"
                 path: str = "concepts/gravity.md"
                 title: str = "Gravity"
                 snippet: str = "Force of attraction"
                 rank: float = 1.0
+                category: str = "concept"
 
             mock_search.return_value = [FakeResult()]
+            mock_count.return_value = 1
             resp = await client.get(f"/api/classes/{class_id}/wiki/search?q=gravity")
             assert resp.status_code == 200
             body = resp.json()
-            assert len(body) == 1
-            assert body[0]["title"] == "Gravity"
+            assert body["total_count"] == 1
+            assert len(body["results"]) == 1
+            assert body["results"][0]["title"] == "Gravity"
+            assert body["results"][0]["category"] == "concept"
 
     async def test_empty_query_rejected(self, client: AsyncClient) -> None:
         class_id = uuid.uuid4()

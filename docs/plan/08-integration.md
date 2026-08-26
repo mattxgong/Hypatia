@@ -6,6 +6,8 @@
 
 **Outputs**: A stable, tested, cross-platform application ready for use.
 
+**Note**: Source viewer media support, drag-and-drop upload, and upload progress UI were originally scoped for this phase but have been moved to Phase 7 (tasks 7.6–7.8). Phase 8 focuses on testing, polish, and distribution.
+
 ---
 
 ## Tasks
