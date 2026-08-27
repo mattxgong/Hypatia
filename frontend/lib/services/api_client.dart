@@ -392,16 +392,39 @@ class ApiClient {
   Future<Map<String, dynamic>> updateSettings({
     String? llmProvider,
     String? llmModel,
+    double? llmTemperature,
+    int? llmMaxTokens,
+    String? anthropicApiKey,
+    String? openaiApiKey,
+    String? githubToken,
+    String? ollamaBaseUrl,
   }) async {
     try {
       final body = <String, dynamic>{};
       if (llmProvider != null) body['llm_provider'] = llmProvider;
       if (llmModel != null) body['llm_model'] = llmModel;
+      if (llmTemperature != null) body['llm_temperature'] = llmTemperature;
+      if (llmMaxTokens != null) body['llm_max_tokens'] = llmMaxTokens;
+      if (anthropicApiKey != null) body['anthropic_api_key'] = anthropicApiKey;
+      if (openaiApiKey != null) body['openai_api_key'] = openaiApiKey;
+      if (githubToken != null) body['github_token'] = githubToken;
+      if (ollamaBaseUrl != null) body['ollama_base_url'] = ollamaBaseUrl;
       final response = await _dio.put<Map<String, dynamic>>(
         '/api/settings',
         data: body,
       );
       return response.data!;
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<List<String>> getOllamaModels() async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/api/settings/ollama-models',
+      );
+      return response.data!.cast<String>();
     } on DioException catch (e) {
       _handleError(e);
     }
