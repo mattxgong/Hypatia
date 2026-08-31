@@ -25,27 +25,31 @@ class TestChatWebSocketCommands:
         class_id = e2e_class["id"]
 
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            async with client.stream("GET", f"/api/classes/{class_id}/chat") as _:
-                pass
+        async with (
+            AsyncClient(transport=transport, base_url="http://test") as client,
+            client.stream("GET", f"/api/classes/{class_id}/chat") as _,
+        ):
+            pass
 
     async def test_ask_command_stream(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify that /ask streams chunks then sends a complete message."""
         class_id = e2e_class["id"]
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "message", "content": "/ask What is machine learning?"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "message", "content": "/ask What is machine learning?"})
 
-                messages = []
-                for _ in range(50):
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg["type"] in ("complete", "error"):
-                        break
+            messages = []
+            for _ in range(50):
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg["type"] in ("complete", "error"):
+                    break
 
-                types = [m["type"] for m in messages]
-                assert "complete" in types or "error" in types
+            types = [m["type"] for m in messages]
+            assert "complete" in types or "error" in types
 
     async def test_summarize_command(
         self, e2e_client: AsyncClient, e2e_class: dict, sample_source_file
@@ -64,19 +68,21 @@ class TestChatWebSocketCommands:
             },
         )
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "message", "content": "/summarize machine learning"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "message", "content": "/summarize machine learning"})
 
-                messages = []
-                for _ in range(50):
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg["type"] in ("complete", "error"):
-                        break
+            messages = []
+            for _ in range(50):
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg["type"] in ("complete", "error"):
+                    break
 
-                final = messages[-1]
-                assert final["type"] in ("complete", "error")
+            final = messages[-1]
+            assert final["type"] in ("complete", "error")
 
     async def test_remove_command(
         self, e2e_client: AsyncClient, e2e_class: dict, sample_source_file
@@ -95,57 +101,65 @@ class TestChatWebSocketCommands:
             },
         )
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "message", "content": "/remove notes.md"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "message", "content": "/remove notes.md"})
 
-                messages = []
-                for _ in range(50):
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg["type"] in ("complete", "error"):
-                        break
+            messages = []
+            for _ in range(50):
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg["type"] in ("complete", "error"):
+                    break
 
-                final = messages[-1]
-                assert final["type"] in ("complete", "error")
+            final = messages[-1]
+            assert final["type"] in ("complete", "error")
 
     async def test_lint_command(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify /lint returns a complete response."""
         class_id = e2e_class["id"]
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "message", "content": "/lint"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "message", "content": "/lint"})
 
-                messages = []
-                for _ in range(50):
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg["type"] in ("complete", "error"):
-                        break
+            messages = []
+            for _ in range(50):
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg["type"] in ("complete", "error"):
+                    break
 
-                final = messages[-1]
-                assert final["type"] in ("complete", "error")
+            final = messages[-1]
+            assert final["type"] in ("complete", "error")
 
     async def test_invalid_command(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify invalid commands return an error."""
         class_id = e2e_class["id"]
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "message", "content": "/nonexistent"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "message", "content": "/nonexistent"})
 
-                msg = ws.receive_json()
-                assert msg["type"] == "error"
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
 
     async def test_cancel_message(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify cancel message does not crash the connection."""
         class_id = e2e_class["id"]
 
-        with TestClient(app) as client:
-            with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
-                ws.send_json({"type": "cancel", "operation_id": str(uuid.uuid4())})
-                ws.send_json({"type": "message", "content": "/help"})
+        with (
+            TestClient(app) as client,
+            client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+        ):
+            ws.send_json({"type": "cancel", "operation_id": str(uuid.uuid4())})
+            ws.send_json({"type": "message", "content": "/help"})
 
-                msg = ws.receive_json()
-                assert msg["type"] == "complete"
+            msg = ws.receive_json()
+            assert msg["type"] == "complete"

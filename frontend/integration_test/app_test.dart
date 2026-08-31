@@ -1,9 +1,5 @@
-/// Integration test scaffolding for Hypatia (Task 8.2c).
-///
-/// This is a smoke test that verifies the app launches without crashing.
-/// Additional integration tests should be added as features stabilize.
-///
-/// Run with: flutter test integration_test/
+// Integration test scaffolding for Hypatia (Task 8.2c).
+// Run with: flutter test integration_test/
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
