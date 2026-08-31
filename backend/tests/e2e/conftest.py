@@ -100,6 +100,7 @@ async def e2e_session_factory(e2e_engine) -> async_sessionmaker[AsyncSession]:
 
 @pytest.fixture
 async def e2e_client(
+    e2e_engine,
     e2e_session_factory: async_sessionmaker[AsyncSession],
     mock_llm: MockLLMProvider,
     monkeypatch: pytest.MonkeyPatch,
@@ -109,6 +110,23 @@ async def e2e_client(
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setattr(settings, "data_dir", data_dir)
+
+    # Redirect module-level engine/session_factory so background tasks
+    # (files.py, chat.py, wiki.py) and lifespan (main.py) use the
+    # in-memory test DB instead of the default ~/.hypatia/data path.
+    monkeypatch.setattr("app.database.engine", e2e_engine)
+    monkeypatch.setattr("app.database.async_session_factory", e2e_session_factory)
+    monkeypatch.setattr("app.main.engine", e2e_engine)
+    monkeypatch.setattr("app.routers.files.async_session_factory", e2e_session_factory)
+    monkeypatch.setattr("app.routers.chat.async_session_factory", e2e_session_factory)
+    monkeypatch.setattr("app.routers.wiki.async_session_factory", e2e_session_factory)
+
+    # Tables already created by e2e_engine fixture; skip Alembic migrations.
+    async def _noop_migrations() -> None:
+        pass
+
+    monkeypatch.setattr("app.database.run_migrations", _noop_migrations)
+    monkeypatch.setattr("app.main.run_migrations", _noop_migrations)
 
     async def override_get_session() -> AsyncIterator[AsyncSession]:
         async with e2e_session_factory() as session:

@@ -71,7 +71,7 @@ class TestDatabaseBenchmarks:
                         class_id=cls.id,
                         path=f"pages/page-{i}.md",
                         title=f"Page {i}",
-                        category="topic",
+                        category="concept",
                         content=f"Content for page {i}. " * 50,
                     )
                 )
@@ -93,7 +93,7 @@ class TestDatabaseBenchmarks:
                         class_id=cls.id,
                         path=f"pages/q-{i}.md",
                         title=f"Query Page {i}",
-                        category="topic",
+                        category="concept",
                         content=f"Query content {i}",
                     )
                 )
