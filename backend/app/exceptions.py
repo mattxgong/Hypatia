@@ -1,11 +1,28 @@
-"""Application-level exceptions mapped to HTTP error responses."""
+"""Application-level exceptions — re-export shim.
+
+All errors now live in ``app.errors``; this module re-exports the most commonly
+imported names so existing ``from app.exceptions import ...`` statements
+continue to work.
+"""
 
 from __future__ import annotations
 
+from app.errors import (
+    ErrorCode,
+    FileProcessingError,
+    HypatiaError,
+    LLMProviderError,
+    LLMUnavailableError,
+    ResourceNotFoundError,
+    SettingsError,
+)
 
-class LLMUnavailableError(Exception):
-    """Raised when the configured LLM provider cannot be reached."""
-
-    def __init__(self, detail: str = "LLM provider is unavailable") -> None:
-        self.detail = detail
-        super().__init__(detail)
+__all__ = [
+    "ErrorCode",
+    "FileProcessingError",
+    "HypatiaError",
+    "LLMProviderError",
+    "LLMUnavailableError",
+    "ResourceNotFoundError",
+    "SettingsError",
+]

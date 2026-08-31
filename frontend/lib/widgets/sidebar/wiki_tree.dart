@@ -6,6 +6,7 @@ import '../../models/wiki_page.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/file_provider.dart';
 import '../../providers/wiki_provider.dart';
+import '../common/error_card.dart';
 
 class WikiTree extends ConsumerWidget {
   const WikiTree({super.key});
@@ -23,7 +24,14 @@ class WikiTree extends ConsumerWidget {
 
     return pagesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error: $e')),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: ErrorCard(
+          error: e,
+          compact: true,
+          onRetry: () => ref.invalidate(wikiTreeProvider(classId)),
+        ),
+      ),
       data: (pages) {
         final files = filesAsync.valueOrNull ?? [];
 

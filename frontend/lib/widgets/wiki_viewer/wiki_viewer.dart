@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../../services/api_client.dart';
+import '../common/error_card.dart';
 
 final sourceViewerRequestProvider = StateProvider<SourceViewerRequest?>(
   (ref) => null,
@@ -42,7 +43,12 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
 
     return pageAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error: $e')),
+      error: (e, _) => Center(
+        child: ErrorCard(
+          error: e,
+          onRetry: () => ref.invalidate(currentWikiPageProvider),
+        ),
+      ),
       data: (page) {
         if (page == null) {
           return Center(

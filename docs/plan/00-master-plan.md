@@ -55,9 +55,9 @@ The core innovation is the **LLM Wiki pattern**: instead of re-deriving answers 
 | 5 | [Frontend Shell](./05-frontend-shell.md) | Flutter app shell, 3-panel layout, navigation | 8 |
 | 6 | [Frontend Features](./06-frontend-features.md) | Wiki viewer, chat panel, file management, user edits | 14 |
 | 7 | [Search & Retrieval](./07-search.md) | Hybrid search (FTS5 + embeddings), search UI, upload progress, drag-drop, source viewer | 8 |
-| 8 | [Integration & Polish](./08-integration.md) | E2E testing, error handling, cross-platform, backend bundling | 8 |
+| 8 | [Integration & Polish](./08-integration.md) | Complete deferred work, E2E testing, error handling, cross-platform, backend bundling | 10 |
 
-**Total estimated tasks: ~97**
+**Total estimated tasks: ~99**
 
 ---
 

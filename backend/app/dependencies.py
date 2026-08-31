@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from app.exceptions import LLMUnavailableError
+from app.errors import HypatiaError, LLMUnavailableError
 from app.services.llm_service import get_llm_provider
 
 _cache_result: bool | None = None
@@ -35,7 +35,11 @@ async def check_llm_available() -> None:
         )
         _cache_result = True
         _cache_time = now
-    except (TimeoutError, OSError, ValueError, RuntimeError, Exception):  # noqa: BLE001
+    except HypatiaError:
+        _cache_result = False
+        _cache_time = now
+        raise
+    except (TimeoutError, OSError, ValueError, RuntimeError):
         _cache_result = False
         _cache_time = now
         raise LLMUnavailableError() from None

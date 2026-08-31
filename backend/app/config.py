@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
 
     whisper_model_size: str = "base"
+    whisper_device: str = "cpu"
 
     max_upload_size_bytes: int = 3 * 1024 * 1024 * 1024  # 3GB, per Task 2.9
 

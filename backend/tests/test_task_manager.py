@@ -8,42 +8,42 @@ from app.services.task_manager import TaskManager
 def test_start_task():
     tm = TaskManager()
     task_id = tm.start_task("rebuild", "class-1")
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.operation == "rebuild"
-    assert status.class_id == "class-1"
-    assert status.state == "running"
-    assert status.percent == 0
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.operation == "rebuild"
+    assert t.class_id == "class-1"
+    assert t.status == "running"
+    assert t.progress == 0
 
 
 def test_update_progress():
     tm = TaskManager()
     task_id = tm.start_task("rebuild", "class-1")
     tm.update_progress(task_id, 50, "Halfway there")
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.percent == 50
-    assert status.message == "Halfway there"
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.progress == 50
+    assert t.message == "Halfway there"
 
 
 def test_complete_task():
     tm = TaskManager()
     task_id = tm.start_task("lint", "class-2")
     tm.complete_task(task_id)
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.state == "complete"
-    assert status.percent == 100
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.status == "complete"
+    assert t.progress == 100
 
 
 def test_fail_task():
     tm = TaskManager()
     task_id = tm.start_task("rebuild", "class-1")
     tm.fail_task(task_id, "LLM timeout")
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.state == "failed"
-    assert status.error == "LLM timeout"
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.status == "failed"
+    assert t.error == "LLM timeout"
 
 
 def test_cancel_task():
@@ -51,9 +51,9 @@ def test_cancel_task():
     task_id = tm.start_task("rebuild", "class-1")
     tm.cancel_task(task_id)
     assert tm.is_cancelled(task_id) is True
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.state == "cancelled"
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.status == "cancelled"
 
 
 def test_cancel_noop_after_complete():
@@ -61,9 +61,9 @@ def test_cancel_noop_after_complete():
     task_id = tm.start_task("rebuild", "class-1")
     tm.complete_task(task_id)
     tm.cancel_task(task_id)
-    status = tm.get_status(task_id)
-    assert status is not None
-    assert status.state == "complete"
+    t = tm.get_status(task_id)
+    assert t is not None
+    assert t.status == "complete"
 
 
 def test_list_tasks():

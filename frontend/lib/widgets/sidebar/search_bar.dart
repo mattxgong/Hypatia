@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/search_provider.dart';
 import '../../providers/wiki_provider.dart';
+import '../common/error_card.dart';
 
 class SidebarSearchBar extends ConsumerStatefulWidget {
   const SidebarSearchBar({super.key});
@@ -39,9 +40,11 @@ class _SidebarSearchBarState extends ConsumerState<SidebarSearchBar> {
   @override
   Widget build(BuildContext context) {
     final query = ref.watch(searchQueryProvider);
+    final focusNode = ref.watch(searchBarFocusNodeProvider);
 
     return TextField(
       controller: _controller,
+      focusNode: focusNode,
       onChanged: _onChanged,
       decoration: InputDecoration(
         hintText: 'Search wiki...',
@@ -142,7 +145,10 @@ class SearchResults extends ConsumerWidget {
 
     return resultsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Search error: $e')),
+      error: (e, _) => Padding(
+        padding: const EdgeInsets.all(12),
+        child: ErrorCard(error: e, compact: true),
+      ),
       data: (results) {
         if (results.isEmpty && query.isNotEmpty) {
           return Center(

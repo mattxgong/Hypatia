@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
+import '../common/error_card.dart';
 import 'command_input.dart';
 import 'message_bubble.dart';
 import 'starter_cards.dart';
@@ -48,7 +49,12 @@ class _ChatBody extends ConsumerWidget {
 
     return messagesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error loading chat: $e')),
+      error: (e, _) => Center(
+        child: ErrorCard(
+          error: e,
+          onRetry: () => ref.invalidate(chatMessagesProvider(classId!)),
+        ),
+      ),
       data: (messages) {
         if (messages.isEmpty && streamingContent.isEmpty) {
           return const StarterCards();
@@ -116,6 +122,14 @@ class _ChatHeader extends StatelessWidget {
           Text('Chat', style: theme.textTheme.titleSmall),
           const Spacer(),
           IconButton(
+            icon: const Icon(Icons.help_outline, size: 18),
+            onPressed: () => _showCommandReference(context),
+            tooltip: 'Command reference',
+            iconSize: 18,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          IconButton(
             icon: const Icon(Icons.add, size: 18),
             onPressed: onNewChat,
             tooltip: 'New conversation',
@@ -127,4 +141,150 @@ class _ChatHeader extends StatelessWidget {
       ),
     );
   }
+
+  void _showCommandReference(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => const _CommandReferenceDialog(),
+    );
+  }
+}
+
+class _CommandReferenceDialog extends StatelessWidget {
+  const _CommandReferenceDialog();
+
+  static const _commands = [
+    _CmdEntry(
+      '/ask <query>',
+      'Ask a question about your wiki. The LLM answers with citations from '
+          'your source material.',
+      'What is gradient descent?',
+    ),
+    _CmdEntry(
+      '/summarize <topic>',
+      'Generate a new wiki summary page on a given topic from your sources.',
+      '/summarize key concepts from lecture 3',
+    ),
+    _CmdEntry(
+      '/remove <filename>',
+      'Remove a source file and clean up all wiki pages derived from it.',
+      '/remove lecture1.pdf',
+    ),
+    _CmdEntry(
+      '/lint',
+      'Check the wiki for contradictions and structural issues.',
+      '/lint',
+    ),
+    _CmdEntry(
+      '/rebuild',
+      'Regenerate the entire wiki from all sources. This is a long-running '
+          'operation with progress updates.',
+      '/rebuild',
+    ),
+    _CmdEntry(
+      '/export',
+      'Export the wiki as a collection of markdown files.',
+      '/export',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Command Reference'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Type a message without a / prefix to ask a question. '
+                'Use these commands for specific actions:',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              ..._commands.map(
+                (cmd) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        cmd.syntax,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontFamily: 'monospace',
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(cmd.description, style: theme.textTheme.bodySmall),
+                      if (cmd.example.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'Example: ${cmd.example}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontStyle: FontStyle.italic,
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(),
+              const SizedBox(height: 4),
+              Text('Keyboard shortcuts', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 8),
+              _shortcutRow('Ctrl+K', 'Focus search bar'),
+              _shortcutRow('Ctrl+N', 'Create a new class'),
+              _shortcutRow('Ctrl+B', 'Toggle sidebar'),
+              _shortcutRow('Ctrl+J', 'Toggle chat panel'),
+              _shortcutRow('Escape', 'Clear search / close dialog'),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _shortcutRow(String key, String description) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              key,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Text(description, style: const TextStyle(fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+class _CmdEntry {
+  const _CmdEntry(this.syntax, this.description, this.example);
+  final String syntax;
+  final String description;
+  final String example;
 }

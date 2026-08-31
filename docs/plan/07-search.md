@@ -193,3 +193,7 @@ pdfrx: ^1.0.0
 | RRF k parameter tuning | Start with k=60 (literature default). Adjust if search quality is poor in testing. |
 | FTS5 unavailable on some Python builds | Python's bundled `sqlite3` includes FTS5. Verify with `pragma compile_options` on startup. |
 | `desktop_drop` on Linux requires X11/Wayland support | Acceptable: desktop-first app, Linux support refined in Phase 8. |
+
+---
+
+**Note**: Phase 7 completion verification and polish is folded into Phase 8 (task 8.1). Any remaining gaps in upload progress (7.6), drag-and-drop (7.7), or source viewer media support (7.8) are addressed there.

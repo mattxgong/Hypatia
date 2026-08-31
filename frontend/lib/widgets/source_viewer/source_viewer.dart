@@ -7,6 +7,7 @@ import 'package:pdfrx/pdfrx.dart';
 import '../../models/source_file.dart';
 import '../../providers/class_provider.dart';
 import '../../services/api_client.dart';
+import '../common/error_card.dart';
 import '../wiki_viewer/wiki_viewer.dart';
 
 final _sourceFileProvider =
@@ -122,7 +123,7 @@ class _SourceContent extends ConsumerWidget {
 
     return fileAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('Error loading file: $e')),
+      error: (e, _) => Center(child: ErrorCard(error: e)),
       data: (file) {
         if (file == null) {
           return const Center(child: Text('File not found'));

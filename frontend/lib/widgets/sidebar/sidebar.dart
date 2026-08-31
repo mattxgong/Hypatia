@@ -7,6 +7,7 @@ import 'add_file_button.dart';
 import 'class_dropdown.dart';
 import 'provider_selector.dart';
 import 'search_bar.dart';
+import 'task_indicator.dart';
 import 'wiki_tree.dart';
 
 class Sidebar extends ConsumerWidget {
@@ -66,6 +67,8 @@ class Sidebar extends ConsumerWidget {
                     minHeight: 32,
                   ),
                 ),
+                const Spacer(),
+                const TaskIndicator(),
               ],
             ),
           ),

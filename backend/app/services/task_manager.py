@@ -20,11 +20,11 @@ class TaskStatus:
     task_id: str
     operation: str
     class_id: str
-    percent: int = 0
+    progress: int = 0
     message: str = ""
-    state: Literal["running", "complete", "failed", "cancelled"] = "running"
+    status: Literal["running", "complete", "failed", "cancelled"] = "running"
     error: str | None = None
-    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
 
 class TaskManager:
@@ -44,40 +44,40 @@ class TaskManager:
         )
         return task_id
 
-    def update_progress(self, task_id: str, percent: int, message: str) -> None:
+    def update_progress(self, task_id: str, progress: int, message: str) -> None:
         """Update a running task's progress."""
         task = self._tasks.get(task_id)
-        if task and task.state == "running":
-            task.percent = percent
+        if task and task.status == "running":
+            task.progress = progress
             task.message = message
 
     def cancel_task(self, task_id: str) -> None:
         """Request cancellation of a running task."""
         task = self._tasks.get(task_id)
-        if task and task.state == "running":
-            task.state = "cancelled"
+        if task and task.status == "running":
+            task.status = "cancelled"
             task.message = "Cancelled by user"
 
     def complete_task(self, task_id: str) -> None:
         """Mark a task as successfully completed."""
         task = self._tasks.get(task_id)
-        if task and task.state == "running":
-            task.state = "complete"
-            task.percent = 100
+        if task and task.status == "running":
+            task.status = "complete"
+            task.progress = 100
             task.message = "Complete"
 
     def fail_task(self, task_id: str, error: str) -> None:
         """Mark a task as failed."""
         task = self._tasks.get(task_id)
-        if task and task.state == "running":
-            task.state = "failed"
+        if task and task.status == "running":
+            task.status = "failed"
             task.error = error
             task.message = f"Failed: {error}"
 
     def is_cancelled(self, task_id: str) -> bool:
         """Check if a task has been cancelled (operations should check periodically)."""
         task = self._tasks.get(task_id)
-        return task is not None and task.state == "cancelled"
+        return task is not None and task.status == "cancelled"
 
     def get_status(self, task_id: str) -> TaskStatus | None:
         """Get the current status of a task."""
@@ -85,6 +85,7 @@ class TaskManager:
 
     def list_tasks(self, class_id: str | None = None) -> list[TaskStatus]:
         """List all tasks, optionally filtered by class_id."""
+        self.cleanup_completed()
         tasks = list(self._tasks.values())
         if class_id:
             tasks = [t for t in tasks if t.class_id == class_id]
@@ -95,8 +96,8 @@ class TaskManager:
         now = datetime.now(UTC)
         to_remove = []
         for task_id, task in self._tasks.items():
-            if task.state in ("complete", "failed", "cancelled"):
-                started = datetime.fromisoformat(task.started_at)
+            if task.status in ("complete", "failed", "cancelled"):
+                started = datetime.fromisoformat(task.created_at)
                 if (now - started).total_seconds() > max_age_seconds:
                     to_remove.append(task_id)
         for task_id in to_remove:

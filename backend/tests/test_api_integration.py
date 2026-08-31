@@ -174,8 +174,7 @@ class TestErrorFormatConsistency:
         assert "code" in body
 
     async def test_task_not_found_has_detail_and_code(self, client: AsyncClient) -> None:
-        class_id = uuid.uuid4()
-        resp = await client.get(f"/api/classes/{class_id}/tasks/nonexistent-task-id")
+        resp = await client.get("/api/tasks/nonexistent-task-id")
         assert resp.status_code == 404
         body = resp.json()
         assert "detail" in body

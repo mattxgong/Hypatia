@@ -55,35 +55,44 @@ class TestTasksRouter:
         task_manager._tasks.clear()
 
     async def test_list_tasks_empty(self, client: AsyncClient) -> None:
-        resp = await client.get(f"/api/classes/{CLASS_ID}/tasks")
+        resp = await client.get("/api/tasks")
         assert resp.status_code == 200
         assert resp.json() == []
 
     async def test_list_tasks_with_task(self, client: AsyncClient) -> None:
         task_id = task_manager.start_task("rebuild", CLASS_ID)
-        resp = await client.get(f"/api/classes/{CLASS_ID}/tasks")
+        resp = await client.get("/api/tasks")
         assert resp.status_code == 200
         tasks = resp.json()
         assert len(tasks) == 1
         assert tasks[0]["task_id"] == task_id
         assert tasks[0]["operation"] == "rebuild"
+        assert tasks[0]["status"] == "running"
+        assert tasks[0]["progress"] == 0
+
+    async def test_list_tasks_filter_by_class(self, client: AsyncClient) -> None:
+        task_manager.start_task("rebuild", CLASS_ID)
+        task_manager.start_task("lint", "other-class")
+        resp = await client.get("/api/tasks", params={"class_id": CLASS_ID})
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
 
     async def test_get_task(self, client: AsyncClient) -> None:
         task_id = task_manager.start_task("lint", CLASS_ID)
-        resp = await client.get(f"/api/classes/{CLASS_ID}/tasks/{task_id}")
+        resp = await client.get(f"/api/tasks/{task_id}")
         assert resp.status_code == 200
         assert resp.json()["task_id"] == task_id
 
     async def test_get_task_not_found(self, client: AsyncClient) -> None:
-        resp = await client.get(f"/api/classes/{CLASS_ID}/tasks/nonexistent")
+        resp = await client.get("/api/tasks/nonexistent")
         assert resp.status_code == 404
 
     async def test_cancel_task(self, client: AsyncClient) -> None:
         task_id = task_manager.start_task("rebuild", CLASS_ID)
-        resp = await client.post(f"/api/classes/{CLASS_ID}/tasks/{task_id}/cancel")
+        resp = await client.post(f"/api/tasks/{task_id}/cancel")
         assert resp.status_code == 202
         assert task_manager.is_cancelled(task_id)
 
     async def test_cancel_nonexistent_task(self, client: AsyncClient) -> None:
-        resp = await client.post(f"/api/classes/{CLASS_ID}/tasks/nonexistent/cancel")
+        resp = await client.post("/api/tasks/nonexistent/cancel")
         assert resp.status_code == 404

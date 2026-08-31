@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/chat_message.dart';
 import '../models/source_file.dart';
+import '../models/task_status.dart';
 import '../models/wiki_page.dart';
 import '../models/hypatia_class.dart';
 
@@ -18,11 +19,17 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 });
 
 class ApiException implements Exception {
-  ApiException({required this.detail, this.code, this.statusCode});
+  ApiException({
+    required this.detail,
+    this.code,
+    this.statusCode,
+    this.userAction,
+  });
 
   final String detail;
   final String? code;
   final int? statusCode;
+  final String? userAction;
 
   @override
   String toString() => 'ApiException($statusCode): $detail';
@@ -47,6 +54,7 @@ class ApiClient {
         detail: data['detail'] as String? ?? e.message ?? 'Unknown error',
         code: data['code'] as String?,
         statusCode: e.response?.statusCode,
+        userAction: data['user_action'] as String?,
       );
     }
     throw ApiException(
@@ -350,21 +358,28 @@ class ApiClient {
 
   // --- Tasks ---
 
-  Future<List<Map<String, dynamic>>> listTasks() async {
+  Future<List<TaskStatus>> listTasks({String? classId}) async {
     try {
-      final response = await _dio.get<List<dynamic>>('/api/tasks');
-      return response.data!.cast<Map<String, dynamic>>();
+      final params = <String, dynamic>{};
+      if (classId != null) params['class_id'] = classId;
+      final response = await _dio.get<List<dynamic>>(
+        '/api/tasks',
+        queryParameters: params.isNotEmpty ? params : null,
+      );
+      return response.data!
+          .map((e) => TaskStatus.fromJson(e as Map<String, dynamic>))
+          .toList();
     } on DioException catch (e) {
       _handleError(e);
     }
   }
 
-  Future<Map<String, dynamic>> getTask(String taskId) async {
+  Future<TaskStatus> getTask(String taskId) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/api/tasks/$taskId',
       );
-      return response.data!;
+      return TaskStatus.fromJson(response.data!);
     } on DioException catch (e) {
       _handleError(e);
     }
@@ -373,6 +388,42 @@ class ApiClient {
   Future<void> cancelTask(String taskId) async {
     try {
       await _dio.post<void>('/api/tasks/$taskId/cancel');
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  // --- Backup / Import ---
+
+  Future<Uint8List> exportClassBackup(String classId) async {
+    try {
+      final response = await _dio.post<List<int>>(
+        '/api/classes/$classId/backup',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> importClassBackup(
+    String filePath, {
+    void Function(int sent, int total)? onProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final fileName = filePath.split(RegExp(r'[/\\]')).last;
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath, filename: fileName),
+    });
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/import',
+        data: formData,
+        onSendProgress: onProgress,
+        cancelToken: cancelToken,
+      );
+      return response.data!;
     } on DioException catch (e) {
       _handleError(e);
     }
@@ -398,6 +449,8 @@ class ApiClient {
     String? openaiApiKey,
     String? githubToken,
     String? ollamaBaseUrl,
+    String? whisperModelSize,
+    String? whisperDevice,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -409,6 +462,10 @@ class ApiClient {
       if (openaiApiKey != null) body['openai_api_key'] = openaiApiKey;
       if (githubToken != null) body['github_token'] = githubToken;
       if (ollamaBaseUrl != null) body['ollama_base_url'] = ollamaBaseUrl;
+      if (whisperModelSize != null) {
+        body['whisper_model_size'] = whisperModelSize;
+      }
+      if (whisperDevice != null) body['whisper_device'] = whisperDevice;
       final response = await _dio.put<Map<String, dynamic>>(
         '/api/settings',
         data: body,
@@ -425,6 +482,36 @@ class ApiClient {
         '/api/settings/ollama-models',
       );
       return response.data!.cast<String>();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<({bool valid, String? error})> validateApiKey(
+    String provider,
+    String apiKey,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/settings/validate-key',
+        data: {'provider': provider, 'api_key': apiKey},
+      );
+      final data = response.data!;
+      return (
+        valid: data['valid'] as bool? ?? false,
+        error: data['error'] as String?,
+      );
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> getUsage() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/settings/usage',
+      );
+      return response.data!;
     } on DioException catch (e) {
       _handleError(e);
     }

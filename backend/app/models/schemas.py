@@ -30,6 +30,11 @@ class ClassRead(BaseModel):
     updated_at: datetime
 
 
+class ClassReadWithStats(ClassRead):
+    file_count: int = 0
+    page_count: int = 0
+
+
 class FileRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -124,10 +129,11 @@ class TaskStatusRead(BaseModel):
     task_id: str
     operation: str
     class_id: str
-    percent: int
+    progress: int
     message: str
-    state: str
+    status: str
     error: str | None = None
+    created_at: str
 
 
 class ExportResponse(BaseModel):
@@ -148,3 +154,42 @@ class WikiSearchResultRead(BaseModel):
 class WikiSearchResponse(BaseModel):
     results: list[WikiSearchResultRead]
     total_count: int
+
+
+# --- Settings ---
+
+
+class SettingsRead(BaseModel):
+    llm_provider: str
+    llm_model: str | None
+    llm_temperature: float
+    llm_max_tokens: int
+    anthropic_api_key: str | None
+    openai_api_key: str | None
+    github_token: str | None
+    ollama_base_url: str
+    whisper_model_size: str
+    whisper_device: str
+
+
+class SettingsUpdate(BaseModel):
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_temperature: float | None = None
+    llm_max_tokens: int | None = None
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    github_token: str | None = None
+    ollama_base_url: str | None = None
+    whisper_model_size: str | None = None
+    whisper_device: str | None = None
+
+
+class ValidateKeyRequest(BaseModel):
+    provider: str
+    api_key: str
+
+
+class ValidateKeyResponse(BaseModel):
+    valid: bool
+    error: str | None = None

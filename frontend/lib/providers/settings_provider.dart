@@ -42,6 +42,8 @@ class FullSettingsNotifier extends AsyncNotifier<Map<String, dynamic>> {
     String? openaiApiKey,
     String? githubToken,
     String? ollamaBaseUrl,
+    String? whisperModelSize,
+    String? whisperDevice,
   }) async {
     final apiClient = ref.read(apiClientProvider);
     final result = await apiClient.updateSettings(
@@ -52,6 +54,8 @@ class FullSettingsNotifier extends AsyncNotifier<Map<String, dynamic>> {
       openaiApiKey: openaiApiKey,
       githubToken: githubToken,
       ollamaBaseUrl: ollamaBaseUrl,
+      whisperModelSize: whisperModelSize,
+      whisperDevice: whisperDevice,
     );
     state = AsyncData(result);
   }

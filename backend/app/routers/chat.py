@@ -18,6 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory, get_session
+from app.errors import ErrorCode, HypatiaError
 from app.models.db_models import ChatMessage, ChatRole
 from app.models.schemas import ChatMessageRead
 from app.services import wiki_engine
@@ -62,7 +63,9 @@ async def chat_websocket(websocket: WebSocket, class_id: uuid.UUID) -> None:
 async def _handle_command(
     websocket: WebSocket, class_id: uuid.UUID, command: str, args: str
 ) -> None:
-    if command == "ask":
+    if command == "help":
+        await _handle_help(websocket)
+    elif command == "ask":
         await _handle_ask_stream(websocket, class_id, args)
     elif command == "summarize":
         await _handle_summarize(websocket, class_id, args)
@@ -74,6 +77,32 @@ async def _handle_command(
         await _handle_export(websocket, class_id)
     elif command == "rebuild":
         await _handle_rebuild(websocket, class_id)
+
+
+_HELP_TEXT = """\
+**Available Commands**
+
+| Command | Description |
+|---------|-------------|
+| `/ask <query>` | Ask a question — answers from the wiki with citations |
+| `/summarize <topic>` | Generate a new wiki summary page on a topic |
+| `/remove <filename>` | Remove a source file and clean up its wiki pages |
+| `/lint` | Check the wiki for contradictions and structural issues |
+| `/rebuild` | Regenerate the entire wiki from all sources |
+| `/export` | Export the wiki as markdown files |
+| `/help` | Show this command reference |
+
+Type a message without a `/` prefix to default to `/ask`."""
+
+
+async def _handle_help(websocket: WebSocket) -> None:
+    await websocket.send_json(
+        {
+            "type": "complete",
+            "message_id": str(uuid.uuid4()),
+            "content": _HELP_TEXT,
+        }
+    )
 
 
 async def _handle_ask_stream(websocket: WebSocket, class_id: uuid.UUID, query: str) -> None:
@@ -105,13 +134,23 @@ async def _handle_ask_stream(websocket: WebSocket, class_id: uuid.UUID, query: s
                     "citations": [],
                 }
             )
+        except HypatiaError as e:
+            logger.error("chat_ask_error", class_id=str(class_id), code=e.code.value)
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
         except Exception as e:  # noqa: BLE001
             logger.error("chat_ask_error", class_id=str(class_id), error=str(e))
             await websocket.send_json(
                 {
                     "type": "error",
                     "message": str(e),
-                    "code": "ASK_ERROR",
+                    "code": ErrorCode.ASK_ERROR,
                 }
             )
 
@@ -150,8 +189,19 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                         "code": "SUMMARIZE_ERROR",
                     }
                 )
+        except HypatiaError as e:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": str(e), "code": "ERROR"})
+            await websocket.send_json(
+                {"type": "error", "message": str(e), "code": ErrorCode.SUMMARIZE_ERROR}
+            )
 
 
 async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: str) -> None:
@@ -191,8 +241,19 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                         "code": "REMOVE_ERROR",
                     }
                 )
+        except HypatiaError as e:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": str(e), "code": "ERROR"})
+            await websocket.send_json(
+                {"type": "error", "message": str(e), "code": ErrorCode.REMOVE_ERROR}
+            )
 
 
 async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
@@ -222,8 +283,19 @@ async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     },
                 }
             )
+        except HypatiaError as e:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": str(e), "code": "ERROR"})
+            await websocket.send_json(
+                {"type": "error", "message": str(e), "code": ErrorCode.LINT_ERROR}
+            )
 
 
 async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
@@ -261,8 +333,19 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                         "code": "EXPORT_ERROR",
                     }
                 )
+        except HypatiaError as e:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json({"type": "error", "message": str(e), "code": "ERROR"})
+            await websocket.send_json(
+                {"type": "error", "message": str(e), "code": ErrorCode.EXPORT_ERROR}
+            )
 
 
 async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
@@ -281,7 +364,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
             try:
                 await wiki_engine.handle_rebuild(session, class_id, task_id=task_id)
                 task_manager.complete_task(task_id)
-            except (OSError, ValueError, RuntimeError) as e:
+            except (OSError, ValueError, RuntimeError, HypatiaError) as e:
                 task_manager.fail_task(task_id, str(e))
 
     rebuild_task = asyncio.create_task(_run())
@@ -291,7 +374,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
             t = task_manager.get_status(task_id)
             if t is None:
                 break
-            if t.state == "complete":
+            if t.status == "complete":
                 await websocket.send_json(
                     {
                         "type": "complete",
@@ -300,7 +383,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     }
                 )
                 break
-            elif t.state in ("failed", "cancelled"):
+            elif t.status in ("failed", "cancelled"):
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -314,7 +397,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     {
                         "type": "progress",
                         "operation_id": task_id,
-                        "percent": t.percent,
+                        "percent": t.progress,
                         "message": t.message,
                     }
                 )

@@ -1,11 +1,14 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/class_provider.dart';
+import '../providers/search_provider.dart';
 import '../providers/upload_provider.dart';
 import '../widgets/chat_panel/chat_panel.dart';
 import '../widgets/sidebar/add_file_button.dart';
+import '../widgets/sidebar/class_dropdown.dart';
 import '../widgets/sidebar/sidebar.dart';
 import '../widgets/source_viewer/source_viewer.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
@@ -24,6 +27,13 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _isDragging = false;
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,73 +48,111 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final sidebarCollapsed = ref.watch(_sidebarCollapsedProvider);
     final chatCollapsed = ref.watch(_chatPanelCollapsedProvider);
 
-    return Scaffold(
-      body: DropTarget(
-        onDragEntered: (_) => setState(() => _isDragging = true),
-        onDragExited: (_) => setState(() => _isDragging = false),
-        onDragDone: (details) {
-          setState(() => _isDragging = false);
-          _handleDrop(details);
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () {
+          if (sidebarCollapsed) {
+            ref.read(_sidebarCollapsedProvider.notifier).state = false;
+          }
+          ref.read(searchBarFocusNodeProvider).requestFocus();
         },
-        child: Stack(
-          children: [
-            Row(
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true): () {
+          showCreateClassDialog(context, ref);
+        },
+        const SingleActivator(LogicalKeyboardKey.keyB, control: true): () {
+          ref.read(_sidebarCollapsedProvider.notifier).state =
+              !sidebarCollapsed;
+        },
+        const SingleActivator(LogicalKeyboardKey.keyJ, control: true): () {
+          ref.read(_chatPanelCollapsedProvider.notifier).state = !chatCollapsed;
+        },
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          final query = ref.read(searchQueryProvider);
+          if (query.isNotEmpty) {
+            ref.read(searchQueryProvider.notifier).state = '';
+          }
+        },
+      },
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        child: Scaffold(
+          body: DropTarget(
+            onDragEntered: (_) => setState(() => _isDragging = true),
+            onDragExited: (_) => setState(() => _isDragging = false),
+            onDragDone: (details) {
+              setState(() => _isDragging = false);
+              _handleDrop(details);
+            },
+            child: Stack(
               children: [
-                if (!sidebarCollapsed) ...[
-                  SizedBox(width: sidebarWidth, child: const Sidebar()),
-                  _DraggableDivider(
-                    onDrag: (dx) {
-                      final current = ref.read(_sidebarWidthProvider);
-                      ref.read(_sidebarWidthProvider.notifier).state =
-                          (current + dx).clamp(180, 400);
-                    },
-                  ),
-                ] else
-                  _CollapsedPanelStrip(
-                    icon: Icons.menu,
-                    onTap: () =>
-                        ref.read(_sidebarCollapsedProvider.notifier).state =
-                            false,
-                  ),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _TopBar(
-                        sidebarCollapsed: sidebarCollapsed,
-                        chatCollapsed: chatCollapsed,
-                        onToggleSidebar: () =>
+                Row(
+                  children: [
+                    if (!sidebarCollapsed) ...[
+                      SizedBox(width: sidebarWidth, child: const Sidebar()),
+                      _DraggableDivider(
+                        onDrag: (dx) {
+                          final current = ref.read(_sidebarWidthProvider);
+                          ref.read(_sidebarWidthProvider.notifier).state =
+                              (current + dx).clamp(180, 400);
+                        },
+                      ),
+                    ] else
+                      _CollapsedPanelStrip(
+                        icon: Icons.menu,
+                        onTap: () =>
                             ref.read(_sidebarCollapsedProvider.notifier).state =
-                                !sidebarCollapsed,
-                        onToggleChat: () =>
+                                false,
+                      ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          _TopBar(
+                            sidebarCollapsed: sidebarCollapsed,
+                            chatCollapsed: chatCollapsed,
+                            onToggleSidebar: () =>
+                                ref
+                                        .read(
+                                          _sidebarCollapsedProvider.notifier,
+                                        )
+                                        .state =
+                                    !sidebarCollapsed,
+                            onToggleChat: () =>
+                                ref
+                                        .read(
+                                          _chatPanelCollapsedProvider.notifier,
+                                        )
+                                        .state =
+                                    !chatCollapsed,
+                          ),
+                          const Expanded(child: WikiViewer()),
+                        ],
+                      ),
+                    ),
+                    if (!chatCollapsed) ...[
+                      _DraggableDivider(
+                        onDrag: (dx) {
+                          final current = ref.read(_chatPanelWidthProvider);
+                          ref.read(_chatPanelWidthProvider.notifier).state =
+                              (current - dx).clamp(280, 500);
+                        },
+                      ),
+                      SizedBox(width: chatWidth, child: const ChatPanel()),
+                    ] else
+                      _CollapsedPanelStrip(
+                        icon: Icons.chat_bubble_outline,
+                        onTap: () =>
                             ref
                                     .read(_chatPanelCollapsedProvider.notifier)
                                     .state =
-                                !chatCollapsed,
+                                false,
                       ),
-                      const Expanded(child: WikiViewer()),
-                    ],
-                  ),
+                  ],
                 ),
-                if (!chatCollapsed) ...[
-                  _DraggableDivider(
-                    onDrag: (dx) {
-                      final current = ref.read(_chatPanelWidthProvider);
-                      ref.read(_chatPanelWidthProvider.notifier).state =
-                          (current - dx).clamp(280, 500);
-                    },
-                  ),
-                  SizedBox(width: chatWidth, child: const ChatPanel()),
-                ] else
-                  _CollapsedPanelStrip(
-                    icon: Icons.chat_bubble_outline,
-                    onTap: () =>
-                        ref.read(_chatPanelCollapsedProvider.notifier).state =
-                            false,
-                  ),
+                if (_isDragging) const _DropOverlay(),
               ],
             ),
-            if (_isDragging) const _DropOverlay(),
-          ],
+          ),
         ),
       ),
     );
@@ -224,7 +272,9 @@ class _TopBar extends StatelessWidget {
               size: 18,
             ),
             onPressed: onToggleSidebar,
-            tooltip: sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar',
+            tooltip: sidebarCollapsed
+                ? 'Show sidebar (Ctrl+B)'
+                : 'Hide sidebar (Ctrl+B)',
             iconSize: 18,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -238,7 +288,9 @@ class _TopBar extends StatelessWidget {
               size: 18,
             ),
             onPressed: onToggleChat,
-            tooltip: chatCollapsed ? 'Show chat' : 'Hide chat',
+            tooltip: chatCollapsed
+                ? 'Show chat (Ctrl+J)'
+                : 'Hide chat (Ctrl+J)',
             iconSize: 18,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

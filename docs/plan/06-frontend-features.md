@@ -238,5 +238,5 @@ Design empty states for each panel:
 - Full media playback in source viewer (media_kit + pdfrx native deps) → **Phase 7 (task 7.8)**
 - Drag-and-drop file upload (desktop_drop) → **Phase 7 (task 7.7)**
 - Upload progress percentage (Dio progress callback wired to UI) → **Phase 7 (task 7.6)**
-- `backup` and `tasks` API integration → Phase 8
-- Class stats display in dropdown → Phase 8
+- `backup` and `tasks` API integration → **Phase 8 (task 8.1)**
+- Class stats display in dropdown → **Phase 8 (task 8.1)**

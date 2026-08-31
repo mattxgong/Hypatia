@@ -1,8 +1,15 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/wiki_page.dart';
 import '../services/api_client.dart';
 import 'class_provider.dart';
+
+final searchBarFocusNodeProvider = Provider<FocusNode>((ref) {
+  final node = FocusNode();
+  ref.onDispose(node.dispose);
+  return node;
+});
 
 final searchQueryProvider = StateProvider<String>((ref) {
   ref.watch(currentClassIdProvider);

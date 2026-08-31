@@ -11,6 +11,7 @@ const _commands = [
   '/lint',
   '/rebuild',
   '/export',
+  '/help',
 ];
 
 class CommandInput extends ConsumerStatefulWidget {

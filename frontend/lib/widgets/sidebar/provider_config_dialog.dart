@@ -30,6 +30,9 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   bool _obscureKey = true;
   List<String> _ollamaModels = [];
   bool _loadingModels = false;
+  bool _testing = false;
+  bool? _testResult;
+  String? _testError;
 
   @override
   void initState() {
@@ -160,6 +163,35 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
     }
   }
 
+  Future<void> _testConnection() async {
+    final key = _apiKeyController.text.trim();
+    if (key.isEmpty) return;
+    setState(() {
+      _testing = true;
+      _testResult = null;
+      _testError = null;
+    });
+    try {
+      final apiClient = ref.read(apiClientProvider);
+      final result = await apiClient.validateApiKey(widget.providerId, key);
+      if (mounted) {
+        setState(() {
+          _testing = false;
+          _testResult = result.valid;
+          _testError = result.error;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _testing = false;
+          _testResult = false;
+          _testError = e.toString();
+        });
+      }
+    }
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
@@ -253,6 +285,40 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                     onPressed: () => setState(() => _obscureKey = !_obscureKey),
                   ),
                 ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _testing ? null : _testConnection,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.wifi_tethering, size: 16),
+                    label: const Text('Test Connection'),
+                  ),
+                  if (_testResult != null) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      _testResult! ? Icons.check_circle : Icons.cancel,
+                      color: _testResult! ? Colors.green : Colors.red,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        _testResult! ? 'Valid' : (_testError ?? 'Invalid'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: _testResult! ? Colors.green : Colors.red,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 16),
             ],

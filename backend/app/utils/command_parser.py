@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-VALID_COMMANDS = ("ask", "summarize", "remove", "lint", "rebuild", "export")
+VALID_COMMANDS = ("ask", "summarize", "remove", "lint", "rebuild", "export", "help")
 
 
 @dataclass

@@ -13,9 +13,10 @@ from collections.abc import AsyncIterator
 from copilot import CopilotClient
 from copilot.session import PermissionHandler, ProviderConfig, SystemMessageReplaceConfig
 
+from app.errors import ErrorCode, LLMProviderError
 from app.utils.logging import get_logger
 
-from .base import LLMProvider
+from .base import LLMProvider, usage_totals
 
 logger = get_logger()
 
@@ -48,7 +49,11 @@ class CopilotProvider(LLMProvider):
     async def complete(
         self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
     ) -> str:
-        client = await self._get_client()
+        try:
+            client = await self._get_client()
+        except Exception as exc:
+            logger.warning("copilot_client_error", error=str(exc))
+            raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         sys_msg: SystemMessageReplaceConfig = {
             "mode": "replace",
             "content": system_prompt,
@@ -64,14 +69,28 @@ class CopilotProvider(LLMProvider):
             if response is None:
                 logger.warning("copilot_empty_response", model=self._model)
                 return ""
+            if hasattr(response.data, "usage") and response.data.usage:
+                u = response.data.usage
+                usage_totals.record(
+                    self._model,
+                    getattr(u, "prompt_tokens", 0) or getattr(u, "input_tokens", 0),
+                    getattr(u, "completion_tokens", 0) or getattr(u, "output_tokens", 0),
+                )
             return getattr(response.data, "content", "") or ""
+        except Exception as exc:
+            logger.warning("copilot_complete_error", error=str(exc))
+            raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         finally:
             await session.disconnect()
 
     async def stream(
         self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
     ) -> AsyncIterator[str]:
-        client = await self._get_client()
+        try:
+            client = await self._get_client()
+        except Exception as exc:
+            logger.warning("copilot_client_error", error=str(exc))
+            raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         sys_msg: SystemMessageReplaceConfig = {
             "mode": "replace",
             "content": system_prompt,
@@ -95,10 +114,17 @@ class CopilotProvider(LLMProvider):
                     content = getattr(response.data, "content", "") or ""
                     if content:
                         yield content
+        except Exception as exc:
+            logger.warning("copilot_stream_error", error=str(exc))
+            raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         finally:
             await session.disconnect()
 
     async def list_models(self) -> list[str]:
-        client = await self._get_client()
-        models = await client.list_models()
+        try:
+            client = await self._get_client()
+            models = await client.list_models()
+        except Exception as exc:
+            logger.warning("copilot_list_models_error", error=str(exc))
+            raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         return [m.id for m in models]

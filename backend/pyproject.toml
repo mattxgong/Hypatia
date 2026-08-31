@@ -19,6 +19,7 @@ dependencies = [
     "structlog>=24.0,<25.0",
     "tiktoken>=0.7,<1.0",
     "keyring>=25.0,<26.0",
+    "cryptography>=43.0,<46.0",
     "markitdown[pdf,docx,pptx,xlsx]>=0.0.1a3,<1.0",
     "numpy<2.5",
     "faster-whisper>=1.0,<2.0",

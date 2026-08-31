@@ -4,6 +4,7 @@
 spikes/.copilot_token
 whisper/
 faster-whisper-base/
+.vscode/
 
 # Python
 __pycache__/

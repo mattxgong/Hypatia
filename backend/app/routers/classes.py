@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
+from app.errors import ResourceNotFoundError
 from app.models.db_models import Class, File, WikiPage
-from app.models.schemas import ClassCreate, ClassRead, ClassUpdate
+from app.models.schemas import ClassCreate, ClassRead, ClassReadWithStats, ClassUpdate
 from app.services import storage_service
 from app.services.wiki_git import init_wiki_repo
 from app.utils.logging import get_logger
@@ -18,11 +19,6 @@ from app.utils.logging import get_logger
 logger = get_logger()
 
 router = APIRouter(prefix="/api/classes", tags=["classes"])
-
-
-class ClassReadWithStats(ClassRead):
-    file_count: int = 0
-    page_count: int = 0
 
 
 @router.post("", response_model=ClassRead, status_code=status.HTTP_201_CREATED)
@@ -41,10 +37,35 @@ async def create_class(
     return ClassRead.model_validate(class_)
 
 
-@router.get("", response_model=list[ClassRead])
-async def list_classes(session: AsyncSession = Depends(get_session)) -> list[ClassRead]:
-    result = await session.execute(select(Class).order_by(Class.created_at.desc()))
-    return [ClassRead.model_validate(c) for c in result.scalars().all()]
+@router.get("", response_model=list[ClassReadWithStats])
+async def list_classes(
+    session: AsyncSession = Depends(get_session),
+) -> list[ClassReadWithStats]:
+    file_count_sub = (
+        select(func.count()).select_from(File).where(File.class_id == Class.id).correlate(Class)
+    ).scalar_subquery()
+    page_count_sub = (
+        select(func.count())
+        .select_from(WikiPage)
+        .where(WikiPage.class_id == Class.id)
+        .correlate(Class)
+    ).scalar_subquery()
+
+    result = await session.execute(
+        select(
+            Class,
+            file_count_sub.label("file_count"),
+            page_count_sub.label("page_count"),
+        ).order_by(Class.created_at.desc())
+    )
+    return [
+        ClassReadWithStats(
+            **ClassRead.model_validate(row[0]).model_dump(),
+            file_count=row[1] or 0,
+            page_count=row[2] or 0,
+        )
+        for row in result.all()
+    ]
 
 
 @router.get("/{class_id}", response_model=ClassReadWithStats)
@@ -53,7 +74,7 @@ async def get_class(
 ) -> ClassReadWithStats:
     class_ = await session.get(Class, class_id)
     if class_ is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+        raise ResourceNotFoundError("Class not found")
 
     file_count_result = await session.execute(
         select(func.count()).select_from(File).where(File.class_id == class_id)
@@ -74,7 +95,7 @@ async def update_class(
 ) -> ClassRead:
     class_ = await session.get(Class, class_id)
     if class_ is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+        raise ResourceNotFoundError("Class not found")
 
     if body.name is not None:
         class_.name = body.name
@@ -91,7 +112,7 @@ async def update_class(
 async def delete_class(class_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> None:
     class_ = await session.get(Class, class_id)
     if class_ is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+        raise ResourceNotFoundError("Class not found")
 
     await session.delete(class_)
     await session.commit()
