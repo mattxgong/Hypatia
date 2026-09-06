@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/source_file.dart';
 import '../services/api_client.dart';
+import 'wiki_provider.dart';
 
 final fileListProvider = FutureProvider.family<List<SourceFile>, String>((
   ref,
@@ -35,6 +36,7 @@ class FilePollingNotifier extends FamilyNotifier<bool, String> {
         _startPolling();
       } else if (!hasProcessing && _timer != null) {
         _stopPolling();
+        ref.invalidate(wikiTreeProvider(arg));
       }
     });
     return false;

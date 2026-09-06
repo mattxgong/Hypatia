@@ -47,6 +47,20 @@ void main() {
     expect(find.byTooltip('New conversation'), findsOneWidget);
   });
 
+  testWidgets('Starter cards populate and focus the command input', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapWithProviders(const ChatPanel()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Summarize a topic'));
+    await tester.pump();
+
+    final input = tester.widget<TextField>(find.byType(TextField));
+    expect(input.controller!.text, '/summarize ');
+    expect(input.focusNode!.hasFocus, isTrue);
+  });
+
   testWidgets('Command input shows autocomplete on / prefix', (tester) async {
     await tester.pumpWidget(
       wrapWithProviders(const CommandInput(), classId: 'class-1'),

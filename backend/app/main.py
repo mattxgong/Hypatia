@@ -22,6 +22,8 @@ from app.routers import settings as settings_router
 from app.routers import tasks as tasks_router
 from app.routers import wiki as wiki_router
 from app.services.credential_store import CredentialStore
+from app.services.ingestion_queue import get_ingestion_queue
+from app.services.ollama_manager import refresh_if_native_ollama, unload_if_ollama
 from app.services.settings_store import load_settings
 from app.services.wiki_search import ensure_fts_index
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
@@ -54,8 +56,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await run_migrations()
     await ensure_fts_index(engine)
+    # Resolve the Ollama model's real context window before anything sizes a
+    # prompt against it; get_context_window() reads the result synchronously.
+    await refresh_if_native_ollama(
+        settings.llm_provider, settings.llm_model, settings.ollama_base_url
+    )
+    try:
+        await get_ingestion_queue().recover_pending()
+    except Exception:
+        logger.exception("ingest_recovery_failed")
     logger.info("app_startup", data_dir=str(settings.data_dir))
     yield
+    await unload_if_ollama(settings.llm_provider, settings.llm_model, settings.ollama_base_url)
     logger.info("app_shutdown")
 
 

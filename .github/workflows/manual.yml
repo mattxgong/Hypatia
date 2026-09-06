@@ -46,6 +46,68 @@ jobs:
       - name: flutter build ${{ matrix.target }}
         run: flutter build ${{ matrix.target }}
 
+      - name: Bundle backend runtime
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $PWD '${{ matrix.artifact }}'
+          $repoRoot = Resolve-Path (Join-Path $PWD '..')
+          $backendSource = Resolve-Path (Join-Path $PWD '..' 'backend')
+          $backendTarget = Join-Path $artifactDir 'backend'
+
+          Remove-Item $backendTarget -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item $backendTarget -ItemType Directory -Force | Out-Null
+
+          @(
+            'app'
+            'alembic'
+            'alembic.ini'
+            'pyproject.toml'
+            'requirements.txt'
+            'requirements.lock'
+          ) | ForEach-Object {
+            Copy-Item (Join-Path $backendSource $_) $backendTarget -Recurse -Force
+          }
+
+          @('LICENSE', 'NOTICE') | ForEach-Object {
+            Copy-Item (Join-Path $repoRoot $_) $artifactDir -Force
+          }
+
+      - name: Verify packaged application
+        shell: pwsh
+        run: |
+          $artifactDir = Join-Path $PWD '${{ matrix.artifact }}'
+          $backendDir = Join-Path $artifactDir 'backend'
+          @(
+            'app/main.py'
+            'alembic/env.py'
+            'alembic.ini'
+            'pyproject.toml'
+            'requirements.txt'
+            'requirements.lock'
+          ) | ForEach-Object {
+            $requiredPath = Join-Path $backendDir $_
+            if (-not (Test-Path $requiredPath -PathType Leaf)) {
+              throw "Packaged backend is missing required file: $requiredPath"
+            }
+          }
+
+          @('LICENSE', 'NOTICE') | ForEach-Object {
+            $requiredPath = Join-Path $artifactDir $_
+            if (-not (Test-Path $requiredPath -PathType Leaf)) {
+              throw "Packaged artifact is missing required file: $requiredPath"
+            }
+          }
+
+          $dependencyNotices = @(
+            Get-ChildItem $artifactDir -Recurse -File |
+              Where-Object {
+                $_.Name -in @('NOTICES', 'NOTICES.Z') -and $_.Length -gt 0
+              }
+          )
+          if ($dependencyNotices.Count -eq 0) {
+            throw 'Packaged artifact is missing Flutter dependency notices.'
+          }
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

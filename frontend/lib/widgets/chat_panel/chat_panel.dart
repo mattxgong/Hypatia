@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import '../common/error_card.dart';
+import '../sidebar/add_file_button.dart';
 import 'command_input.dart';
 import 'message_bubble.dart';
 import 'starter_cards.dart';
@@ -42,7 +43,7 @@ class _ChatBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (classId == null) return const StarterCards();
+    if (classId == null) return _buildStarterCards(context, ref);
 
     final messagesAsync = ref.watch(chatMessagesProvider(classId!));
     final streamingContent = ref.watch(chatStreamingContentProvider);
@@ -57,7 +58,7 @@ class _ChatBody extends ConsumerWidget {
       ),
       data: (messages) {
         if (messages.isEmpty && streamingContent.isEmpty) {
-          return const StarterCards();
+          return _buildStarterCards(context, ref);
         }
 
         final itemCount =
@@ -76,6 +77,16 @@ class _ChatBody extends ConsumerWidget {
           },
         );
       },
+    );
+  }
+
+  Widget _buildStarterCards(BuildContext context, WidgetRef ref) {
+    return StarterCards(
+      onAsk: () => ref.read(chatInputProvider.notifier).state =
+          'What would you like to know? ',
+      onSummarize: () =>
+          ref.read(chatInputProvider.notifier).state = '/summarize ',
+      onAddFiles: () => pickAndUploadFiles(context, ref),
     );
   }
 }

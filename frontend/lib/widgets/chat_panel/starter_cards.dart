@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 
 class StarterCards extends StatelessWidget {
-  const StarterCards({super.key});
+  const StarterCards({
+    super.key,
+    required this.onAsk,
+    required this.onSummarize,
+    required this.onAddFiles,
+  });
+
+  final VoidCallback onAsk;
+  final VoidCallback onSummarize;
+  final VoidCallback onAddFiles;
 
   @override
   Widget build(BuildContext context) {
@@ -14,21 +23,21 @@ class StarterCards extends StatelessWidget {
             icon: Icons.question_answer_outlined,
             title: 'Ask about my wiki',
             subtitle: 'Query your knowledge base',
-            onTap: () {},
+            onTap: onAsk,
           ),
           const SizedBox(height: 12),
           _StarterCard(
             icon: Icons.summarize_outlined,
             title: 'Summarize a topic',
             subtitle: 'Generate a new wiki page',
-            onTap: () {},
+            onTap: onSummarize,
           ),
           const SizedBox(height: 12),
           _StarterCard(
             icon: Icons.upload_file_outlined,
             title: 'Add files',
             subtitle: 'Upload source material',
-            onTap: () {},
+            onTap: onAddFiles,
           ),
         ],
       ),

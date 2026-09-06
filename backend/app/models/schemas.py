@@ -4,20 +4,49 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.models.db_models import ChatRole, FileStatus, FileType, WikiCategory
 
+ClassName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+ClassDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+ProviderName = Literal["copilot", "copilot-ollama", "anthropic", "openai", "ollama"]
+WhisperModelSize = Literal[
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v1",
+    "large-v2",
+    "large-v3",
+    "distil-large-v2",
+    "distil-large-v3",
+    "turbo",
+]
+WhisperDevice = Literal["cpu", "cuda"]
+BoundedModelName = Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)]
+BoundedSecret = Annotated[str, StringConstraints(max_length=8192)]
+OllamaBaseUrl = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=2048,
+        pattern=r"^https?://[^\s]+$",
+    ),
+]
+
 
 class ClassCreate(BaseModel):
-    name: str
-    description: str | None = None
+    name: ClassName
+    description: ClassDescription | None = None
 
 
 class ClassUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
+    name: ClassName | None = None
+    description: ClassDescription | None = None
 
 
 class ClassRead(BaseModel):
@@ -87,8 +116,8 @@ class WikiPageSummary(BaseModel):
 
 
 class ChatMessageCreate(BaseModel):
-    content: str
-    command: str | None = None
+    content: Annotated[str, StringConstraints(min_length=1, max_length=100_000)]
+    command: Annotated[str, StringConstraints(max_length=64)] | None = None
 
 
 class ChatMessageRead(BaseModel):
@@ -105,7 +134,7 @@ class ChatMessageRead(BaseModel):
 
 
 class CommandRequest(BaseModel):
-    command: str
+    command: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
     args: dict | None = None
 
 
@@ -122,7 +151,7 @@ class WikiTreeNodeRead(BaseModel):
 
 
 class WikiPageUpdate(BaseModel):
-    content: str
+    content: Annotated[str, StringConstraints(max_length=5_000_000)]
 
 
 class TaskStatusRead(BaseModel):
@@ -173,21 +202,21 @@ class SettingsRead(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    llm_provider: str | None = None
-    llm_model: str | None = None
-    llm_temperature: float | None = None
-    llm_max_tokens: int | None = None
-    anthropic_api_key: str | None = None
-    openai_api_key: str | None = None
-    github_token: str | None = None
-    ollama_base_url: str | None = None
-    whisper_model_size: str | None = None
-    whisper_device: str | None = None
+    llm_provider: ProviderName | None = None
+    llm_model: BoundedModelName | None = None
+    llm_temperature: float | None = Field(default=None, ge=0, le=2)
+    llm_max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    anthropic_api_key: BoundedSecret | None = None
+    openai_api_key: BoundedSecret | None = None
+    github_token: BoundedSecret | None = None
+    ollama_base_url: OllamaBaseUrl | None = None
+    whisper_model_size: WhisperModelSize | None = None
+    whisper_device: WhisperDevice | None = None
 
 
 class ValidateKeyRequest(BaseModel):
-    provider: str
-    api_key: str
+    provider: Literal["copilot", "anthropic", "openai"]
+    api_key: Annotated[str, StringConstraints(min_length=1, max_length=8192)]
 
 
 class ValidateKeyResponse(BaseModel):

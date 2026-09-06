@@ -14,8 +14,14 @@ class ChatWsChunk {
 }
 
 class ChatWsComplete {
-  const ChatWsComplete({required this.messageId, this.citations, this.result});
+  const ChatWsComplete({
+    required this.messageId,
+    this.content,
+    this.citations,
+    this.result,
+  });
   final String messageId;
+  final String? content;
   final List<dynamic>? citations;
   final Map<String, dynamic>? result;
 }
@@ -126,16 +132,23 @@ class WebSocketService {
   }
 
   void _handleMessage(dynamic raw) {
-    final data = jsonDecode(raw as String) as Map<String, dynamic>;
-    final type = data['type'] as String;
+    final Map<String, dynamic> data;
+    try {
+      data = jsonDecode(raw as String) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
 
-    switch (type) {
+    switch (data['type']) {
       case 'chunk':
-        _chunkController.add(ChatWsChunk(content: data['content'] as String));
+        _chunkController.add(
+          ChatWsChunk(content: data['content'] as String? ?? ''),
+        );
       case 'complete':
         _completeController.add(
           ChatWsComplete(
-            messageId: data['message_id'] as String,
+            messageId: data['message_id'] as String? ?? '',
+            content: data['content'] as String?,
             citations: data['citations'] as List<dynamic>?,
             result: data['result'] as Map<String, dynamic>?,
           ),
@@ -143,16 +156,16 @@ class WebSocketService {
       case 'progress':
         _progressController.add(
           ChatWsProgress(
-            operation: data['operation'] as String,
-            operationId: data['operation_id'] as String,
-            percent: data['percent'] as int,
-            message: data['message'] as String,
+            operation: data['operation'] as String? ?? 'operation',
+            operationId: data['operation_id'] as String? ?? '',
+            percent: (data['percent'] as num?)?.toInt() ?? 0,
+            message: data['message'] as String? ?? '',
           ),
         );
       case 'error':
         _errorController.add(
           ChatWsError(
-            message: data['message'] as String,
+            message: data['message'] as String? ?? 'Unknown error',
             code: data['code'] as String?,
           ),
         );

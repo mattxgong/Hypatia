@@ -24,6 +24,7 @@ class ChatMessagesNotifier
     extends FamilyAsyncNotifier<List<ChatMessage>, String> {
   StreamSubscription<ChatWsChunk>? _chunkSub;
   StreamSubscription<ChatWsComplete>? _completeSub;
+  StreamSubscription<ChatWsProgress>? _progressSub;
   StreamSubscription<ChatWsError>? _errorSub;
 
   @override
@@ -36,6 +37,7 @@ class ChatMessagesNotifier
 
     await _chunkSub?.cancel();
     await _completeSub?.cancel();
+    await _progressSub?.cancel();
     await _errorSub?.cancel();
 
     _chunkSub = ws.onChunk.listen((chunk) {
@@ -48,18 +50,26 @@ class ChatMessagesNotifier
       final streamedContent = ref.read(chatStreamingContentProvider);
       ref.read(chatStreamingContentProvider.notifier).state = '';
 
-      final now = DateTime.now();
-      final message = ChatMessage(
-        id: complete.messageId,
-        classId: arg,
-        role: ChatRole.assistant,
-        content: streamedContent,
-        createdAt: now,
-        updatedAt: now,
-      );
-      state = AsyncData([...state.valueOrNull ?? [], message]);
+      final content = complete.content ?? streamedContent;
+      if (content.isNotEmpty) {
+        final now = DateTime.now();
+        final message = ChatMessage(
+          id: complete.messageId,
+          classId: arg,
+          role: ChatRole.assistant,
+          content: content,
+          createdAt: now,
+          updatedAt: now,
+        );
+        state = AsyncData([...state.valueOrNull ?? [], message]);
+      }
 
       _refreshAfterCommand(complete.result);
+    });
+
+    _progressSub = ws.onProgress.listen((progress) {
+      ref.read(chatStreamingContentProvider.notifier).state =
+          '${progress.message} (${progress.percent}%)';
     });
 
     _errorSub = ws.onError.listen((error) {
@@ -79,6 +89,7 @@ class ChatMessagesNotifier
     ref.onDispose(() {
       _chunkSub?.cancel();
       _completeSub?.cancel();
+      _progressSub?.cancel();
       _errorSub?.cancel();
     });
 

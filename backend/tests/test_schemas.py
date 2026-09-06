@@ -5,6 +5,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from app.models.db_models import ChatRole, FileStatus, FileType, WikiCategory
 from app.models.schemas import (
     ChatMessageCreate,
@@ -16,6 +19,8 @@ from app.models.schemas import (
     CommandResponse,
     FileRead,
     FileUploadResponse,
+    SettingsUpdate,
+    ValidateKeyRequest,
     WikiPageRead,
     WikiPageSummary,
 )
@@ -145,3 +150,50 @@ def test_command_response_default_updated_wiki_paths() -> None:
     )
     response = CommandResponse(chat_message=chat_message)
     assert response.updated_wiki_paths == []
+
+
+def test_class_inputs_are_trimmed_and_bounded() -> None:
+    assert ClassCreate(name="  Biology  ").name == "Biology"
+
+    with pytest.raises(ValidationError):
+        ClassCreate(name="   ")
+    with pytest.raises(ValidationError):
+        ClassCreate(name="x" * 256)
+    with pytest.raises(ValidationError):
+        ClassUpdate(description="x" * 4001)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"llm_provider": "unknown"},
+        {"llm_temperature": -0.1},
+        {"llm_temperature": 2.1},
+        {"llm_max_tokens": 0},
+        {"whisper_model_size": "enormous"},
+        {"whisper_device": "metal"},
+        {"ollama_base_url": "localhost:11434"},
+    ],
+)
+def test_settings_update_rejects_invalid_values(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        SettingsUpdate(**payload)
+
+
+def test_settings_update_accepts_supported_values_and_secret_clear() -> None:
+    update = SettingsUpdate(
+        llm_provider="copilot-ollama",
+        llm_temperature=0,
+        llm_max_tokens=1_000_000,
+        openai_api_key="",
+        ollama_base_url="http://localhost:11434",
+        whisper_model_size="large-v3",
+        whisper_device="cuda",
+    )
+
+    assert update.openai_api_key == ""
+
+
+def test_validate_key_request_rejects_non_key_provider() -> None:
+    with pytest.raises(ValidationError):
+        ValidateKeyRequest(provider="ollama", api_key="unused")

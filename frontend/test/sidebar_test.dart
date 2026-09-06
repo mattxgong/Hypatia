@@ -110,6 +110,7 @@ void main() {
     expect(find.text('Machine Learning'), findsOneWidget);
     expect(find.byType(TextField), findsWidgets);
     expect(find.text('Search wiki...'), findsOneWidget);
+    expect(find.byTooltip('About Hypatia'), findsOneWidget);
   });
 
   testWidgets('Sidebar shows wiki tree categories', (tester) async {

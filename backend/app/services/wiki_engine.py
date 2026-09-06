@@ -22,6 +22,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.errors import HypatiaError
 from app.models.db_models import (
     ChatMessage,
     ChatRole,
@@ -30,7 +31,7 @@ from app.models.db_models import (
     WikiCategory,
     WikiPage,
 )
-from app.services.llm_service import get_llm_provider
+from app.services.llm_service import get_context_window, get_llm_provider
 from app.services.prompts.ingest_prompt import INGEST_SYSTEM_PROMPT
 from app.services.prompts.lint_prompt import LINT_SYSTEM_PROMPT
 from app.services.prompts.query_prompt import ASK_SYSTEM_PROMPT
@@ -78,9 +79,33 @@ async def _delete_embedding_safe(session: AsyncSession, page_id: uuid.UUID | str
 
 _ENCODER: tiktoken.Encoding | None = None
 
-# Assumes the largest common context window across supported models.
-# Individual providers may differ; revisit if smaller-context models are added.
-_DEFAULT_CONTEXT_WINDOW = 128_000
+#: Smallest prompt budget worth attempting, so a misconfigured context window
+#: degrades into small prompts rather than empty ones.
+_MIN_PROMPT_BUDGET = 512
+
+#: Fractions of the usable prompt budget allotted to each kind of context.
+_SOURCE_BUDGET_RATIO = 0.50  # the source document being ingested
+_RELATED_PAGES_RATIO = 0.30  # existing pages shown so the LLM can cross-link
+_ASK_CONTEXT_RATIO = 0.75  # wiki pages retrieved to answer a question
+
+
+def _output_budget() -> int:
+    """Tokens to allow the model to generate.
+
+    Capped at a quarter of the context window: with a small local model,
+    ``llm_max_tokens`` alone can exceed the whole window.
+    """
+    return max(min(settings.llm_max_tokens, get_context_window() // 4), 256)
+
+
+def _prompt_budget() -> int:
+    """Tokens available for a prompt, after reserving room for the response.
+
+    Every prompt built in this module is sized against this. Exceeding the
+    model's window is not a soft truncation — Ollama rejects the request with
+    a 400 ``exceed_context_size_error``.
+    """
+    return max(get_context_window() - _output_budget(), _MIN_PROMPT_BUDGET)
 
 
 def _get_encoder() -> tiktoken.Encoding:
@@ -92,6 +117,15 @@ def _get_encoder() -> tiktoken.Encoding:
 
 def _count_tokens(text: str) -> int:
     return len(_get_encoder().encode(text))
+
+
+def _truncate_to_tokens(text: str, budget: int) -> str:
+    """Cut ``text`` down to ``budget`` tokens, noting that it was cut."""
+    encoder = _get_encoder()
+    tokens = encoder.encode(text)
+    if len(tokens) <= budget:
+        return text
+    return encoder.decode(tokens[:budget]) + "\n\n[... truncated ...]"
 
 
 @dataclass
@@ -239,7 +273,8 @@ async def ingest_source(
         metadata["token_count"] = source_tokens
         file_record.metadata_json = metadata
 
-    source_budget = int(_DEFAULT_CONTEXT_WINDOW * 0.50)
+    prompt_budget = _prompt_budget()
+    source_budget = int(prompt_budget * _SOURCE_BUDGET_RATIO)
 
     if source_tokens > source_budget:
         chunks = _chunk_source(source_content, source_budget)
@@ -247,6 +282,10 @@ async def ingest_source(
         chunks = [source_content]
 
     wiki_path = init_wiki_repo(cid)
+    # The index grows with the wiki, so the copy shown to the LLM has to be
+    # bounded like everything else sharing the prompt. `index_content` itself
+    # stays whole — it is written back to disk at the end.
+    index_budget = prompt_budget - source_budget - int(prompt_budget * _RELATED_PAGES_RATIO)
     index_content = _read_index(wiki_path)
     existing_pages_context = await _get_related_pages_context(
         session, class_id, source_content[:500]
@@ -255,17 +294,25 @@ async def ingest_source(
     result = IngestResult(success=True)
     filename = file_record.original_filename
     provider = get_llm_provider()
+    file_record.status = FileStatus.PROCESSING
+    await session.commit()
 
     for i, chunk in enumerate(chunks):
         user_prompt = _build_ingest_prompt(
-            chunk, filename, str(file_id), index_content, existing_pages_context, i, len(chunks)
+            chunk,
+            filename,
+            str(file_id),
+            _truncate_to_tokens(index_content, index_budget),
+            existing_pages_context,
+            i,
+            len(chunks),
         )
 
         try:
             raw_output = await provider.complete(
-                INGEST_SYSTEM_PROMPT, user_prompt, max_tokens=settings.llm_max_tokens
+                INGEST_SYSTEM_PROMPT, user_prompt, max_tokens=_output_budget()
             )
-        except (OSError, ValueError, RuntimeError) as e:
+        except (OSError, ValueError, RuntimeError, HypatiaError) as e:
             logger.error("ingest_llm_error", class_id=cid, file_id=str(file_id), error=str(e))
             result.success = False
             result.error = f"LLM error: {e}"
@@ -288,9 +335,11 @@ async def ingest_source(
                 result.pages_created.append(page.path)
 
         index_content = _rebuild_index_from_disk(wiki_path)
+        await session.commit()
 
     _write_index(wiki_path, index_content)
     _append_log(wiki_path, "ingest", filename, result)
+    file_record.status = FileStatus.READY
     await session.commit()
 
     commit_wiki_change(cid, f"ingest: {filename}")
@@ -317,7 +366,7 @@ async def handle_ask(
     wiki_path = wiki_dir(cid)
     pages_context: list[str] = []
     pages_consulted: list[str] = []
-    token_budget = 90_000
+    token_budget = int(_prompt_budget() * _ASK_CONTEXT_RATIO)
 
     index_path = wiki_path / "index.md"
     if index_path.exists():
@@ -349,9 +398,9 @@ async def handle_ask(
     try:
         provider = get_llm_provider()
         answer = await provider.complete(
-            ASK_SYSTEM_PROMPT, user_prompt, max_tokens=settings.llm_max_tokens
+            ASK_SYSTEM_PROMPT, user_prompt, max_tokens=_output_budget()
         )
-    except (OSError, ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError, HypatiaError) as e:
         logger.error("ask_llm_error", class_id=cid, error=str(e))
         answer = f"Error generating answer: {e}"
 
@@ -420,7 +469,7 @@ async def _get_related_pages_context(
     query_hint: str,
 ) -> str:
     """Find existing related pages to include as context for the LLM."""
-    budget = int(_DEFAULT_CONTEXT_WINDOW * 0.30)
+    budget = int(_prompt_budget() * _RELATED_PAGES_RATIO)
     results = await hybrid_search(session, class_id, query_hint, limit=5)
 
     wiki_path = wiki_dir(str(class_id))
@@ -963,9 +1012,9 @@ async def handle_summarize(
     try:
         provider = get_llm_provider()
         raw_output = await provider.complete(
-            SUMMARIZE_SYSTEM_PROMPT, user_prompt, max_tokens=settings.llm_max_tokens
+            SUMMARIZE_SYSTEM_PROMPT, user_prompt, max_tokens=_output_budget()
         )
-    except (OSError, ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError, HypatiaError) as e:
         logger.error("summarize_llm_error", class_id=cid, error=str(e))
         return SummarizeResult(success=False, error=f"LLM error: {e}")
 
@@ -1249,7 +1298,7 @@ async def handle_lint(
                         )
                     except json.JSONDecodeError:
                         continue
-            except (OSError, ValueError, RuntimeError) as e:
+            except (OSError, ValueError, RuntimeError, HypatiaError) as e:
                 logger.warning("lint_llm_error", class_id=cid, error=str(e))
 
     append_log(wp, "lint", f"{len(issues)} issues found")
@@ -1412,7 +1461,7 @@ async def handle_ask_stream(
     wp = wiki_dir(cid)
     pages_context: list[str] = []
     pages_consulted: list[str] = []
-    token_budget = 90_000
+    token_budget = int(_prompt_budget() * _ASK_CONTEXT_RATIO)
 
     index_path = wp / "index.md"
     if index_path.exists():
@@ -1446,11 +1495,11 @@ async def handle_ask_stream(
     try:
         provider = get_llm_provider()
         async for chunk in provider.stream(
-            ASK_SYSTEM_PROMPT, user_prompt, max_tokens=settings.llm_max_tokens
+            ASK_SYSTEM_PROMPT, user_prompt, max_tokens=_output_budget()
         ):
             collected.append(chunk)
             yield chunk
-    except (OSError, ValueError, RuntimeError) as e:
+    except (OSError, ValueError, RuntimeError, HypatiaError) as e:
         logger.error("ask_stream_error", class_id=cid, error=str(e))
         error_msg = f"\n\n[Error: {e}]"
         collected.append(error_msg)

@@ -40,6 +40,7 @@ void main() {
 
     expect(find.byType(Scaffold), findsOneWidget);
     expect(find.text('Welcome to Hypatia'), findsOneWidget);
+    expect(find.byTooltip('About Hypatia'), findsOneWidget);
   });
 
   testWidgets('Theme toggle persists preference', (tester) async {

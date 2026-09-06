@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -27,6 +28,28 @@ from app.models.db_models import (
     WikiPage,
 )
 from app.models.db_models import File as FileRecord
+
+
+def _empty_manifest(name: str = "Imported Class") -> dict[str, object]:
+    return {
+        "version": 1,
+        "class": {"name": name, "description": None},
+        "files": [],
+        "wiki_pages": [],
+        "chat_messages": [],
+    }
+
+
+def _backup_bytes(
+    manifest: dict[str, object],
+    entries: dict[str, bytes] | None = None,
+) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        for path, content in (entries or {}).items():
+            zf.writestr(path, content)
+    return buf.getvalue()
 
 
 @pytest.fixture
@@ -151,13 +174,124 @@ class TestImport:
         assert resp.status_code == 400
         assert "manifest" in resp.json()["detail"].lower()
 
-    async def test_import_creates_class(self, client: AsyncClient, tmp_path: Path) -> None:
+    async def test_import_rejects_unsupported_manifest_version(self, client: AsyncClient) -> None:
+        manifest = _empty_manifest()
+        manifest["version"] = 2
+
+        resp = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", _backup_bytes(manifest), "application/zip")},
+        )
+
+        assert resp.status_code == 400
+        assert "manifest validation" in resp.json()["detail"].lower()
+
+    async def test_import_rejects_path_traversal(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        resp = await client.post(
+            "/api/classes/import",
+            files={
+                "file": (
+                    "backup.zip",
+                    _backup_bytes(_empty_manifest(), {"raw/../../outside.txt": b"unsafe"}),
+                    "application/zip",
+                )
+            },
+        )
+
+        assert resp.status_code == 400
+        assert "unsafe archive path" in resp.json()["detail"].lower()
+        assert not (tmp_path / "outside.txt").exists()
+        async with session_factory() as session:
+            assert (await session.execute(select(Class))).scalars().all() == []
+
+    async def test_import_rejects_oversized_expanded_archive(
+        self,
+        client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        archive = _backup_bytes(_empty_manifest(), {"raw/payload.bin": b"0" * 4096})
+        assert len(archive) < 2048
+        monkeypatch.setattr(settings, "max_upload_size_bytes", 2048)
+
+        resp = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", archive, "application/zip")},
+        )
+
+        assert resp.status_code == 413
+        assert "expanded archive" in resp.json()["detail"].lower()
+
+    async def test_import_failure_rolls_back_database_and_files(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        def fail_repo_init(class_id: str) -> None:
+            raise RuntimeError(f"failed to initialize {class_id}")
+
+        monkeypatch.setattr("app.routers.backup.init_wiki_repo", fail_repo_init)
+
+        with pytest.raises(RuntimeError, match="failed to initialize"):
+            await client.post(
+                "/api/classes/import",
+                files={
+                    "file": (
+                        "backup.zip",
+                        _backup_bytes(_empty_manifest()),
+                        "application/zip",
+                    )
+                },
+            )
+
+        async with session_factory() as session:
+            assert (await session.execute(select(Class))).scalars().all() == []
+        classes_root = tmp_path / "classes"
+        assert not classes_root.exists() or list(classes_root.iterdir()) == []
+
+    async def test_imported_class_can_be_deleted(
+        self,
+        client: AsyncClient,
+        tmp_path: Path,
+    ) -> None:
+        resp = await client.post(
+            "/api/classes/import",
+            files={
+                "file": (
+                    "backup.zip",
+                    _backup_bytes(_empty_manifest("Disposable Class")),
+                    "application/zip",
+                )
+            },
+        )
+        assert resp.status_code == 201
+        class_id = resp.json()["id"]
+        assert (tmp_path / "classes" / class_id).is_dir()
+
+        delete_resp = await client.delete(f"/api/classes/{class_id}")
+
+        assert delete_resp.status_code == 204
+        assert not (tmp_path / "classes" / class_id).exists()
+
+    async def test_import_creates_class(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        exported_file_id = str(uuid.uuid4())
         manifest = {
             "version": 1,
             "class": {"name": "Imported Class", "description": "desc"},
             "files": [
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": exported_file_id,
                     "original_filename": "doc.md",
                     "file_type": "markdown",
                     "file_size_bytes": 10,
@@ -177,7 +311,7 @@ class TestImport:
                     "title": "Index",
                     "category": "index",
                     "content": "# Index",
-                    "source_file_ids": None,
+                    "source_file_ids": [exported_file_id],
                     "created_at": "2024-01-01T00:00:00",
                     "updated_at": "2024-01-01T00:00:00",
                 }
@@ -212,3 +346,17 @@ class TestImport:
         assert data["page_count"] == 1
         assert data["message_count"] == 1
         assert "id" in data
+
+        async with session_factory() as session:
+            imported_file = (
+                await session.execute(
+                    select(FileRecord).where(FileRecord.class_id == uuid.UUID(data["id"]))
+                )
+            ).scalar_one()
+            imported_page = (
+                await session.execute(
+                    select(WikiPage).where(WikiPage.class_id == uuid.UUID(data["id"]))
+                )
+            ).scalar_one()
+
+        assert imported_page.source_file_ids == [str(imported_file.id)]

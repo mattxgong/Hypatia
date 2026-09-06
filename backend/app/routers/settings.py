@@ -12,6 +12,11 @@ from app.models.schemas import (
     ValidateKeyRequest,
     ValidateKeyResponse,
 )
+from app.services.ollama_manager import (
+    is_ollama_provider,
+    refresh_if_native_ollama,
+    unload_if_ollama,
+)
 from app.services.settings_store import save_settings
 from app.utils.logging import get_logger
 
@@ -53,7 +58,13 @@ async def get_settings() -> SettingsRead:
 @router.put("", response_model=SettingsRead)
 async def update_settings(body: SettingsUpdate, request: Request) -> SettingsRead:
     persist_fields: dict[str, object] = {}
-    secret_fields: dict[str, str] = {}
+    secret_fields: dict[str, str | None] = {}
+
+    # Captured before the update so a model still loaded under the *previous*
+    # provider can be unloaded from the server it was actually running on.
+    prev_provider = settings.llm_provider
+    prev_model = settings.llm_model
+    prev_ollama_base_url = settings.ollama_base_url
 
     if body.llm_provider is not None:
         if body.llm_provider not in VALID_PROVIDERS:
@@ -83,22 +94,19 @@ async def update_settings(body: SettingsUpdate, request: Request) -> SettingsRea
     if body.anthropic_api_key is not None:
         val = body.anthropic_api_key if body.anthropic_api_key else None
         settings.anthropic_api_key = val
-        if val:
-            secret_fields["anthropic_api_key"] = val
+        secret_fields["anthropic_api_key"] = val
         logger.info("settings_updated", field="anthropic_api_key", value="[redacted]")
 
     if body.openai_api_key is not None:
         val = body.openai_api_key if body.openai_api_key else None
         settings.openai_api_key = val
-        if val:
-            secret_fields["openai_api_key"] = val
+        secret_fields["openai_api_key"] = val
         logger.info("settings_updated", field="openai_api_key", value="[redacted]")
 
     if body.github_token is not None:
         val = body.github_token if body.github_token else None
         settings.github_token = val
-        if val:
-            secret_fields["github_token"] = val
+        secret_fields["github_token"] = val
         logger.info("settings_updated", field="github_token", value="[redacted]")
 
     if body.ollama_base_url is not None:
@@ -122,9 +130,43 @@ async def update_settings(body: SettingsUpdate, request: Request) -> SettingsRea
     if secret_fields and hasattr(request.app.state, "credential_store"):
         cred_store = request.app.state.credential_store
         for key, value in secret_fields.items():
-            cred_store.set(key, value)
+            if value is None:
+                cred_store.delete(key)
+            else:
+                cred_store.set(key, value)
+
+    # Switching away from an Ollama-backed provider (or to a different Ollama
+    # model) leaves the old model resident until keep_alive expires; evict it now.
+    if is_ollama_provider(prev_provider) and (
+        settings.llm_provider != prev_provider or settings.llm_model != prev_model
+    ):
+        await unload_if_ollama(prev_provider, prev_model, prev_ollama_base_url)
+
+    # The new model has a context window of its own, and prompts are sized
+    # against it from the next request onwards.
+    if (
+        settings.llm_provider != prev_provider
+        or settings.llm_model != prev_model
+        or settings.ollama_base_url != prev_ollama_base_url
+    ):
+        await refresh_if_native_ollama(
+            settings.llm_provider, settings.llm_model, settings.ollama_base_url
+        )
 
     return _build_response()
+
+
+@router.post("/unload-ollama")
+async def unload_ollama() -> dict[str, bool]:
+    """Evict the currently configured Ollama model from memory.
+
+    The desktop app calls this just before it terminates the backend: on
+    Windows the process is force-killed, so the shutdown hook never runs.
+    """
+    unloaded = await unload_if_ollama(
+        settings.llm_provider, settings.llm_model, settings.ollama_base_url
+    )
+    return {"unloaded": unloaded}
 
 
 @router.post("/validate-key", response_model=ValidateKeyResponse)

@@ -5,6 +5,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
+BACKEND_URL="http://127.0.0.1:8000"
 
 if [ -f "$BACKEND_DIR/.venv/Scripts/python.exe" ]; then
   VENV_PY="$BACKEND_DIR/.venv/Scripts/python.exe"
@@ -17,7 +18,7 @@ if [ ! -f "$VENV_PY" ]; then
   exit 1
 fi
 
-echo "==> Starting backend (uvicorn) on http://127.0.0.1:8000"
+echo "==> Starting backend (uvicorn) on $BACKEND_URL"
 (cd "$BACKEND_DIR" && "$VENV_PY" -m uvicorn app.main:app --reload --port 8000) &
 BACKEND_PID=$!
 
@@ -28,5 +29,5 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "==> Starting frontend (flutter run)"
-(cd "$FRONTEND_DIR" && flutter run)
+echo "==> Starting frontend (flutter run) against $BACKEND_URL"
+(cd "$FRONTEND_DIR" && flutter run "--dart-define=HYPATIA_BACKEND_URL=$BACKEND_URL")

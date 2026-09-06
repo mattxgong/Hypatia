@@ -7,6 +7,7 @@ import 'providers/class_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/class_settings_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/common/hypatia_about_button.dart';
 import 'widgets/sidebar/class_dropdown.dart' show showCreateClassDialog;
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -44,6 +45,13 @@ class _ClassRedirectScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final classesAsync = ref.watch(classListProvider);
+
+    // While the list is being refetched (e.g. right after a delete) `when`
+    // still hands us the previous value. Redirecting on that would send us
+    // straight back to a class that no longer exists, so wait it out.
+    if (classesAsync.isLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return classesAsync.when(
       loading: () =>
@@ -97,7 +105,23 @@ class _ClassRouteSyncState extends ConsumerState<_ClassRouteSync> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    // If the class this route points at is gone (deleted from the settings
+    // screen, or from another window), bounce back to '/' instead of rendering
+    // a screen bound to a dead id.
+    final classesAsync = ref.watch(classListProvider);
+    final classes = classesAsync.valueOrNull;
+    if (!classesAsync.isLoading &&
+        classes != null &&
+        !classes.any((c) => c.id == widget.classId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) context.go('/');
+      });
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
+    return widget.child;
+  }
 }
 
 class _NoClassesScreen extends ConsumerWidget {
@@ -106,6 +130,7 @@ class _NoClassesScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
+      appBar: AppBar(actions: const [HypatiaAboutButton()]),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

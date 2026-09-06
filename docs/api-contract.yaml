@@ -5,7 +5,7 @@ info:
     Contract between the Flutter frontend and the FastAPI backend for the
     Hypatia LLM wiki application. Covers health, Classes CRUD, file
     upload/serve/delete, wiki tree/page CRUD/search/export/lint/rebuild,
-    chat WebSocket + history, task status, and class backup/import.
+    chat WebSocket + history, task status, settings, and class backup/import.
   version: "0.4.0"
 servers:
   - url: http://127.0.0.1:8000
@@ -457,6 +457,108 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/settings:
+    get:
+      summary: Get application settings
+      description: >-
+        Returns persisted non-secret settings. Configured credentials are
+        represented by masked values and are never returned in full.
+      operationId: getSettings
+      responses:
+        "200":
+          description: Current application settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsRead"
+    put:
+      summary: Update application settings
+      description: >-
+        Updates only supplied fields. Omit a credential to preserve it, or
+        send an empty string to delete the stored credential.
+      operationId: updateSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsUpdate"
+      responses:
+        "200":
+          description: Updated application settings with credentials masked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsRead"
+        "422":
+          description: Invalid provider, value, or request shape
+
+  /api/settings/validate-key:
+    post:
+      summary: Validate a hosted-provider credential
+      description: >-
+        Sends a small completion through a temporary provider. Invalid
+        credentials return HTTP 200 with valid set to false.
+      operationId: validateProviderKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateKeyRequest"
+      responses:
+        "200":
+          description: Credential validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateKeyResponse"
+        "422":
+          description: Unsupported provider or invalid request shape
+
+  /api/settings/usage:
+    get:
+      summary: Get in-memory LLM token usage
+      operationId: getSettingsUsage
+      responses:
+        "200":
+          description: Token and request totals since the backend started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageTotals"
+
+  /api/settings/ollama-models:
+    get:
+      summary: List models installed on the configured Ollama server
+      operationId: listOllamaModels
+      responses:
+        "200":
+          description: Sorted Ollama model names
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        "502":
+          description: The configured Ollama server could not be reached
+
+  /api/settings/unload-ollama:
+    post:
+      summary: Unload the active Ollama model
+      description: >-
+        Requests immediate model eviction for an Ollama-backed provider. A
+        false result also covers non-Ollama providers and failed unloads.
+      operationId: unloadOllamaModel
+      responses:
+        "200":
+          description: Ollama unload result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OllamaUnloadResponse"
+
   /api/tasks:
     get:
       summary: List all background tasks
@@ -553,6 +655,168 @@ components:
             required: [detail, code]
 
   schemas:
+    ProviderName:
+      type: string
+      enum: [copilot, copilot-ollama, anthropic, openai, ollama]
+
+    WhisperModelSize:
+      type: string
+      enum:
+        - tiny
+        - base
+        - small
+        - medium
+        - large-v1
+        - large-v2
+        - large-v3
+        - distil-large-v2
+        - distil-large-v3
+        - turbo
+
+    WhisperDevice:
+      type: string
+      enum: [cpu, cuda]
+
+    SettingsRead:
+      type: object
+      properties:
+        llm_provider:
+          $ref: "#/components/schemas/ProviderName"
+        llm_model:
+          type: string
+          nullable: true
+        llm_temperature:
+          type: number
+          format: float
+        llm_max_tokens:
+          type: integer
+        anthropic_api_key:
+          type: string
+          nullable: true
+          description: Masked when configured; null when absent.
+        openai_api_key:
+          type: string
+          nullable: true
+          description: Masked when configured; null when absent.
+        github_token:
+          type: string
+          nullable: true
+          description: Masked when configured; null when absent.
+        ollama_base_url:
+          type: string
+        whisper_model_size:
+          $ref: "#/components/schemas/WhisperModelSize"
+        whisper_device:
+          $ref: "#/components/schemas/WhisperDevice"
+      required:
+        - llm_provider
+        - llm_model
+        - llm_temperature
+        - llm_max_tokens
+        - anthropic_api_key
+        - openai_api_key
+        - github_token
+        - ollama_base_url
+        - whisper_model_size
+        - whisper_device
+
+    SettingsUpdate:
+      type: object
+      properties:
+        llm_provider:
+          $ref: "#/components/schemas/ProviderName"
+        llm_model:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Send an empty string to restore the provider default.
+        llm_temperature:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 2
+        llm_max_tokens:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        anthropic_api_key:
+          type: string
+          maxLength: 8192
+          nullable: true
+          description: Omit to preserve; send an empty string to delete.
+        openai_api_key:
+          type: string
+          maxLength: 8192
+          nullable: true
+          description: Omit to preserve; send an empty string to delete.
+        github_token:
+          type: string
+          maxLength: 8192
+          nullable: true
+          description: Omit to preserve; send an empty string to delete.
+        ollama_base_url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^https?://[^\s]+$'
+        whisper_model_size:
+          $ref: "#/components/schemas/WhisperModelSize"
+        whisper_device:
+          $ref: "#/components/schemas/WhisperDevice"
+
+    ValidateKeyRequest:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [copilot, anthropic, openai]
+        api_key:
+          type: string
+          minLength: 1
+          maxLength: 8192
+      required: [provider, api_key]
+
+    ValidateKeyResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        error:
+          type: string
+          nullable: true
+      required: [valid]
+
+    ModelUsage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+      required: [input_tokens, output_tokens]
+
+    UsageTotals:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        request_count:
+          type: integer
+        by_model:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ModelUsage"
+      required: [input_tokens, output_tokens, request_count, by_model]
+
+    OllamaUnloadResponse:
+      type: object
+      properties:
+        unloaded:
+          type: boolean
+      required: [unloaded]
+
     ErrorResponse:
       type: object
       properties:
@@ -567,8 +831,11 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
+          maxLength: 255
         description:
           type: string
+          maxLength: 4000
           nullable: true
       required: [name]
 
@@ -577,9 +844,12 @@ components:
       properties:
         name:
           type: string
+          minLength: 1
+          maxLength: 255
           nullable: true
         description:
           type: string
+          maxLength: 4000
           nullable: true
 
     ClassRead:
@@ -899,6 +1169,10 @@ components:
         message_id:
           type: string
           format: uuid
+        content:
+          description: Complete assistant text for non-streaming commands.
+          type: string
+          nullable: true
         citations:
           type: array
           items:
@@ -939,7 +1213,7 @@ components:
           maximum: 100
         message:
           type: string
-      required: [type, operation, percent, message]
+      required: [type, operation, operation_id, percent, message]
 
     ChatWsCancel:
       description: Client -> server. Cancel a running operation.

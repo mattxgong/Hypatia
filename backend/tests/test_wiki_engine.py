@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -104,6 +105,46 @@ async def test_ingest_source_success(db_session: AsyncSession, tmp_path: Path):
     assert len(result.pages_created) == 2
     assert "pages/source-summaries/test-doc.md" in result.pages_created
     assert "pages/concepts/unit-testing.md" in result.pages_created
+
+
+async def test_ingest_source_exposes_processing_without_holding_transaction(
+    db_session: AsyncSession, tmp_path: Path
+):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+    file_record = _create_test_file(tmp_path, class_id, file_id)
+    db_session.add(file_record)
+    await db_session.flush()
+
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+
+    async def blocked_complete(*args: object, **kwargs: object) -> str:
+        llm_started.set()
+        await release_llm.wait()
+        return MOCK_LLM_OUTPUT.format(file_id=str(file_id))
+
+    mock_provider = AsyncMock()
+    mock_provider.complete = AsyncMock(side_effect=blocked_complete)
+
+    with (
+        patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
+        patch("app.services.wiki_engine.init_wiki_repo", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_engine.wiki_dir", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_engine.commit_wiki_change", return_value="abc123"),
+    ):
+        (tmp_path / "wiki").mkdir(parents=True, exist_ok=True)
+        ingest_task = asyncio.create_task(ingest_source(db_session, class_id, file_id))
+        await llm_started.wait()
+
+        assert file_record.status == FileStatus.PROCESSING
+        assert not db_session.in_transaction()
+
+        release_llm.set()
+        result = await ingest_task
+
+    assert result.success is True
+    assert file_record.status == FileStatus.READY
 
 
 async def test_ingest_source_file_not_found(db_session: AsyncSession):

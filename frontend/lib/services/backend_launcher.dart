@@ -16,9 +16,9 @@ enum BackendStatus {
 }
 
 class BackendLauncher {
-  BackendLauncher({this.devMode = false, this.externalBaseUrl});
+  BackendLauncher({String? externalBaseUrl})
+    : externalBaseUrl = normalizeExternalBaseUrl(externalBaseUrl);
 
-  final bool devMode;
   final String? externalBaseUrl;
 
   static const _defaultPort = 8000;
@@ -43,9 +43,29 @@ class BackendLauncher {
 
   BackendStatus get status => _status;
   int get port => _port;
-  String get baseUrl => devMode && externalBaseUrl != null
-      ? externalBaseUrl!
-      : 'http://127.0.0.1:$_port';
+  String get baseUrl => externalBaseUrl ?? 'http://127.0.0.1:$_port';
+
+  static String? normalizeExternalBaseUrl(String? value) {
+    final normalized = value?.trim().replaceFirst(RegExp(r'/+$'), '');
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  static bool isSupportedPythonVersion(String output) {
+    final match = RegExp(r'Python\s+(\d+)\.(\d+)').firstMatch(output);
+    if (match == null) return false;
+    final major = int.parse(match.group(1)!);
+    final minor = int.parse(match.group(2)!);
+    return major > 3 || (major == 3 && minor >= 11);
+  }
+
+  static List<String> splitPythonCommand(
+    String command, {
+    bool Function(String path)? pathExists,
+  }) {
+    final exists = pathExists ?? (path) => File(path).existsSync();
+    if (exists(command)) return [command];
+    return command.split(' ').where((part) => part.isNotEmpty).toList();
+  }
 
   void _setStatus(BackendStatus status) {
     _status = status;
@@ -59,8 +79,8 @@ class BackendLauncher {
   Future<void> startBackend() async {
     _stopRequested = false;
 
-    if (devMode && externalBaseUrl != null) {
-      _log('Dev mode: connecting to external backend at $externalBaseUrl');
+    if (externalBaseUrl != null) {
+      _log('Connecting to external backend at $externalBaseUrl');
       _setStatus(BackendStatus.starting);
       final ready = await _pollHealth(maxAttempts: 10);
       _setStatus(ready ? BackendStatus.ready : BackendStatus.error);
@@ -68,7 +88,7 @@ class BackendLauncher {
     }
 
     _setStatus(BackendStatus.discoveringPython);
-    _pythonPath = await _loadCachedPythonPath();
+    _pythonPath ??= await _loadCachedPythonPath();
     _pythonPath ??= await _discoverPython();
     if (_pythonPath == null) {
       _log('ERROR: Python 3 was not found. Install Python 3.11+ and retry.');
@@ -77,7 +97,7 @@ class BackendLauncher {
     }
     await _cachePythonPath(_pythonPath!);
 
-    final backendDir = await _findBackendDir();
+    final backendDir = resolveBackendDirectory();
     if (backendDir == null) {
       _log('ERROR: could not locate the backend directory.');
       _setStatus(BackendStatus.error);
@@ -105,6 +125,20 @@ class BackendLauncher {
     _setStatus(ready ? BackendStatus.ready : BackendStatus.error);
   }
 
+  Future<void> retryBackend() async {
+    if (_process != null) await stopBackend();
+    _restartedAfterCrash = false;
+    await startBackend();
+  }
+
+  Future<bool> selectPython(String path) async {
+    final resolved = await _tryPython(path, const []);
+    if (resolved == null) return false;
+    _pythonPath = resolved;
+    await _cachePythonPath(resolved);
+    return true;
+  }
+
   Future<void> stopBackend({
     Duration gracePeriod = const Duration(seconds: 5),
   }) async {
@@ -114,6 +148,8 @@ class BackendLauncher {
       _setStatus(BackendStatus.stopped);
       return;
     }
+
+    await _requestOllamaUnload();
 
     _log('Stopping backend (PID: ${process.pid})...');
 
@@ -136,6 +172,29 @@ class BackendLauncher {
   }
 
   Future<bool> isBackendRunning() => _pollHealth(maxAttempts: 1);
+
+  /// Ask the backend to evict its Ollama model before we terminate it.
+  ///
+  /// The backend's own shutdown hook does this too, but it never runs when the
+  /// process is force-killed (as it is on Windows), which would leave the model
+  /// resident until Ollama's keep_alive expires. Best-effort: a backend that is
+  /// already gone, or not using Ollama, is not an error.
+  Future<void> _requestOllamaUnload() async {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 2),
+        receiveTimeout: const Duration(seconds: 10),
+      ),
+    );
+    try {
+      await dio.post<Map<String, dynamic>>(
+        '$baseUrl/api/settings/unload-ollama',
+      );
+    } catch (_) {
+    } finally {
+      dio.close();
+    }
+  }
 
   Future<bool> _pollHealth({required int maxAttempts}) async {
     final dio = Dio(
@@ -190,7 +249,7 @@ class BackendLauncher {
     final sep = Platform.pathSeparator;
     final fallbackPaths = Platform.isWindows
         ? [
-            for (final v in ['313', '312', '311', '310'])
+            for (final v in ['313', '312', '311'])
               [
                 home,
                 'AppData',
@@ -200,7 +259,7 @@ class BackendLauncher {
                 'Python$v',
                 'python.exe',
               ].join(sep),
-            for (final v in ['313', '312', '311', '310'])
+            for (final v in ['313', '312', '311'])
               ['C:', 'Python$v', 'python.exe'].join(sep),
           ]
         : [
@@ -224,7 +283,13 @@ class BackendLauncher {
       final result = await Process.run(executable, [...baseArgs, '--version']);
       if (result.exitCode == 0) {
         final version = '${result.stdout}${result.stderr}'.trim();
-        _log('Found Python: $executable $version');
+        if (!isSupportedPythonVersion(version)) {
+          _log(
+            'Skipping unsupported Python: $executable $version (3.11+ required).',
+          );
+          return null;
+        }
+        _log('Found supported Python: $executable $version');
         return baseArgs.isEmpty
             ? executable
             : '$executable ${baseArgs.join(' ')}';
@@ -246,7 +311,7 @@ class BackendLauncher {
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       final cached = config['pythonPath'] as String?;
       if (cached == null) return null;
-      final parts = cached.split(' ');
+      final parts = splitPythonCommand(cached);
       if (await _tryPython(parts.first, parts.skip(1).toList()) != null) {
         return cached;
       }
@@ -261,23 +326,29 @@ class BackendLauncher {
     } catch (_) {}
   }
 
-  Future<Directory?> _findBackendDir() async {
+  static Directory? resolveBackendDirectory({
+    Directory? workingDirectory,
+    File? executable,
+    int maxAncestorDepth = 6,
+  }) {
     bool hasMarker(Directory dir) => File(
       '${dir.path}${Platform.pathSeparator}app${Platform.pathSeparator}main.py',
     ).existsSync();
 
+    final cwd = workingDirectory ?? Directory.current;
+    final resolvedExecutable = executable ?? File(Platform.resolvedExecutable);
     final seen = <String>{};
     final candidates = <Directory>[];
     void add(Directory dir) {
       if (seen.add(dir.path)) candidates.add(dir);
     }
 
-    add(Directory('${Directory.current.path}${Platform.pathSeparator}backend'));
+    add(Directory('${cwd.path}${Platform.pathSeparator}backend'));
 
-    final exeDir = Directory(File(Platform.resolvedExecutable).parent.path);
-    for (final start in [Directory.current, exeDir]) {
+    final exeDir = Directory(resolvedExecutable.parent.path);
+    for (final start in [cwd, exeDir]) {
       var current = start;
-      for (var i = 0; i < 6; i++) {
+      for (var i = 0; i < maxAncestorDepth; i++) {
         add(Directory('${current.path}${Platform.pathSeparator}backend'));
         final parent = current.parent;
         if (parent.path == current.path) break;
@@ -302,7 +373,7 @@ class BackendLauncher {
     final venvPython = _venvPythonPath(backendDir);
     if (!await File(venvPython).exists()) {
       _log('Creating Python virtual environment...');
-      final parts = _pythonPath!.split(' ');
+      final parts = splitPythonCommand(_pythonPath!);
       final created = await Process.run(parts.first, [
         ...parts.skip(1),
         '-m',

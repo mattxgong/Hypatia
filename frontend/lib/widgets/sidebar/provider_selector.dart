@@ -9,7 +9,12 @@ import 'provider_config_dialog.dart';
 class ProviderSelector extends ConsumerWidget {
   const ProviderSelector({super.key});
 
-  static const _requiresConfig = {'anthropic', 'openai', 'ollama'};
+  static const _requiresConfig = {
+    'anthropic',
+    'openai',
+    'ollama',
+    'copilot-ollama',
+  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -59,16 +64,23 @@ class ProviderSelector extends ConsumerWidget {
                   ),
                 )
                 .toList(),
-            onChanged: (value) {
+            onChanged: (value) async {
               if (value != null && value != currentProvider) {
-                ref
-                    .read(llmProviderSettingProvider.notifier)
-                    .setProvider(value);
-                ref.invalidate(fullSettingsProvider);
                 if (_requiresConfig.contains(value)) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    showProviderConfigDialog(context, value);
-                  });
+                  final saved = await showProviderConfigDialog(
+                    context,
+                    value,
+                    activateProvider: true,
+                  );
+                  if (saved) {
+                    ref.invalidate(llmProviderSettingProvider);
+                    ref.invalidate(fullSettingsProvider);
+                  }
+                } else {
+                  await ref
+                      .read(llmProviderSettingProvider.notifier)
+                      .setProvider(value);
+                  ref.invalidate(fullSettingsProvider);
                 }
               }
             },

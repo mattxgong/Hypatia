@@ -70,7 +70,7 @@ class AddFileButton extends ConsumerWidget {
           child: FilledButton.icon(
             onPressed: uploadState.status == UploadStatus.uploading
                 ? null
-                : () => _pickAndUpload(context, ref),
+                : () => pickAndUploadFiles(context, ref),
             icon: const Icon(Icons.add, size: 18),
             label: const Text('Add Files'),
           ),
@@ -78,27 +78,27 @@ class AddFileButton extends ConsumerWidget {
       ],
     );
   }
+}
 
-  Future<void> _pickAndUpload(BuildContext context, WidgetRef ref) async {
-    final classId = ref.read(currentClassIdProvider);
-    if (classId == null) return;
+Future<void> pickAndUploadFiles(BuildContext context, WidgetRef ref) async {
+  final classId = ref.read(currentClassIdProvider);
+  if (classId == null || !context.mounted) return;
 
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: allowedExtensions,
-    );
+  final files = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: allowedExtensions,
+  );
 
-    if (files.isEmpty) return;
+  if (files.isEmpty || !context.mounted) return;
 
-    final paths = files
-        .where((PlatformFile f) => f.path != null)
-        .map((PlatformFile f) => f.path!)
-        .toList();
+  final paths = files
+      .where((PlatformFile file) => file.path != null)
+      .map((PlatformFile file) => file.path!)
+      .toList();
 
-    if (paths.isEmpty) return;
+  if (paths.isEmpty) return;
 
-    unawaited(ref.read(uploadProgressProvider.notifier).uploadFiles(paths));
-  }
+  unawaited(ref.read(uploadProgressProvider.notifier).uploadFiles(paths));
 }
 
 class _UploadProgressIndicator extends StatelessWidget {

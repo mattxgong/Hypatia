@@ -73,11 +73,25 @@ class _CommandInputState extends ConsumerState<CommandInput> {
     final theme = Theme.of(context);
     final filter = _controller.text.toLowerCase();
 
+    ref.listen(chatInputProvider, (_, draft) {
+      if (draft.isEmpty) return;
+      _controller.text = draft;
+      _controller.selection = TextSelection.collapsed(offset: draft.length);
+      _focusNode.requestFocus();
+      ref.read(chatInputProvider.notifier).state = '';
+    });
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         if (_showCommands)
           Container(
+            // Keyed so the framework does not match this against the input
+            // container below by position when the suggestion strip appears
+            // or disappears. Without keys both children are bare Containers,
+            // so the TextField's element would be rebuilt from scratch on
+            // every '/' keystroke and lose focus mid-typing.
+            key: const ValueKey('command-suggestions'),
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -101,6 +115,7 @@ class _CommandInputState extends ConsumerState<CommandInput> {
             ),
           ),
         Container(
+          key: const ValueKey('command-input'),
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             border: Border(top: BorderSide(color: theme.dividerColor)),

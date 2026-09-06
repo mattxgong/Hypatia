@@ -101,6 +101,7 @@ async def _handle_help(websocket: WebSocket) -> None:
             "type": "complete",
             "message_id": str(uuid.uuid4()),
             "content": _HELP_TEXT,
+            "result": {"command": "/help"},
         }
     )
 
@@ -178,7 +179,11 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
-                        "result": {"page_path": result.page_path},
+                        "content": f"Created summary page: {result.page_path}",
+                        "result": {
+                            "command": "/summarize",
+                            "page_path": result.page_path,
+                        },
                     }
                 )
             else:
@@ -227,7 +232,12 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
+                        "content": (
+                            f"Removed {filename}: {result.pages_deleted} pages deleted, "
+                            f"{result.pages_updated} pages updated"
+                        ),
                         "result": {
+                            "command": "/remove",
                             "pages_deleted": result.pages_deleted,
                             "pages_updated": result.pages_updated,
                         },
@@ -278,7 +288,9 @@ async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 {
                     "type": "complete",
                     "message_id": str(uuid.uuid4()),
+                    "content": f"Lint complete: {len(result.issues)} issues found",
                     "result": {
+                        "command": "/lint",
                         "issues": [asdict(i) for i in result.issues],
                     },
                 }
@@ -319,7 +331,9 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
+                        "content": f"Export complete: {result.page_count} pages",
                         "result": {
+                            "command": "/export",
                             "export_path": result.export_path,
                             "page_count": result.page_count,
                         },
@@ -353,6 +367,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
     await websocket.send_json(
         {
             "type": "progress",
+            "operation": "rebuild",
             "operation_id": task_id,
             "percent": 0,
             "message": "Starting rebuild...",
@@ -364,7 +379,8 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
             try:
                 await wiki_engine.handle_rebuild(session, class_id, task_id=task_id)
                 task_manager.complete_task(task_id)
-            except (OSError, ValueError, RuntimeError, HypatiaError) as e:
+            except Exception as e:
+                logger.exception("chat_rebuild_error", class_id=str(class_id), error=str(e))
                 task_manager.fail_task(task_id, str(e))
 
     rebuild_task = asyncio.create_task(_run())
@@ -379,7 +395,8 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
-                        "result": {"task_id": task_id},
+                        "content": "Rebuild complete.",
+                        "result": {"command": "/rebuild", "task_id": task_id},
                     }
                 )
                 break
@@ -396,6 +413,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 await websocket.send_json(
                     {
                         "type": "progress",
+                        "operation": "rebuild",
                         "operation_id": task_id,
                         "percent": t.progress,
                         "message": t.message,

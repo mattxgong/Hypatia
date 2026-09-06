@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +19,75 @@ final _sidebarWidthProvider = StateProvider<double>((ref) => 250);
 final _chatPanelWidthProvider = StateProvider<double>((ref) => 350);
 final _sidebarCollapsedProvider = StateProvider<bool>((ref) => false);
 final _chatPanelCollapsedProvider = StateProvider<bool>((ref) => false);
+
+const _minimumCenterWidth = 400.0;
+const _minimumSidebarWidth = 180.0;
+const _minimumChatWidth = 280.0;
+const _collapsedStripWidth = 32.0;
+const _dividerWidth = 4.0;
+
+class PanelWidths {
+  const PanelWidths({required this.sidebar, required this.chat});
+
+  final double sidebar;
+  final double chat;
+}
+
+PanelWidths constrainPanelWidths({
+  required double availableWidth,
+  required double sidebarWidth,
+  required double chatWidth,
+  required bool sidebarCollapsed,
+  required bool chatCollapsed,
+}) {
+  final fixedWidth =
+      (sidebarCollapsed ? _collapsedStripWidth : _dividerWidth) +
+      (chatCollapsed ? _collapsedStripWidth : _dividerWidth);
+  final sideBudget = math.max(
+    0.0,
+    availableWidth - fixedWidth - _minimumCenterWidth,
+  );
+
+  if (sidebarCollapsed && chatCollapsed) {
+    return const PanelWidths(sidebar: 0, chat: 0);
+  }
+  if (sidebarCollapsed) {
+    return PanelWidths(sidebar: 0, chat: math.min(chatWidth, sideBudget));
+  }
+  if (chatCollapsed) {
+    return PanelWidths(sidebar: math.min(sidebarWidth, sideBudget), chat: 0);
+  }
+
+  final requestedSidebar = sidebarWidth.clamp(_minimumSidebarWidth, 400.0);
+  final requestedChat = chatWidth.clamp(_minimumChatWidth, 500.0);
+  const minimumTotal = _minimumSidebarWidth + _minimumChatWidth;
+  if (sideBudget < minimumTotal) {
+    final scale = sideBudget / minimumTotal;
+    return PanelWidths(
+      sidebar: _minimumSidebarWidth * scale,
+      chat: _minimumChatWidth * scale,
+    );
+  }
+
+  final requestedExtra =
+      (requestedSidebar - _minimumSidebarWidth) +
+      (requestedChat - _minimumChatWidth);
+  if (requestedSidebar + requestedChat <= sideBudget || requestedExtra == 0) {
+    return PanelWidths(sidebar: requestedSidebar, chat: requestedChat);
+  }
+
+  final availableExtra = sideBudget - minimumTotal;
+  return PanelWidths(
+    sidebar:
+        _minimumSidebarWidth +
+        availableExtra *
+            (requestedSidebar - _minimumSidebarWidth) /
+            requestedExtra,
+    chat:
+        _minimumChatWidth +
+        availableExtra * (requestedChat - _minimumChatWidth) / requestedExtra,
+  );
+}
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -86,68 +157,108 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             },
             child: Stack(
               children: [
-                Row(
-                  children: [
-                    if (!sidebarCollapsed) ...[
-                      SizedBox(width: sidebarWidth, child: const Sidebar()),
-                      _DraggableDivider(
-                        onDrag: (dx) {
-                          final current = ref.read(_sidebarWidthProvider);
-                          ref.read(_sidebarWidthProvider.notifier).state =
-                              (current + dx).clamp(180, 400);
-                        },
-                      ),
-                    ] else
-                      _CollapsedPanelStrip(
-                        icon: Icons.menu,
-                        onTap: () =>
-                            ref.read(_sidebarCollapsedProvider.notifier).state =
-                                false,
-                      ),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          _TopBar(
-                            sidebarCollapsed: sidebarCollapsed,
-                            chatCollapsed: chatCollapsed,
-                            onToggleSidebar: () =>
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final widths = constrainPanelWidths(
+                      availableWidth: constraints.maxWidth,
+                      sidebarWidth: sidebarWidth,
+                      chatWidth: chatWidth,
+                      sidebarCollapsed: sidebarCollapsed,
+                      chatCollapsed: chatCollapsed,
+                    );
+                    void resizeSidebar(double delta) {
+                      final current = ref.read(_sidebarWidthProvider);
+                      ref.read(_sidebarWidthProvider.notifier).state =
+                          (current + delta).clamp(180, 400);
+                    }
+
+                    void resizeChat(double delta) {
+                      final current = ref.read(_chatPanelWidthProvider);
+                      ref.read(_chatPanelWidthProvider.notifier).state =
+                          (current + delta).clamp(280, 500);
+                    }
+
+                    return Row(
+                      children: [
+                        if (!sidebarCollapsed) ...[
+                          SizedBox(
+                            width: widths.sidebar,
+                            child: const Sidebar(),
+                          ),
+                          _DraggableDivider(
+                            label: 'Resize class sidebar',
+                            value: widths.sidebar,
+                            onDrag: resizeSidebar,
+                            onIncrease: () => resizeSidebar(16),
+                            onDecrease: () => resizeSidebar(-16),
+                          ),
+                        ] else
+                          _CollapsedPanelStrip(
+                            icon: Icons.menu,
+                            label: 'Show class sidebar',
+                            onTap: () =>
                                 ref
                                         .read(
                                           _sidebarCollapsedProvider.notifier,
                                         )
                                         .state =
-                                    !sidebarCollapsed,
-                            onToggleChat: () =>
+                                    false,
+                          ),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              _TopBar(
+                                sidebarCollapsed: sidebarCollapsed,
+                                chatCollapsed: chatCollapsed,
+                                onToggleSidebar: () =>
+                                    ref
+                                            .read(
+                                              _sidebarCollapsedProvider
+                                                  .notifier,
+                                            )
+                                            .state =
+                                        !sidebarCollapsed,
+                                onToggleChat: () =>
+                                    ref
+                                            .read(
+                                              _chatPanelCollapsedProvider
+                                                  .notifier,
+                                            )
+                                            .state =
+                                        !chatCollapsed,
+                              ),
+                              const Expanded(child: WikiViewer()),
+                            ],
+                          ),
+                        ),
+                        if (!chatCollapsed) ...[
+                          _DraggableDivider(
+                            label: 'Resize chat panel',
+                            value: widths.chat,
+                            reverseKeyboardDirection: true,
+                            onDrag: (delta) => resizeChat(-delta),
+                            onIncrease: () => resizeChat(16),
+                            onDecrease: () => resizeChat(-16),
+                          ),
+                          SizedBox(
+                            width: widths.chat,
+                            child: const ChatPanel(),
+                          ),
+                        ] else
+                          _CollapsedPanelStrip(
+                            icon: Icons.chat_bubble_outline,
+                            label: 'Show chat panel',
+                            onTap: () =>
                                 ref
                                         .read(
                                           _chatPanelCollapsedProvider.notifier,
                                         )
                                         .state =
-                                    !chatCollapsed,
+                                    false,
                           ),
-                          const Expanded(child: WikiViewer()),
-                        ],
-                      ),
-                    ),
-                    if (!chatCollapsed) ...[
-                      _DraggableDivider(
-                        onDrag: (dx) {
-                          final current = ref.read(_chatPanelWidthProvider);
-                          ref.read(_chatPanelWidthProvider.notifier).state =
-                              (current - dx).clamp(280, 500);
-                        },
-                      ),
-                      SizedBox(width: chatWidth, child: const ChatPanel()),
-                    ] else
-                      _CollapsedPanelStrip(
-                        icon: Icons.chat_bubble_outline,
-                        onTap: () =>
-                            ref
-                                    .read(_chatPanelCollapsedProvider.notifier)
-                                    .state =
-                                false,
-                      ),
-                  ],
+                      ],
+                    );
+                  },
                 ),
                 if (_isDragging) const _DropOverlay(),
               ],
@@ -302,36 +413,87 @@ class _TopBar extends StatelessWidget {
 }
 
 class _DraggableDivider extends StatelessWidget {
-  const _DraggableDivider({required this.onDrag});
+  const _DraggableDivider({
+    required this.label,
+    required this.value,
+    required this.onDrag,
+    required this.onIncrease,
+    required this.onDecrease,
+    this.reverseKeyboardDirection = false,
+  });
 
+  final String label;
+  final double value;
   final void Function(double dx) onDrag;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+  final bool reverseKeyboardDirection;
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.resizeColumn,
-      child: GestureDetector(
-        onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
-        child: Container(width: 4, color: Theme.of(context).dividerColor),
+    return Semantics(
+      label: label,
+      value: '${value.round()} pixels',
+      increasedValue: '${(value + 16).round()} pixels',
+      decreasedValue: '${math.max(0, value - 16).round()} pixels',
+      onIncrease: onIncrease,
+      onDecrease: onDecrease,
+      child: Focus(
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+            reverseKeyboardDirection ? onDecrease() : onIncrease();
+            return KeyEventResult.handled;
+          }
+          if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+            reverseKeyboardDirection ? onIncrease() : onDecrease();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          child: GestureDetector(
+            onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+            child: Container(
+              width: _dividerWidth,
+              color: Theme.of(context).dividerColor,
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
 class _CollapsedPanelStrip extends StatelessWidget {
-  const _CollapsedPanelStrip({required this.icon, required this.onTap});
+  const _CollapsedPanelStrip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   final IconData icon;
+  final String label;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: Center(child: Icon(icon, size: 18)),
+    return Semantics(
+      button: true,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              width: _collapsedStripWidth,
+              child: Center(child: Icon(icon, size: 18)),
+            ),
+          ),
+        ),
       ),
     );
   }

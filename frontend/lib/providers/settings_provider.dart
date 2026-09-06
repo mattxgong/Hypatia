@@ -35,6 +35,7 @@ class FullSettingsNotifier extends AsyncNotifier<Map<String, dynamic>> {
   }
 
   Future<void> updateFields({
+    String? llmProvider,
     String? llmModel,
     double? llmTemperature,
     int? llmMaxTokens,
@@ -47,6 +48,7 @@ class FullSettingsNotifier extends AsyncNotifier<Map<String, dynamic>> {
   }) async {
     final apiClient = ref.read(apiClientProvider);
     final result = await apiClient.updateSettings(
+      llmProvider: llmProvider,
       llmModel: llmModel,
       llmTemperature: llmTemperature,
       llmMaxTokens: llmMaxTokens,

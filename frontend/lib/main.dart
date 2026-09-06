@@ -1,16 +1,21 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'providers/theme_provider.dart';
 import 'services/api_client.dart';
 import 'services/backend_launcher.dart';
+
+const _externalBackendUrl = String.fromEnvironment('HYPATIA_BACKEND_URL');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -76,7 +81,7 @@ class _BackendGateState extends ConsumerState<BackendGate> {
   @override
   void initState() {
     super.initState();
-    _launcher = BackendLauncher();
+    _launcher = BackendLauncher(externalBaseUrl: _externalBackendUrl);
 
     if (!_isDesktop) {
       _status = BackendStatus.ready;
@@ -116,10 +121,63 @@ class _BackendGateState extends ConsumerState<BackendGate> {
         return const HypatiaShell();
       case BackendStatus.error:
       case BackendStatus.crashed:
-        return _BackendProblemScreen(status: _status, log: _log);
+        return _BackendProblemScreen(
+          status: _status,
+          log: _log,
+          onRetry: () => unawaited(_launcher.retryBackend()),
+          onSelectPython: _selectPython,
+          onCopyDiagnostics: _copyDiagnostics,
+          onOpenTroubleshooting: () => unawaited(
+            launchUrl(
+              Uri.parse(
+                'https://github.com/mattxgong/Hypatia/blob/main/docs/troubleshooting.md',
+              ),
+              mode: LaunchMode.externalApplication,
+            ),
+          ),
+        );
       default:
         return _BackendLoadingScreen(status: _status);
     }
+  }
+
+  Future<void> _selectPython() async {
+    final isWindows = defaultTargetPlatform == TargetPlatform.windows;
+    final file = await FilePicker.pickFile(
+      type: isWindows ? FileType.custom : FileType.any,
+      allowedExtensions: isWindows ? const ['exe'] : null,
+      dialogTitle: 'Select Python 3.11 or newer',
+    );
+    final path = file?.path;
+    if (path == null) return;
+
+    final accepted = await _launcher.selectPython(path);
+    if (!mounted) return;
+    if (!accepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select a Python 3.11 or newer executable.'),
+        ),
+      );
+      return;
+    }
+    unawaited(_launcher.retryBackend());
+  }
+
+  Future<void> _copyDiagnostics() async {
+    final diagnostics = [
+      'Hypatia backend startup diagnostics',
+      'Platform: ${defaultTargetPlatform.name}',
+      'Status: ${_status.name}',
+      'Backend URL: ${_launcher.baseUrl}',
+      '',
+      ..._log,
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: diagnostics));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Diagnostics copied to clipboard.')),
+    );
   }
 }
 
@@ -159,10 +217,21 @@ class _BackendLoadingScreen extends StatelessWidget {
 }
 
 class _BackendProblemScreen extends StatelessWidget {
-  const _BackendProblemScreen({required this.status, required this.log});
+  const _BackendProblemScreen({
+    required this.status,
+    required this.log,
+    required this.onRetry,
+    required this.onSelectPython,
+    required this.onCopyDiagnostics,
+    required this.onOpenTroubleshooting,
+  });
 
   final BackendStatus status;
   final List<String> log;
+  final VoidCallback onRetry;
+  final VoidCallback onSelectPython;
+  final VoidCallback onCopyDiagnostics;
+  final VoidCallback onOpenTroubleshooting;
 
   @override
   Widget build(BuildContext context) {
@@ -179,8 +248,35 @@ class _BackendProblemScreen extends StatelessWidget {
           children: [
             Text(
               'Something went wrong while starting the Hypatia backend. '
-              'See the log below for details.',
+              'Python 3.11 or newer is required. See the log below for details.',
               style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onSelectPython,
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('Select Python'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onCopyDiagnostics,
+                  icon: const Icon(Icons.copy),
+                  label: const Text('Copy Diagnostics'),
+                ),
+                TextButton.icon(
+                  onPressed: onOpenTroubleshooting,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Troubleshooting'),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Expanded(

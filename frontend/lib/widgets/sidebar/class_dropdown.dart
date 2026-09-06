@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../providers/class_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/input_validation.dart';
 import '../common/error_card.dart';
+import '../common/hypatia_about_button.dart';
 
 class ClassDropdown extends ConsumerWidget {
   const ClassDropdown({super.key});
@@ -19,102 +21,113 @@ class ClassDropdown extends ConsumerWidget {
     return classesAsync.when(
       loading: () => const LinearProgressIndicator(),
       error: (e, _) => ErrorCard(error: e, compact: true),
-      data: (classes) => Row(
-        children: [
-          Expanded(
-            child: DropdownButtonFormField<String>(
-              initialValue: currentId,
-              decoration: InputDecoration(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: theme.colorScheme.surfaceContainerHigh,
-              ),
-              isExpanded: true,
-              selectedItemBuilder: (context) => [
-                ...classes.map(
-                  (c) => Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(c.name, overflow: TextOverflow.ellipsis),
+      data: (classes) {
+        // A just-deleted class can still be the "current" one for a frame or
+        // two before the router settles. DropdownButtonFormField asserts that
+        // its value matches exactly one item, so fall back to no selection
+        // rather than taking the whole sidebar down with it.
+        final selectedId = classes.any((c) => c.id == currentId)
+            ? currentId
+            : null;
+
+        return Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                initialValue: selectedId,
+                decoration: InputDecoration(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
                   ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: theme.colorScheme.surfaceContainerHigh,
                 ),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('New Class'),
-                ),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Import Class'),
-                ),
-              ],
-              items: [
-                ...classes.map(
-                  (c) => DropdownMenuItem<String>(
-                    value: c.id,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(c.name, overflow: TextOverflow.ellipsis),
-                        Text(
-                          '${c.fileCount} files, ${c.pageCount} pages',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.5,
+                isExpanded: true,
+                selectedItemBuilder: (context) => [
+                  ...classes.map(
+                    (c) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(c.name, overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('New Class'),
+                  ),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Import Class'),
+                  ),
+                ],
+                items: [
+                  ...classes.map(
+                    (c) => DropdownMenuItem<String>(
+                      value: c.id,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(c.name, overflow: TextOverflow.ellipsis),
+                          Text(
+                            '${c.fileCount} files, ${c.pageCount} pages',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.5,
+                              ),
                             ),
                           ),
-                        ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const DropdownMenuItem<String>(
+                    value: '__new__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.add, size: 16),
+                        SizedBox(width: 8),
+                        Text('New Class'),
                       ],
                     ),
                   ),
-                ),
-                const DropdownMenuItem<String>(
-                  value: '__new__',
-                  child: Row(
-                    children: [
-                      Icon(Icons.add, size: 16),
-                      SizedBox(width: 8),
-                      Text('New Class'),
-                    ],
+                  const DropdownMenuItem<String>(
+                    value: '__import__',
+                    child: Row(
+                      children: [
+                        Icon(Icons.file_upload_outlined, size: 16),
+                        SizedBox(width: 8),
+                        Text('Import Class'),
+                      ],
+                    ),
                   ),
-                ),
-                const DropdownMenuItem<String>(
-                  value: '__import__',
-                  child: Row(
-                    children: [
-                      Icon(Icons.file_upload_outlined, size: 16),
-                      SizedBox(width: 8),
-                      Text('Import Class'),
-                    ],
-                  ),
-                ),
-              ],
-              onChanged: (value) {
-                if (value == '__new__') {
-                  showCreateClassDialog(context, ref);
-                } else if (value == '__import__') {
-                  importClassFromBackup(context, ref);
-                } else if (value != null) {
-                  context.go('/class/$value');
-                }
-              },
+                ],
+                onChanged: (value) {
+                  if (value == '__new__') {
+                    showCreateClassDialog(context, ref);
+                  } else if (value == '__import__') {
+                    importClassFromBackup(context, ref);
+                  } else if (value != null) {
+                    context.go('/class/$value');
+                  }
+                },
+              ),
             ),
-          ),
-          if (currentId != null)
-            IconButton(
-              icon: const Icon(Icons.settings_outlined, size: 20),
-              tooltip: 'Class settings',
-              onPressed: () => context.go('/class/$currentId/settings'),
-              visualDensity: VisualDensity.compact,
-            ),
-        ],
-      ),
+            if (selectedId != null)
+              IconButton(
+                icon: const Icon(Icons.settings_outlined, size: 20),
+                tooltip: 'Class settings',
+                onPressed: () => context.go('/class/$selectedId/settings'),
+                visualDensity: VisualDensity.compact,
+              ),
+            const HypatiaAboutButton(),
+          ],
+        );
+      },
     );
   }
 }
@@ -122,6 +135,7 @@ class ClassDropdown extends ConsumerWidget {
 void showCreateClassDialog(BuildContext context, WidgetRef ref) {
   final nameController = TextEditingController();
   final descController = TextEditingController();
+  final formKey = GlobalKey<FormState>();
 
   showDialog<void>(
     context: context,
@@ -129,29 +143,36 @@ void showCreateClassDialog(BuildContext context, WidgetRef ref) {
       title: const Text('New Class'),
       content: SizedBox(
         width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                border: OutlineInputBorder(),
+        child: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                ),
+                autofocus: true,
+                scrollPhysics: const ClampingScrollPhysics(),
+                maxLength: maxClassNameLength,
+                maxLines: 1,
+                validator: validateClassName,
               ),
-              autofocus: true,
-              scrollPhysics: const ClampingScrollPhysics(),
-              maxLines: 1,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: descController,
-              decoration: const InputDecoration(
-                labelText: 'Description',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: descController,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  border: OutlineInputBorder(),
+                ),
+                maxLength: maxClassDescriptionLength,
+                maxLines: 2,
+                validator: validateClassDescription,
               ),
-              maxLines: 2,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
@@ -161,8 +182,8 @@ void showCreateClassDialog(BuildContext context, WidgetRef ref) {
         ),
         FilledButton(
           onPressed: () async {
+            if (!(formKey.currentState?.validate() ?? false)) return;
             final name = nameController.text.trim();
-            if (name.isEmpty) return;
             final newClass = await ref
                 .read(classListProvider.notifier)
                 .create(name: name, description: descController.text.trim());

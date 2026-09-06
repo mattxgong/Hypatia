@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     llm_provider: str = "copilot"
     llm_model: str | None = None
     llm_max_tokens: int = 8192
+    # Total context window of the configured model. None means "infer from the
+    # provider" (see llm_service.get_context_window), which for the native
+    # `ollama` provider reads the model's own limit from /api/show and caps it
+    # at ollama_manager.MAX_AUTO_CONTEXT_LENGTH. Set this to override that cap
+    # in either direction — larger if you have the VRAM, smaller if you don't.
+    llm_context_window: int | None = None
     llm_temperature: float = 0.3
     copilot_model: str = "gpt-5.4"
     anthropic_api_key: str | None = None

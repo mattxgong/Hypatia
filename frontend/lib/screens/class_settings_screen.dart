@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../providers/class_provider.dart';
 import '../providers/settings_provider.dart';
 import '../services/api_client.dart';
+import '../utils/input_validation.dart';
 
 class ClassSettingsScreen extends ConsumerStatefulWidget {
   const ClassSettingsScreen({super.key});
@@ -18,6 +19,7 @@ class ClassSettingsScreen extends ConsumerStatefulWidget {
 class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
   bool _initialized = false;
   bool _saving = false;
   bool _exporting = false;
@@ -62,32 +64,44 @@ class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
             children: [
               Text('General', style: theme.textTheme.titleMedium),
               const SizedBox(height: 16),
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Class Name',
-                  border: OutlineInputBorder(),
+              Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextFormField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Class Name',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLength: maxClassNameLength,
+                      validator: validateClassName,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _descController,
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLength: maxClassDescriptionLength,
+                      maxLines: 3,
+                      validator: validateClassDescription,
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton(
+                      onPressed: _saving ? null : () => _save(currentClass.id),
+                      child: _saving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save'),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _descController,
-                decoration: const InputDecoration(
-                  labelText: 'Description',
-                  border: OutlineInputBorder(),
-                ),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _saving ? null : () => _save(currentClass.id),
-                child: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Save'),
               ),
               const SizedBox(height: 48),
               const Divider(),
@@ -189,8 +203,8 @@ class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
 
   Future<void> _save(String classId) async {
     if (_saving) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     final name = _nameController.text.trim();
-    if (name.isEmpty) return;
 
     setState(() => _saving = true);
     try {
@@ -353,7 +367,18 @@ class _WhisperSettings extends ConsumerStatefulWidget {
 }
 
 class _WhisperSettingsState extends ConsumerState<_WhisperSettings> {
-  static const _modelSizes = ['tiny', 'base', 'small', 'medium'];
+  static const _modelSizes = [
+    'tiny',
+    'base',
+    'small',
+    'medium',
+    'large-v1',
+    'large-v2',
+    'large-v3',
+    'distil-large-v2',
+    'distil-large-v3',
+    'turbo',
+  ];
   static const _devices = ['cpu', 'cuda'];
 
   bool _saving = false;

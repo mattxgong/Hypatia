@@ -3,19 +3,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/input_validation.dart';
 import '../common/provider_icon.dart';
 
-void showProviderConfigDialog(BuildContext context, String providerId) {
-  showDialog<void>(
-    context: context,
-    builder: (_) => ProviderConfigDialog(providerId: providerId),
-  );
+Future<bool> showProviderConfigDialog(
+  BuildContext context,
+  String providerId, {
+  bool activateProvider = false,
+}) async {
+  return await showDialog<bool>(
+        context: context,
+        builder: (_) => ProviderConfigDialog(
+          providerId: providerId,
+          activateProvider: activateProvider,
+        ),
+      ) ??
+      false;
 }
 
 class ProviderConfigDialog extends ConsumerStatefulWidget {
-  const ProviderConfigDialog({super.key, required this.providerId});
+  const ProviderConfigDialog({
+    super.key,
+    required this.providerId,
+    this.activateProvider = false,
+  });
 
   final String providerId;
+  final bool activateProvider;
 
   @override
   ConsumerState<ProviderConfigDialog> createState() =>
@@ -23,6 +37,7 @@ class ProviderConfigDialog extends ConsumerStatefulWidget {
 }
 
 class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _apiKeyController = TextEditingController();
   final _modelController = TextEditingController();
   final _baseUrlController = TextEditingController();
@@ -33,37 +48,47 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   bool _testing = false;
   bool? _testResult;
   String? _testError;
+  bool _hasStoredApiKey = false;
+  bool _clearStoredApiKey = false;
 
   @override
   void initState() {
     super.initState();
+    _apiKeyController.addListener(_onApiKeyChanged);
     _loadCurrentSettings();
   }
 
   Future<void> _loadCurrentSettings() async {
-    final settings = ref.read(fullSettingsProvider).valueOrNull ?? {};
+    final settings = await ref.read(fullSettingsProvider.future);
+    if (!mounted) return;
     _modelController.text = (settings['llm_model'] as String?) ?? '';
 
+    String? masked;
     switch (widget.providerId) {
       case 'anthropic':
-        final masked = settings['anthropic_api_key'] as String?;
-        if (masked != null) _apiKeyController.text = masked;
+        masked = settings['anthropic_api_key'] as String?;
       case 'openai':
-        final masked = settings['openai_api_key'] as String?;
-        if (masked != null) _apiKeyController.text = masked;
+        masked = settings['openai_api_key'] as String?;
       case 'copilot':
-        final masked = settings['github_token'] as String?;
-        if (masked != null) _apiKeyController.text = masked;
+        masked = settings['github_token'] as String?;
       case 'ollama':
       case 'copilot-ollama':
         _baseUrlController.text =
             (settings['ollama_base_url'] as String?) ??
             'http://localhost:11434';
     }
+    setState(() => _hasStoredApiKey = masked != null);
+  }
+
+  void _onApiKeyChanged() {
+    if (_apiKeyController.text.isNotEmpty && _clearStoredApiKey) {
+      setState(() => _clearStoredApiKey = false);
+    }
   }
 
   @override
   void dispose() {
+    _apiKeyController.removeListener(_onApiKeyChanged);
     _apiKeyController.dispose();
     _modelController.dispose();
     _baseUrlController.dispose();
@@ -138,6 +163,13 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   }
 
   Future<void> _fetchOllamaModels() async {
+    final urlError = validateOllamaBaseUrl(_baseUrlController.text);
+    if (urlError != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(urlError)));
+      return;
+    }
     setState(() => _loadingModels = true);
     try {
       final apiClient = ref.read(apiClientProvider);
@@ -193,6 +225,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   }
 
   Future<void> _save() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _saving = true);
     try {
       final notifier = ref.read(fullSettingsProvider.notifier);
@@ -200,25 +233,32 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
       final model = _modelController.text.trim();
       final apiKey = _apiKeyController.text.trim();
       final baseUrl = _baseUrlController.text.trim();
+      final apiKeyUpdate = _clearStoredApiKey
+          ? ''
+          : (apiKey.isNotEmpty ? apiKey : null);
 
       switch (widget.providerId) {
         case 'anthropic':
           await notifier.updateFields(
-            anthropicApiKey: apiKey.isNotEmpty ? apiKey : '',
+            llmProvider: widget.activateProvider ? widget.providerId : null,
+            anthropicApiKey: apiKeyUpdate,
             llmModel: model.isNotEmpty ? model : _defaultModel,
           );
         case 'openai':
           await notifier.updateFields(
-            openaiApiKey: apiKey.isNotEmpty ? apiKey : '',
+            llmProvider: widget.activateProvider ? widget.providerId : null,
+            openaiApiKey: apiKeyUpdate,
             llmModel: model.isNotEmpty ? model : _defaultModel,
           );
         case 'copilot':
           await notifier.updateFields(
-            githubToken: apiKey.isNotEmpty ? apiKey : '',
+            llmProvider: widget.activateProvider ? widget.providerId : null,
+            githubToken: apiKeyUpdate,
             llmModel: model.isNotEmpty ? model : _defaultModel,
           );
         case 'ollama':
           await notifier.updateFields(
+            llmProvider: widget.activateProvider ? widget.providerId : null,
             ollamaBaseUrl: baseUrl.isNotEmpty
                 ? baseUrl
                 : 'http://localhost:11434',
@@ -226,6 +266,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
           );
         case 'copilot-ollama':
           await notifier.updateFields(
+            llmProvider: widget.activateProvider ? widget.providerId : null,
             ollamaBaseUrl: baseUrl.isNotEmpty
                 ? baseUrl
                 : 'http://localhost:11434',
@@ -233,7 +274,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
           );
       }
 
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
@@ -258,129 +299,171 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
       ),
       content: SizedBox(
         width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (widget.providerId == 'copilot') ...[
-              Text(
-                'GitHub Copilot uses CLI-based authentication by default. '
-                'You can optionally provide a GitHub token.',
-                style: theme.textTheme.bodySmall,
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_needsApiKey) ...[
-              TextField(
-                controller: _apiKeyController,
-                obscureText: _obscureKey,
-                decoration: InputDecoration(
-                  labelText: _apiKeyLabel,
-                  hintText: _apiKeyHint,
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscureKey ? Icons.visibility_off : Icons.visibility,
-                    ),
-                    onPressed: () => setState(() => _obscureKey = !_obscureKey),
-                  ),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (widget.providerId == 'copilot') ...[
+                Text(
+                  'GitHub Copilot uses CLI-based authentication by default. '
+                  'You can optionally provide a GitHub token.',
+                  style: theme.textTheme.bodySmall,
                 ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _testing ? null : _testConnection,
-                    icon: _testing
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.wifi_tethering, size: 16),
-                    label: const Text('Test Connection'),
-                  ),
-                  if (_testResult != null) ...[
-                    const SizedBox(width: 8),
-                    Icon(
-                      _testResult! ? Icons.check_circle : Icons.cancel,
-                      color: _testResult! ? Colors.green : Colors.red,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        _testResult! ? 'Valid' : (_testError ?? 'Invalid'),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: _testResult! ? Colors.green : Colors.red,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 16),
+              ],
+              if (_needsApiKey) ...[
+                TextFormField(
+                  controller: _apiKeyController,
+                  obscureText: _obscureKey,
+                  decoration: InputDecoration(
+                    labelText: _apiKeyLabel,
+                    hintText: _apiKeyHint,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureKey ? Icons.visibility_off : Icons.visibility,
                       ),
+                      onPressed: () =>
+                          setState(() => _obscureKey = !_obscureKey),
+                    ),
+                  ),
+                  maxLength: maxApiKeyLength,
+                  validator: validateApiKey,
+                ),
+                if (_hasStoredApiKey && _apiKeyController.text.isEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _clearStoredApiKey
+                              ? 'Saved key will be removed'
+                              : 'A saved key is configured',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _clearStoredApiKey = !_clearStoredApiKey;
+                            _testResult = null;
+                            _testError = null;
+                          });
+                        },
+                        child: Text(
+                          _clearStoredApiKey
+                              ? 'Keep saved key'
+                              : 'Clear saved key',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed:
+                          _testing || _apiKeyController.text.trim().isEmpty
+                          ? null
+                          : _testConnection,
+                      icon: _testing
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi_tethering, size: 16),
+                      label: const Text('Test Connection'),
+                    ),
+                    if (_testResult != null) ...[
+                      const SizedBox(width: 8),
+                      Icon(
+                        _testResult! ? Icons.check_circle : Icons.cancel,
+                        color: _testResult! ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _testResult! ? 'Valid' : (_testError ?? 'Invalid'),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: _testResult! ? Colors.green : Colors.red,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_needsBaseUrl) ...[
+                TextFormField(
+                  controller: _baseUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'Ollama Base URL',
+                    hintText: 'http://localhost:11434',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLength: maxBaseUrlLength,
+                  validator: validateOllamaBaseUrl,
+                ),
+                const SizedBox(height: 16),
+              ],
+              TextFormField(
+                controller: _modelController,
+                decoration: InputDecoration(
+                  labelText: 'Model',
+                  hintText: _defaultModel,
+                  border: const OutlineInputBorder(),
+                ),
+                maxLength: maxModelNameLength,
+                validator: validateModelName,
+              ),
+              if (_needsBaseUrl) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _loadingModels ? null : _fetchOllamaModels,
+                      icon: _loadingModels
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.refresh, size: 16),
+                      label: const Text('Fetch Models'),
                     ),
                   ],
-                ],
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_needsBaseUrl) ...[
-              TextField(
-                controller: _baseUrlController,
-                decoration: const InputDecoration(
-                  labelText: 'Ollama Base URL',
-                  hintText: 'http://localhost:11434',
-                  border: OutlineInputBorder(),
                 ),
-              ),
-              const SizedBox(height: 16),
-            ],
-            TextField(
-              controller: _modelController,
-              decoration: InputDecoration(
-                labelText: 'Model',
-                hintText: _defaultModel,
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            if (_needsBaseUrl) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _loadingModels ? null : _fetchOllamaModels,
-                    icon: _loadingModels
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh, size: 16),
-                    label: const Text('Fetch Models'),
+                if (_ollamaModels.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 120,
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _ollamaModels.length,
+                      itemBuilder: (context, index) {
+                        final model = _ollamaModels[index];
+                        return ListTile(
+                          dense: true,
+                          title: Text(model, style: theme.textTheme.bodySmall),
+                          onTap: () {
+                            _modelController.text = model;
+                          },
+                          selected: _modelController.text == model,
+                        );
+                      },
+                    ),
                   ),
                 ],
-              ),
-              if (_ollamaModels.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 120,
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _ollamaModels.length,
-                    itemBuilder: (context, index) {
-                      final model = _ollamaModels[index];
-                      return ListTile(
-                        dense: true,
-                        title: Text(model, style: theme.textTheme.bodySmall),
-                        onTap: () {
-                          _modelController.text = model;
-                        },
-                        selected: _modelController.text == model,
-                      );
-                    },
-                  ),
-                ),
               ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [

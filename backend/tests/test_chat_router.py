@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -16,6 +16,14 @@ from app.config import settings
 from app.database import get_session
 from app.main import app
 from app.models.db_models import Base, ChatMessage, ChatRole
+
+
+def _configure_mock_session(mock_factory: MagicMock) -> MagicMock:
+    mock_session = MagicMock(spec=AsyncSession)
+    mock_session.commit = AsyncMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
 
 
 @pytest.fixture
@@ -110,6 +118,16 @@ class TestChatHistory:
 
 
 class TestChatWebSocket:
+    async def test_help_command_returns_displayable_content(self) -> None:
+        class_id = uuid.uuid4()
+        with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+            ws.send_json({"type": "message", "content": "/help"})
+            data = ws.receive_json()
+
+        assert data["type"] == "complete"
+        assert "Available Commands" in data["content"]
+        assert data["result"]["command"] == "/help"
+
     async def test_invalid_command_returns_error(self) -> None:
         class_id = uuid.uuid4()
         with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
@@ -129,9 +147,7 @@ class TestChatWebSocket:
             patch("app.routers.chat.wiki_engine.handle_ask_stream", side_effect=fake_stream),
             patch("app.routers.chat.async_session_factory") as mock_factory,
         ):
-            mock_session = AsyncMock()
-            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            _configure_mock_session(mock_factory)
 
             with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
                 ws.send_json({"type": "message", "content": "What is gravity?"})
@@ -157,15 +173,39 @@ class TestChatWebSocket:
             from app.services.wiki_engine import SummarizeResult
 
             mock.return_value = SummarizeResult(success=True, page_path="concepts/topic.md")
-            mock_session = AsyncMock()
-            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            _configure_mock_session(mock_factory)
 
             with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
                 ws.send_json({"type": "message", "content": "/summarize gravity"})
                 data = ws.receive_json()
                 assert data["type"] == "complete"
+                assert data["content"] == "Created summary page: concepts/topic.md"
+                assert data["result"]["command"] == "/summarize"
                 assert data["result"]["page_path"] == "concepts/topic.md"
+
+    async def test_rebuild_unexpected_error_returns_error(self) -> None:
+        class_id = uuid.uuid4()
+
+        with (
+            patch(
+                "app.routers.chat.wiki_engine.handle_rebuild",
+                new_callable=AsyncMock,
+                side_effect=KeyError("broken rebuild"),
+            ),
+            patch("app.routers.chat.async_session_factory") as mock_factory,
+        ):
+            _configure_mock_session(mock_factory)
+
+            with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+                ws.send_json({"type": "message", "content": "/rebuild"})
+                assert ws.receive_json()["type"] == "progress"
+                data = ws.receive_json()
+                if data["type"] == "progress":
+                    data = ws.receive_json()
+
+        assert data["type"] == "error"
+        assert data["code"] == "REBUILD_ERROR"
+        assert "broken rebuild" in data["message"]
 
     async def test_cancel_message(self) -> None:
         class_id = uuid.uuid4()

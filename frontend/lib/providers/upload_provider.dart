@@ -82,6 +82,7 @@ class UploadProgressNotifier extends Notifier<UploadState> {
         progress: 1.0,
       );
       ref.invalidate(fileListProvider(classId));
+      ref.read(filePollingProvider(classId).notifier).startPolling();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
         state = const UploadState();

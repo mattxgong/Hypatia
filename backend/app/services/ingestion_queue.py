@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.db_models import File, FileStatus
+from app.errors import ErrorCode, HypatiaError
+from app.models.db_models import File, FileStatus, WikiPage
 from app.services.wiki_engine import IngestResult, ingest_source
 from app.utils.logging import get_logger
 
@@ -74,6 +76,11 @@ class IngestionQueue:
             cq.items.append(item)
 
             if not cq.processing:
+                # Claim the class here, under the lock, rather than letting the
+                # worker set the flag once it starts: two files enqueued back to
+                # back would both observe `processing is False` and spawn a
+                # worker each, ingesting into the same wiki concurrently.
+                cq.processing = True
                 cq.task = asyncio.create_task(self._process_class(class_id))
 
             logger.info(
@@ -83,6 +90,35 @@ class IngestionQueue:
                 position=position,
             )
             return item
+
+    async def cancel_class(self, class_id: uuid.UUID) -> int:
+        """Drop a Class's queue and stop its worker. Returns items abandoned.
+
+        Called when a Class is deleted: an ingest already in flight would keep
+        prompting the LLM for a wiki whose files and directories are gone, and
+        eventually crash writing to the deleted wiki repo.
+        """
+        async with self._lock:
+            cq = self._queues.pop(class_id, None)
+
+        if cq is None:
+            return 0
+
+        abandoned = 0
+        for item in cq.items:
+            if item.status in (QueueItemStatus.PENDING, QueueItemStatus.PROCESSING):
+                item.status = QueueItemStatus.FAILED
+                item.error = "Class deleted"
+                abandoned += 1
+
+        if cq.task is not None and not cq.task.done():
+            cq.task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cq.task
+
+        if abandoned:
+            logger.info("ingest_queue_cancelled", class_id=str(class_id), abandoned=abandoned)
+        return abandoned
 
     def get_queue_status(self, class_id: uuid.UUID) -> list[QueueItem]:
         """Return all queue items for a Class."""
@@ -103,30 +139,43 @@ class IngestionQueue:
 
     async def _process_class(self, class_id: uuid.UUID) -> None:
         """Process all pending items for a Class sequentially."""
-        cq = self._queues[class_id]
-        cq.processing = True
+        while True:
+            # Claiming the next item and releasing the class are both done under
+            # the lock, so an enqueue that lands while this worker is winding
+            # down either hands us another item or spawns a fresh worker —
+            # never neither.
+            async with self._lock:
+                cq = self._queues.get(class_id)
+                if cq is None:
+                    return  # Class deleted.
 
-        try:
-            while True:
                 item = self._next_pending(cq)
                 if item is None:
-                    break
+                    cq.processing = False
+                    return
 
                 item.status = QueueItemStatus.PROCESSING
                 self._update_positions(cq)
 
-                result = await self._process_single(item)
+            result = await self._process_single(item)
+
+            async with self._lock:
+                if self._queues.get(class_id) is not cq:
+                    return  # Class deleted while this file was being ingested.
 
                 if result.success:
                     item.status = QueueItemStatus.COMPLETE
                 else:
                     item.status = QueueItemStatus.FAILED
                     item.error = result.error
-        finally:
-            cq.processing = False
 
     async def _process_single(self, item: QueueItem) -> IngestResult:
-        """Process a single file with rate-limit retry."""
+        """Process a single file with rate-limit retry.
+
+        Never raises: this runs inside the per-Class worker task, so an escaping
+        exception would kill the worker and silently abandon every file still
+        queued for that Class.
+        """
         max_retries = 3
         base_delay = 5.0
 
@@ -136,20 +185,12 @@ class IngestionQueue:
                     result = await ingest_source(session, item.class_id, item.file_id)
 
                     if not result.success:
-                        await session.execute(
-                            update(File)
-                            .where(File.id == item.file_id)
-                            .values(status=FileStatus.ERROR, error_message=result.error)
-                        )
-                        await session.commit()
+                        await self._mark_error(session, item.file_id, result.error)
 
                     return result
 
-            except (OSError, ValueError, RuntimeError) as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str or "429" in error_str
-
-                if is_rate_limit and attempt < max_retries - 1:
+            except Exception as e:
+                if self._is_rate_limit(e) and attempt < max_retries - 1:
                     delay = base_delay * (2**attempt)
                     logger.warning(
                         "ingest_rate_limited",
@@ -160,14 +201,43 @@ class IngestionQueue:
                     await asyncio.sleep(delay)
                     continue
 
-                logger.error(
+                logger.exception(
                     "ingest_failed",
                     file_id=str(item.file_id),
                     error=str(e),
                 )
+                await self._mark_error_safe(item.file_id, str(e))
                 return IngestResult(success=False, error=str(e))
 
         return IngestResult(success=False, error="Max retries exceeded")
+
+    @staticmethod
+    def _is_rate_limit(exc: Exception) -> bool:
+        if isinstance(exc, HypatiaError) and exc.code == ErrorCode.LLM_RATE_LIMITED:
+            return True
+        error_str = str(exc).lower()
+        return "rate" in error_str or "429" in error_str
+
+    @staticmethod
+    async def _mark_error(session: AsyncSession, file_id: uuid.UUID, message: str | None) -> None:
+        await session.execute(
+            update(File)
+            .where(File.id == file_id)
+            .values(status=FileStatus.ERROR, error_message=message)
+        )
+        await session.commit()
+
+    async def _mark_error_safe(self, file_id: uuid.UUID, message: str) -> None:
+        """Record the failure on the file, on a session of its own.
+
+        The session that raised may be in an unusable state, and a file left at
+        READY would be re-queued by ``recover_pending`` on every restart.
+        """
+        try:
+            async with self._session_factory() as session:
+                await self._mark_error(session, file_id, message)
+        except Exception:
+            logger.exception("ingest_mark_error_failed", file_id=str(file_id))
 
     @staticmethod
     def _next_pending(cq: ClassQueue) -> QueueItem | None:
@@ -187,25 +257,57 @@ class IngestionQueue:
                 item.position = 0
 
     async def recover_pending(self) -> int:
-        """Re-queue files stuck in PROCESSING state after a restart.
+        """Enqueue converted files that were never ingested into the wiki.
 
-        Files in PROCESSING were mid-ingestion when the app stopped. Reset them
-        to READY so ingest_source will accept them, then enqueue for retry.
-        Returns the number of files re-queued.
+        A file is left converted-but-not-ingested when the app stops between
+        conversion and ingestion, or when ingestion failed on a previous run.
+        Files stuck mid-ingestion in PROCESSING are reset to READY first so
+        ingest_source will accept them. Returns the number of files enqueued.
         """
-        count = 0
         async with self._session_factory() as session:
-            result = await session.execute(select(File).where(File.status == FileStatus.PROCESSING))
-            stuck_files = result.scalars().all()
-            for f in stuck_files:
-                f.status = FileStatus.READY
+            await session.execute(
+                update(File)
+                .where(File.status == FileStatus.PROCESSING)
+                .values(status=FileStatus.READY)
+            )
             await session.commit()
 
-            for f in stuck_files:
-                queued = await self.enqueue(f.class_id, f.id)
-                if queued:
-                    count += 1
+            ingested: set[str] = set()
+            page_rows = await session.execute(select(WikiPage.source_file_ids))
+            for source_ids in page_rows.scalars().all():
+                if source_ids:
+                    ingested.update(source_ids)
+
+            result = await session.execute(
+                select(File).where(
+                    File.status == FileStatus.READY,
+                    File.converted_path.is_not(None),
+                )
+            )
+            candidates = [f for f in result.scalars().all() if str(f.id) not in ingested]
+
+        count = 0
+        for f in candidates:
+            if await self.enqueue(f.class_id, f.id):
+                count += 1
 
         if count:
             logger.info("ingest_queue_recovered", count=count)
         return count
+
+
+_queue: IngestionQueue | None = None
+
+
+def get_ingestion_queue() -> IngestionQueue:
+    """Return the process-wide ingestion queue, creating it on first use.
+
+    The session factory is imported lazily so importing this module does not
+    pull in the database engine.
+    """
+    global _queue
+    if _queue is None:
+        from app.database import async_session_factory
+
+        _queue = IngestionQueue(async_session_factory)
+    return _queue

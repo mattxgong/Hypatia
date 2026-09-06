@@ -111,10 +111,11 @@ scripts/run_dev.sh
 ```
 
 This starts `uvicorn app.main:app --reload --port 8000` in `backend/` and
-`flutter run` in `frontend/`, and stops the backend when `flutter run` exits.
-In production/normal use, the Flutter app auto-launches the backend itself
-(see `frontend/lib/services/backend_launcher.dart` and Task 1.9); `run_dev.sh`
-is only for iterating on both sides at once with backend auto-reload.
+passes `HYPATIA_BACKEND_URL=http://127.0.0.1:8000` to `flutter run` in
+`frontend/`. Flutter health-checks that externally managed process instead of
+launching a second backend, and the script stops Uvicorn when Flutter exits. In
+production or a direct `flutter run`, the app auto-launches and owns the backend
+itself (see `frontend/lib/services/backend_launcher.dart` and Task 1.9).
 
 To run just the backend:
 

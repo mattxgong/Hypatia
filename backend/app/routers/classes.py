@@ -13,6 +13,7 @@ from app.errors import ResourceNotFoundError
 from app.models.db_models import Class, File, WikiPage
 from app.models.schemas import ClassCreate, ClassRead, ClassReadWithStats, ClassUpdate
 from app.services import storage_service
+from app.services.ingestion_queue import get_ingestion_queue
 from app.services.wiki_git import init_wiki_repo
 from app.utils.logging import get_logger
 
@@ -113,6 +114,11 @@ async def delete_class(class_id: uuid.UUID, session: AsyncSession = Depends(get_
     class_ = await session.get(Class, class_id)
     if class_ is None:
         raise ResourceNotFoundError("Class not found")
+
+    # Stop ingestion first. An ingest already in flight holds the file's chunks
+    # in memory and would keep prompting the LLM for pages to write into a wiki
+    # repo we are about to delete.
+    await get_ingestion_queue().cancel_class(class_id)
 
     await session.delete(class_)
     await session.commit()
