@@ -216,4 +216,6 @@ class TestChatWebSocket:
             tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
         ):
             ws.send_json({"type": "cancel", "operation_id": "task-123"})
+            ws.send_json({"type": "message", "content": "/help"})
+            assert ws.receive_json()["type"] == "complete"
             mock_cancel.assert_called_once_with("task-123")
