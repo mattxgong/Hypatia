@@ -30,8 +30,12 @@ async def session_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[As
 
 
 @pytest.fixture
-def queue(session_factory: async_sessionmaker[AsyncSession]) -> IngestionQueue:
-    return IngestionQueue(session_factory)
+async def queue(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[IngestionQueue]:
+    ingestion_queue = IngestionQueue(session_factory)
+    yield ingestion_queue
+    await ingestion_queue.shutdown()
 
 
 async def test_enqueue_adds_item(queue: IngestionQueue):
@@ -380,3 +384,230 @@ async def test_cancel_class_stops_worker(
 
 async def test_cancel_class_unknown_is_noop(queue: IngestionQueue):
     assert await queue.cancel_class(uuid.uuid4()) == 0
+
+
+async def test_cancel_file_stops_target_and_continues_queue(
+    queue: IngestionQueue, session_factory: async_sessionmaker[AsyncSession]
+):
+    class_id = uuid.uuid4()
+    file1 = uuid.uuid4()
+    file2 = uuid.uuid4()
+
+    async with session_factory() as session:
+        for fid in (file1, file2):
+            session.add(
+                File(
+                    id=fid,
+                    class_id=class_id,
+                    original_filename=f"{fid}.md",
+                    file_type=FileType.MARKDOWN,
+                    file_size_bytes=50,
+                    raw_path=f"/tmp/{fid}.md",
+                    converted_path=f"/tmp/{fid}_converted.md",
+                    status=FileStatus.READY,
+                )
+            )
+        await session.commit()
+
+    first_started = asyncio.Event()
+    first_cancelled = asyncio.Event()
+
+    async def ingest(*args: object, **kwargs: object) -> IngestResult:
+        file_id = args[2]
+        if file_id == file1:
+            first_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                first_cancelled.set()
+                raise
+        return IngestResult(success=True, pages_created=["p.md"])
+
+    with patch("app.services.ingestion_queue.ingest_source", side_effect=ingest) as mock_ingest:
+        await queue.enqueue(class_id, file1)
+        await queue.enqueue(class_id, file2)
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+
+        assert await queue.cancel_file(class_id, file1) is True
+        await asyncio.sleep(0.2)
+
+    assert first_cancelled.is_set()
+    assert mock_ingest.call_count == 2
+    items = {item.file_id: item for item in queue.get_queue_status(class_id)}
+    assert items[file1].status == QueueItemStatus.FAILED
+    assert items[file1].error == "File deleted"
+    assert items[file2].status == QueueItemStatus.COMPLETE
+
+
+async def test_shutdown_cancels_workers(
+    queue: IngestionQueue, session_factory: async_sessionmaker[AsyncSession]
+):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        session.add(
+            File(
+                id=file_id,
+                class_id=class_id,
+                original_filename="pending.md",
+                file_type=FileType.MARKDOWN,
+                file_size_bytes=50,
+                raw_path="/tmp/pending.md",
+                converted_path="/tmp/pending_converted.md",
+                status=FileStatus.READY,
+            )
+        )
+        await session.commit()
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow_ingest(*args: object, **kwargs: object) -> IngestResult:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    with patch("app.services.ingestion_queue.ingest_source", side_effect=slow_ingest):
+        await queue.enqueue(class_id, file_id)
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert await queue.shutdown() == 1
+
+    assert cancelled.is_set()
+    assert queue.get_queue_status(class_id) == []
+
+
+async def test_ingestion_is_tracked_as_task(queue: IngestionQueue):
+    from app.services.task_manager import task_manager
+
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+    seen_task_ids: list[object] = []
+
+    async def ingest(*args: object, **kwargs: object) -> IngestResult:
+        seen_task_ids.append(kwargs.get("task_id"))
+        return IngestResult(success=True)
+
+    with patch("app.services.ingestion_queue.ingest_source", side_effect=ingest):
+        await queue.enqueue(class_id, file_id)
+        cq = queue._queues[class_id]
+        assert cq.task is not None
+        await cq.task
+
+    tasks = task_manager.list_tasks(str(class_id))
+    assert [(t.operation, t.status) for t in tasks] == [("ingest", "complete")]
+    assert seen_task_ids == [tasks[0].task_id]
+    assert queue.is_ingesting(class_id, file_id) is False
+
+
+async def test_is_ingesting_while_queued(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+    release = asyncio.Event()
+
+    async def ingest(*args: object, **kwargs: object) -> IngestResult:
+        await release.wait()
+        return IngestResult(success=True)
+
+    with patch("app.services.ingestion_queue.ingest_source", side_effect=ingest):
+        await queue.enqueue(class_id, file_id)
+        assert queue.is_ingesting(class_id, file_id) is True
+        release.set()
+        await queue._queues[class_id].task  # type: ignore[misc]
+
+    assert queue.is_ingesting(class_id, file_id) is False
+
+
+class _BlockingConversion:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def run(self) -> bool:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        return True
+
+
+async def _succeed() -> bool:
+    return True
+
+
+async def _fail() -> bool:
+    return False
+
+
+async def test_convert_and_enqueue_queues_successful_conversion(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+
+    with patch("app.services.ingestion_queue.ingest_source", new_callable=AsyncMock):
+        item = await queue.convert_and_enqueue(class_id, file_id, _succeed())
+
+    assert item is not None
+    assert item.file_id == file_id
+
+
+async def test_convert_and_enqueue_skips_failed_conversion(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+
+    assert await queue.convert_and_enqueue(class_id, uuid.uuid4(), _fail()) is None
+    assert queue.get_queue_status(class_id) == []
+
+
+async def test_cancel_file_cancels_running_conversion(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+    conversion = _BlockingConversion()
+
+    pending = asyncio.create_task(queue.convert_and_enqueue(class_id, file_id, conversion.run()))
+    await asyncio.wait_for(conversion.started.wait(), timeout=1)
+
+    assert await queue.cancel_file(class_id, file_id) is True
+    assert await asyncio.wait_for(pending, timeout=1) is None
+    assert conversion.cancelled.is_set()
+    assert queue.get_queue_status(class_id) == []
+
+
+async def test_cancel_file_ignores_other_class_conversion(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+    file_id = uuid.uuid4()
+    conversion = _BlockingConversion()
+
+    pending = asyncio.create_task(queue.convert_and_enqueue(class_id, file_id, conversion.run()))
+    await asyncio.wait_for(conversion.started.wait(), timeout=1)
+
+    assert await queue.cancel_file(uuid.uuid4(), file_id) is False
+    assert not conversion.cancelled.is_set()
+    assert await queue.cancel_file(class_id, file_id) is True
+    await asyncio.wait_for(pending, timeout=1)
+
+
+async def test_cancel_class_and_shutdown_cancel_conversions(queue: IngestionQueue):
+    class_id = uuid.uuid4()
+    first = _BlockingConversion()
+    second = _BlockingConversion()
+
+    pending_first = asyncio.create_task(
+        queue.convert_and_enqueue(class_id, uuid.uuid4(), first.run())
+    )
+    pending_second = asyncio.create_task(
+        queue.convert_and_enqueue(uuid.uuid4(), uuid.uuid4(), second.run())
+    )
+    await asyncio.wait_for(first.started.wait(), timeout=1)
+    await asyncio.wait_for(second.started.wait(), timeout=1)
+
+    assert await queue.cancel_class(class_id) == 1
+    assert await asyncio.wait_for(pending_first, timeout=1) is None
+    assert not second.cancelled.is_set()
+
+    assert await queue.shutdown() == 1
+    assert await asyncio.wait_for(pending_second, timeout=1) is None
+    assert second.cancelled.is_set()

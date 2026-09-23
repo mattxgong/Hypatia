@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,6 +16,7 @@ from app.models.db_models import Base, Class, File, FileStatus, FileType
 from app.services import video_processor
 from app.services.video_processor import (
     FfmpegNotAvailableError,
+    TranscriptionCancelledError,
     TranscriptionResult,
     TranscriptSegment,
 )
@@ -118,6 +121,65 @@ def test_transcribe_audio_explicit_model_size_overrides_default(tmp_path: Path) 
         video_processor.transcribe_audio(audio_path, model_size="small")
 
     get_model.assert_called_once_with("small")
+
+
+def test_transcribe_audio_stops_when_cancelled(tmp_path: Path) -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+    fake_model = MagicMock()
+    fake_model.transcribe.return_value = (
+        [MagicMock(start=0.0, end=1.0, text="never read")],
+        MagicMock(language="en", language_probability=1.0),
+    )
+
+    with (
+        patch.object(video_processor, "_get_whisper_model", return_value=fake_model),
+        pytest.raises(TranscriptionCancelledError),
+    ):
+        video_processor.transcribe_audio(tmp_path / "audio.wav", cancel_event=cancel_event)
+
+
+async def test_cancelled_process_video_removes_wav_after_thread_exits(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_id = await _make_pending_file(session_factory)
+    source = tmp_path / "lecture-1.mp4"
+    source.write_bytes(b"fake video bytes")
+    output = tmp_path / "converted" / "lecture-1.md"
+    tmp_wav = output.with_suffix(".wav")
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def slow_extract(
+        video_path: Path, output_path: Path
+    ) -> tuple[Path, video_processor.VideoMetadata]:
+        started.set()
+        release.wait(timeout=5)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"wav bytes")
+        finished.set()
+        return output_path, video_processor.VideoMetadata(duration_seconds=1.0)
+
+    with patch.object(video_processor, "extract_audio", side_effect=slow_extract):
+        async with session_factory() as session:
+            task = asyncio.create_task(
+                video_processor.process_video(session, file_id, source, output)
+            )
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 5)
+            for _ in range(100):
+                if not tmp_wav.exists():
+                    break
+                await asyncio.sleep(0.01)
+
+    assert not tmp_wav.exists()
+    assert not output.exists()
 
 
 async def test_process_video_success_updates_file_status(

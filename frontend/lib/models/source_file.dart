@@ -51,6 +51,7 @@ class SourceFile {
     this.metadataJson,
     required this.createdAt,
     required this.updatedAt,
+    this.ingesting = false,
   });
 
   factory SourceFile.fromJson(Map<String, dynamic> json) {
@@ -67,6 +68,7 @@ class SourceFile {
       metadataJson: json['metadata_json'] as Map<String, dynamic>?,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+      ingesting: json['ingesting'] as bool? ?? false,
     );
   }
 
@@ -82,6 +84,14 @@ class SourceFile {
   final Map<String, dynamic>? metadataJson;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final bool ingesting;
+
+  bool get isConverting =>
+      convertedPath == null &&
+      (status == FileStatus.pending || status == FileStatus.processing);
+
+  bool get isSummarizing =>
+      convertedPath != null && (ingesting || status == FileStatus.processing);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -96,6 +106,7 @@ class SourceFile {
     'metadata_json': metadataJson,
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
+    'ingesting': ingesting,
   };
 
   SourceFile copyWith({
@@ -116,6 +127,7 @@ class SourceFile {
       metadataJson: metadataJson,
       createdAt: createdAt,
       updatedAt: updatedAt,
+      ingesting: ingesting,
     );
   }
 }

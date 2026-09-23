@@ -9,10 +9,33 @@ from __future__ import annotations
 import io
 import uuid
 
+import httpx
 import pytest
 from httpx import AsyncClient
 
+from tests.e2e.conftest import MockLLMProvider
+
 pytestmark = pytest.mark.asyncio
+
+
+def _mock_ollama_transport(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
+    """Route the settings router's Ollama client through ``transport``."""
+    real_client = httpx.AsyncClient
+
+    def client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(*args, transport=transport, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("app.routers.settings.httpx", _HttpxWithClient(client))
+
+
+class _HttpxWithClient:
+    """The ``httpx`` module, with ``AsyncClient`` swapped for one caller."""
+
+    def __init__(self, client: object) -> None:
+        self.AsyncClient = client
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(httpx, name)
 
 
 class TestFirstTimeUserFlow:
@@ -272,6 +295,71 @@ class TestSettingsAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["llm_provider"] == "anthropic"
+
+    async def test_settings_start_from_deterministic_baseline(
+        self, e2e_client: AsyncClient
+    ) -> None:
+        # Runs after test_update_settings; a leaked provider switch fails here.
+        resp = await e2e_client.get("/api/settings")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["llm_provider"] == "copilot"
+        assert data["llm_model"] is None
+        assert data["anthropic_api_key"] is None
+        assert data["ollama_base_url"] == "http://localhost:11434"
+
+    async def test_validate_key_uses_mock_provider(
+        self, e2e_client: AsyncClient, mock_llm: MockLLMProvider
+    ) -> None:
+        resp = await e2e_client.post(
+            "/api/settings/validate-key",
+            json={"provider": "anthropic", "api_key": "sk-ant-test"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"valid": True, "error": None}
+        assert mock_llm.call_log[-1]["user"] == "Say hello."
+
+    async def test_validate_key_reports_provider_failure(
+        self, e2e_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def reject(*args: object, **kwargs: object) -> str:
+            raise RuntimeError("invalid api key")
+
+        monkeypatch.setattr(MockLLMProvider, "complete", reject)
+        resp = await e2e_client.post(
+            "/api/settings/validate-key",
+            json={"provider": "openai", "api_key": "sk-bad"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"valid": False, "error": "invalid api key"}
+
+    async def test_list_ollama_models_uses_configured_server(
+        self, e2e_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        requested: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            return httpx.Response(
+                200, json={"models": [{"name": "qwen3"}, {"name": "llama3.2"}, {}]}
+            )
+
+        _mock_ollama_transport(monkeypatch, httpx.MockTransport(handler))
+        resp = await e2e_client.get("/api/settings/ollama-models")
+        assert resp.status_code == 200
+        assert resp.json() == ["llama3.2", "qwen3"]
+        assert requested == ["http://localhost:11434/api/tags"]
+
+    async def test_list_ollama_models_reports_unreachable_server(
+        self, e2e_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        _mock_ollama_transport(monkeypatch, httpx.MockTransport(handler))
+        resp = await e2e_client.get("/api/settings/ollama-models")
+        assert resp.status_code == 502
+        assert "Could not reach Ollama" in resp.json()["detail"]
 
     async def test_get_usage(self, e2e_client: AsyncClient) -> None:
         resp = await e2e_client.get("/api/settings/usage")

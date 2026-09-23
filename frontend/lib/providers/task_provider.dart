@@ -22,6 +22,8 @@ class TaskListNotifier extends Notifier<TaskListState> {
   @override
   TaskListState build() {
     ref.onDispose(() => _pollTimer?.cancel());
+    // Picks up work already running when the app opens, e.g. recovered ingestion.
+    Future.microtask(fetchTasks);
     return const TaskListState();
   }
 

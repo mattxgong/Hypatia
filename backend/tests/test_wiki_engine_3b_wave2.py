@@ -27,6 +27,7 @@ from app.services.wiki_engine import (
     handle_summarize,
 )
 from app.services.wiki_search import ensure_fts_index
+from tests.conftest import StubIngestionQueue
 
 
 @pytest.fixture
@@ -211,11 +212,14 @@ async def test_handle_remove_success(db_session: AsyncSession, tmp_path: Path):
     with (
         patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.ingestion_queue.get_ingestion_queue") as mock_get_queue,
     ):
+        mock_get_queue.return_value.cancel_file = AsyncMock(return_value=True)
         result = await handle_remove(db_session, class_id, "lecture.pdf")
 
     assert isinstance(result, RemoveResult)
     assert result.success is True
+    mock_get_queue.return_value.cancel_file.assert_awaited_once_with(class_id, file_record.id)
     assert "pages/source-summaries/lecture.md" in result.pages_deleted
     assert not raw_path.exists()
     assert not page_file.exists()
@@ -420,6 +424,53 @@ async def test_handle_rebuild_preserves_user_edited(db_session: AsyncSession, tm
     assert result.pages_deleted == 1
     assert user_page.exists()
     assert not auto_page.exists()
+
+
+async def test_handle_rebuild_includes_file_mid_ingestion(
+    db_session: AsyncSession, tmp_path: Path, stub_ingestion_queue: StubIngestionQueue
+):
+    class_id = uuid.uuid4()
+    wiki_path = tmp_path / "wiki"
+    wiki_path.mkdir()
+    converted_path = tmp_path / "converted" / "notes.md"
+    converted_path.parent.mkdir(parents=True)
+    converted_path.write_text("Notes content here.", encoding="utf-8")
+
+    db_session.add(Class(id=class_id, name="Mid-ingest"))
+    await db_session.flush()
+    file_record = File(
+        class_id=class_id,
+        original_filename="notes.pdf",
+        file_type=FileType.PDF,
+        file_size_bytes=500,
+        status=FileStatus.PROCESSING,
+        raw_path=str(tmp_path / "notes.pdf"),
+        converted_path=str(converted_path),
+    )
+    db_session.add(file_record)
+    await db_session.commit()
+
+    llm_output = (
+        '<wiki-page path="pages/source-summaries/notes.md">\n'
+        '---\ntitle: "Notes"\ntype: source-summary\nsources: []\ntags: []\n---\n\n'
+        "# Notes\n\nSummary.\n</wiki-page>\n"
+    )
+    mock_provider = AsyncMock()
+    mock_provider.complete = AsyncMock(return_value=llm_output)
+
+    with (
+        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
+    ):
+        result = await handle_rebuild(db_session, class_id)
+
+    assert result.success is True
+    assert result.pages_created == 1
+    assert stub_ingestion_queue.cancelled_files == [(class_id, file_record.id)]
+    await db_session.refresh(file_record)
+    assert file_record.status == FileStatus.READY
 
 
 # ---------------------------------------------------------------------------

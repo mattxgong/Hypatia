@@ -24,9 +24,9 @@ else
   VENV_PY="$BACKEND_DIR/.venv/bin/python"
 fi
 
-echo "==> Installing backend dependencies (pip install -e .[dev])"
+echo "==> Installing locked backend dependencies (requirements.lock)"
 "$VENV_PY" -m pip install --upgrade pip
-(cd "$BACKEND_DIR" && "$VENV_PY" -m pip install -e ".[dev]")
+(cd "$BACKEND_DIR" && "$VENV_PY" -m pip install -r requirements.lock && "$VENV_PY" -m pip install --no-deps -e .)
 
 # --- Frontend: Flutter dependencies ------------------------------------------
 echo "==> Running flutter pub get"

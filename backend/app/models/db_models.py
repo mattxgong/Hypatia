@@ -89,6 +89,11 @@ class Class(Base):
 
 class File(Base):
     __tablename__ = "files"
+    __table_args__ = (
+        UniqueConstraint(
+            "class_id", "original_filename", name="uq_files_class_id_original_filename"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     class_id: Mapped[uuid.UUID] = mapped_column(

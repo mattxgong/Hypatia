@@ -360,3 +360,47 @@ class TestImport:
             ).scalar_one()
 
         assert imported_page.source_file_ids == [str(imported_file.id)]
+
+    async def test_import_renames_legacy_duplicate_file_names(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        manifest = _empty_manifest("Legacy Class")
+        manifest["files"] = [
+            {
+                "id": str(uuid.uuid4()),
+                "original_filename": "notes.md",
+                "file_type": "markdown",
+                "file_size_bytes": 1,
+                "raw_path": raw_path,
+                "status": "ready",
+            }
+            for raw_path in ("raw/notes.md", "raw/notes-1.md")
+        ]
+
+        resp = await client.post(
+            "/api/classes/import",
+            files={
+                "file": (
+                    "backup.zip",
+                    _backup_bytes(manifest, {"raw/notes.md": b"a", "raw/notes-1.md": b"b"}),
+                    "application/zip",
+                )
+            },
+        )
+
+        assert resp.status_code == 201
+        async with session_factory() as session:
+            names = (
+                (
+                    await session.execute(
+                        select(FileRecord.original_filename).where(
+                            FileRecord.class_id == uuid.UUID(resp.json()["id"])
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert sorted(names) == ["notes-1.md", "notes.md"]

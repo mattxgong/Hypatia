@@ -49,7 +49,7 @@ class TestChatWebSocketCommands:
                     break
 
             types = [m["type"] for m in messages]
-            assert "complete" in types or "error" in types
+            assert types[-1] == "complete", messages
 
     async def test_summarize_command(
         self, e2e_client: AsyncClient, e2e_class: dict, sample_source_file
@@ -82,12 +82,17 @@ class TestChatWebSocketCommands:
                     break
 
             final = messages[-1]
-            assert final["type"] in ("complete", "error")
+            # The stub queue never ingests, so the wiki has nothing to summarize.
+            assert final == {
+                "type": "error",
+                "message": "No wiki pages found for this topic",
+                "code": "SUMMARIZE_ERROR",
+            }
 
     async def test_remove_command(
         self, e2e_client: AsyncClient, e2e_class: dict, sample_source_file
     ) -> None:
-        """Verify /remove returns a complete or error response."""
+        """Verify /remove completes for an uploaded file."""
         class_id = e2e_class["id"]
 
         await e2e_client.post(
@@ -115,7 +120,7 @@ class TestChatWebSocketCommands:
                     break
 
             final = messages[-1]
-            assert final["type"] in ("complete", "error")
+            assert final["type"] == "complete", messages
 
     async def test_lint_command(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify /lint returns a complete response."""
@@ -135,7 +140,7 @@ class TestChatWebSocketCommands:
                     break
 
             final = messages[-1]
-            assert final["type"] in ("complete", "error")
+            assert final["type"] == "complete", messages
 
     async def test_invalid_command(self, e2e_client: AsyncClient, e2e_class: dict) -> None:
         """Verify invalid commands return an error."""

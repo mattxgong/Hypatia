@@ -91,6 +91,46 @@ void main() {
     });
   });
 
+  group('BackendLauncher dependency lock tracking', () {
+    late Directory backend;
+    late File lock;
+
+    setUp(() {
+      backend = Directory.systemTemp.createTempSync('hypatia-lock-');
+      Directory(
+        '${backend.path}${Platform.pathSeparator}.venv',
+      ).createSync(recursive: true);
+      lock = File('${backend.path}${Platform.pathSeparator}requirements.lock')
+        ..writeAsStringSync('fastapi==1.0.0\n');
+    });
+
+    tearDown(() => backend.deleteSync(recursive: true));
+
+    test('requires an install when no lock has been recorded', () async {
+      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+    });
+
+    test('matches after recording the installed lock', () async {
+      await BackendLauncher.recordInstalledLock(backend);
+
+      expect(await BackendLauncher.dependenciesMatchLock(backend), isTrue);
+    });
+
+    test('requires a reinstall when the packaged lock changes', () async {
+      await BackendLauncher.recordInstalledLock(backend);
+      lock.writeAsStringSync('fastapi==1.0.0\nnumpy==2.4.6\n');
+
+      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+    });
+
+    test('requires an install when the backend has no lockfile', () async {
+      await BackendLauncher.recordInstalledLock(backend);
+      lock.deleteSync();
+
+      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+    });
+  });
+
   group('BackendLauncher.resolveBackendDirectory', () {
     test('finds backend in a development checkout', () {
       final checkout = Directory.systemTemp.createTempSync('hypatia-dev-');

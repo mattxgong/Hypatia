@@ -100,7 +100,8 @@ First-time setup:
 scripts/setup.sh
 ```
 
-This creates `backend/.venv`, installs backend deps (`pip install -e ".[dev]"`),
+This creates `backend/.venv`, installs the pinned backend deps from
+`backend/requirements.lock` (then `pip install --no-deps -e .`),
 and runs `flutter pub get` in `frontend/`. It also reminds you to install
 `ffmpeg`, which the backend needs for audio/video conversion.
 
@@ -137,7 +138,10 @@ cd backend
 - Four tables:
   - `classes` — a Class (name, description, timestamps).
   - `files` — uploaded source material for a Class (`file_type`, `status`,
-    `raw_path`/`converted_path`, `metadata_json`).
+    `raw_path`/`converted_path`, `metadata_json`). `original_filename` is
+    unique per Class (`uq_files_class_id_original_filename`); uploads of an
+    existing name return 409. Converted artifacts are named by file ID
+    (`converted/<file_id>.md`, `.summary.md`, ...) so sources never collide.
   - `wiki_pages` — LLM-maintained wiki pages for a Class (`path`, `title`,
     `category`, `content`, `source_file_ids`).
   - `chat_messages` — chat history for a Class (`role`, `content`, `command`,
@@ -232,6 +236,21 @@ flutter test
 Integration tests that need a real LLM API key are marked `@pytest.mark.integration`
 and excluded from the fast run above; they run nightly instead
 (`.github/workflows/nightly.yml`) via `pytest tests/ -m integration`.
+
+Test isolation (`backend/tests/conftest.py`, `backend/tests/e2e/conftest.py`):
+- Every test restores all `settings` fields afterwards and uses an in-memory
+  credential store instead of the platform keyring.
+- The process-wide ingestion queue is an inert stub; tests that need a live
+  worker construct `IngestionQueue` themselves (see
+  `tests/e2e/test_file_deletion_races.py`).
+- E2E tests start from default settings and patch `get_llm_provider` in every
+  module that imports it by name, plus the Ollama lifecycle hooks. When a
+  new module imports `get_llm_provider`, add it to `_LLM_PROVIDER_TARGETS`.
+
+`backend/requirements.lock` is a universal `uv` lock of runtime + dev deps.
+CI regenerates it and fails on any diff; after editing `pyproject.toml` run
+`python -m uv pip compile pyproject.toml --extra dev --universal -o requirements.lock`
+from `backend/`.
 
 `.github/workflows/manual.yml` is a manually-triggered (`workflow_dispatch`)
 workflow that builds cross-platform Flutter desktop binaries, uploads them as

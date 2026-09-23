@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import tiktoken
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -31,6 +31,7 @@ from app.models.db_models import (
     WikiCategory,
     WikiPage,
 )
+from app.services import storage_service
 from app.services.llm_service import get_context_window, get_llm_provider
 from app.services.prompts.ingest_prompt import INGEST_SYSTEM_PROMPT
 from app.services.prompts.lint_prompt import LINT_SYSTEM_PROMPT
@@ -150,10 +151,12 @@ class AskResult:
 class WikiTreeNode:
     """A node in the wiki page tree (for sidebar display)."""
 
+    id: uuid.UUID
     path: str
     title: str
     category: str
     user_edited: bool
+    updated_at: datetime
 
 
 @dataclass
@@ -244,12 +247,16 @@ async def ingest_source(
     session: AsyncSession,
     class_id: uuid.UUID,
     file_id: uuid.UUID,
+    *,
+    task_id: str | None = None,
 ) -> IngestResult:
     """Ingest a converted source file into the wiki.
 
     Reads the full converted markdown, prompts the LLM to generate wiki pages,
     writes them to disk and database, and commits via git.
     """
+    from app.services.task_manager import task_manager
+
     cid = str(class_id)
 
     file_record = await session.get(File, file_id)
@@ -296,8 +303,20 @@ async def ingest_source(
     provider = get_llm_provider()
     file_record.status = FileStatus.PROCESSING
     await session.commit()
+    logger.info("ingest_started", class_id=cid, file_id=str(file_id), chunks=len(chunks))
 
     for i, chunk in enumerate(chunks):
+        if task_id:
+            if task_manager.is_cancelled(task_id):
+                result.success = False
+                result.error = "Cancelled by user"
+                return result
+            task_manager.update_progress(
+                task_id,
+                int(i / len(chunks) * 100),
+                f"Ingesting {filename} (part {i + 1}/{len(chunks)})",
+            )
+
         user_prompt = _build_ingest_prompt(
             chunk,
             filename,
@@ -716,10 +735,12 @@ async def get_wiki_tree(
         user_edited = "user_edited: true" in content[:500]
         nodes.append(
             WikiTreeNode(
+                id=page.id,
                 path=page.path,
                 title=page.title,
                 category=page.category.value,
                 user_edited=user_edited,
+                updated_at=page.updated_at,
             )
         )
     return nodes
@@ -1092,6 +1113,9 @@ async def handle_remove(
     if file_record is None:
         return RemoveResult(success=False, error=f"File not found: {filename}")
 
+    from app.services.ingestion_queue import get_ingestion_queue
+
+    await get_ingestion_queue().cancel_file(class_id, file_record.id)
     file_id = str(file_record.id)
 
     if file_record.raw_path:
@@ -1105,6 +1129,7 @@ async def handle_remove(
         summary_path = converted.with_suffix(".summary.md")
         if summary_path.exists():
             summary_path.unlink()
+    storage_service.delete_converted_artifacts(cid, file_record.id)
 
     result = RemoveResult(success=True)
 
@@ -1315,7 +1340,10 @@ async def handle_rebuild_preview(
     pages_dir = wp / "pages"
 
     source_files_q = await session.execute(
-        select(File).where(File.class_id == class_id, File.status == FileStatus.READY)
+        select(File).where(
+            File.class_id == class_id,
+            File.status.in_((FileStatus.READY, FileStatus.PROCESSING)),
+        )
     )
     source_files = source_files_q.scalars().all()
 
@@ -1367,9 +1395,30 @@ async def handle_rebuild(
     If the process is interrupted, the wiki will be in a partially-rebuilt state;
     re-running /rebuild will complete it. This is acceptable for a local app.
     """
+    from app.services.ingestion_queue import get_ingestion_queue
     from app.services.task_manager import task_manager
 
     cid = str(class_id)
+
+    # Files still queued or mid-ingestion would otherwise be skipped here and
+    # then ingested again by the queue on top of the rebuilt wiki.
+    queued_q = await session.execute(
+        select(File.id).where(
+            File.class_id == class_id,
+            File.status.in_((FileStatus.READY, FileStatus.PROCESSING)),
+        )
+    )
+    queue = get_ingestion_queue()
+    for file_id in queued_q.scalars().all():
+        await queue.cancel_file(class_id, file_id)
+    await session.execute(
+        update(File)
+        .where(File.class_id == class_id, File.status == FileStatus.PROCESSING)
+        .values(status=FileStatus.READY)
+    )
+    await session.commit()
+    session.expire_all()
+
     wp = init_wiki_repo(cid)
     pages_dir = wp / "pages"
 

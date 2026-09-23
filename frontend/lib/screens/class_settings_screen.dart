@@ -343,10 +343,17 @@ class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
               onPressed: confirmController.text.trim() == className
                   ? () async {
                       Navigator.pop(dialogContext);
-                      await ref
-                          .read(classListProvider.notifier)
-                          .delete(classId);
-                      if (mounted) context.go('/');
+                      try {
+                        await ref
+                            .read(classListProvider.notifier)
+                            .delete(classId);
+                        if (mounted) context.go('/');
+                      } on ApiException catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Delete failed: ${e.detail}')),
+                        );
+                      }
                     }
                   : null,
               style: FilledButton.styleFrom(

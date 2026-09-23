@@ -22,12 +22,16 @@ report the error instead of crashing.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import shutil
 import subprocess
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import quote
 from uuid import UUID
 
@@ -47,9 +51,17 @@ _warned_ffmpeg_missing = False
 
 _whisper_models: dict[str, WhisperModel] = {}
 
+_media_executor = ThreadPoolExecutor(thread_name_prefix="hypatia-media")
+
+_T = TypeVar("_T")
+
 
 class FfmpegNotAvailableError(RuntimeError):
     """Raised when ffmpeg/ffprobe is required but not installed."""
+
+
+class TranscriptionCancelledError(RuntimeError):
+    """Raised inside the transcription thread once its conversion is cancelled."""
 
 
 def _warn_ffmpeg_missing() -> None:
@@ -218,19 +230,26 @@ def _get_whisper_model(model_size: str) -> WhisperModel:
     return _whisper_models[model_size]
 
 
-def transcribe_audio(audio_path: Path, *, model_size: str | None = None) -> TranscriptionResult:
+def transcribe_audio(
+    audio_path: Path,
+    *,
+    model_size: str | None = None,
+    cancel_event: threading.Event | None = None,
+) -> TranscriptionResult:
     """Transcribe audio_path into timestamped segments via faster-whisper.
 
     Uses settings.whisper_model_size (default base) unless model_size is
     given. Runs on CPU with int8 quantization, matching the configuration
-    validated in spikes/faster_whisper_test.py.
+    validated in spikes/faster_whisper_test.py. Setting ``cancel_event`` stops
+    decoding at the next segment.
     """
     model = _get_whisper_model(model_size or settings.whisper_model_size)
     segments_iter, info = model.transcribe(str(audio_path), beam_size=5)
-    segments = [
-        TranscriptSegment(start=seg.start, end=seg.end, text=seg.text.strip())
-        for seg in segments_iter
-    ]
+    segments = []
+    for seg in segments_iter:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranscriptionCancelledError(f"transcription of {audio_path} cancelled")
+        segments.append(TranscriptSegment(start=seg.start, end=seg.end, text=seg.text.strip()))
     logger.info(
         "audio_transcribed",
         file=str(audio_path),
@@ -299,6 +318,28 @@ async def update_file_status(
     await session.commit()
 
 
+async def _run_media_step(
+    func: Callable[..., _T],
+    *args: Any,
+    stop: threading.Event,
+    cleanup: Path,
+    **kwargs: Any,
+) -> _T:
+    """Run a blocking media step in a worker thread.
+
+    A cancelled task cannot stop its thread, so cancellation signals the step
+    and defers deleting ``cleanup`` until the thread has actually exited.
+    """
+    context = contextvars.copy_context()
+    future = _media_executor.submit(context.run, func, *args, **kwargs)
+    try:
+        return await asyncio.wrap_future(future)
+    except asyncio.CancelledError:
+        stop.set()
+        future.add_done_callback(lambda _done: cleanup.unlink(missing_ok=True))
+        raise
+
+
 async def process_video(
     session: AsyncSession,
     file_id: UUID,
@@ -319,9 +360,18 @@ async def process_video(
     """
     tmp_wav = output_path.with_suffix(".wav")
     metadata: dict[str, Any] = {}
+    cancel_event = threading.Event()
     try:
-        _, video_metadata = await asyncio.to_thread(extract_audio, file_path, tmp_wav)
-        transcription = await asyncio.to_thread(transcribe_audio, tmp_wav)
+        _, video_metadata = await _run_media_step(
+            extract_audio, file_path, tmp_wav, stop=cancel_event, cleanup=tmp_wav
+        )
+        transcription = await _run_media_step(
+            transcribe_audio,
+            tmp_wav,
+            stop=cancel_event,
+            cleanup=tmp_wav,
+            cancel_event=cancel_event,
+        )
         markdown = generate_transcript_markdown(transcription.segments, file_path.name)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

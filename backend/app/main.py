@@ -66,9 +66,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         logger.exception("ingest_recovery_failed")
     logger.info("app_startup", data_dir=str(settings.data_dir))
-    yield
-    await unload_if_ollama(settings.llm_provider, settings.llm_model, settings.ollama_base_url)
-    logger.info("app_shutdown")
+    try:
+        yield
+    finally:
+        await get_ingestion_queue().shutdown()
+        await unload_if_ollama(settings.llm_provider, settings.llm_model, settings.ollama_base_url)
+        logger.info("app_shutdown")
 
 
 app = FastAPI(title="Hypatia Backend", lifespan=lifespan)

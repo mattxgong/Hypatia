@@ -138,6 +138,47 @@ void main() {
     expect(find.text('Geoffrey Hinton'), findsOneWidget);
   });
 
+  testWidgets('Converted file shows spinner while summary is generated', (
+    tester,
+  ) async {
+    setLargeTestSurface(tester);
+    final summarizing = SourceFile(
+      id: 'f2',
+      classId: 'class-1',
+      originalFilename: 'lecture2.pdf',
+      fileType: FileType.pdf,
+      fileSizeBytes: 2048,
+      rawPath: 'raw/lecture2.pdf',
+      convertedPath: 'converted/f2.md',
+      status: FileStatus.ready,
+      ingesting: true,
+      createdAt: DateTime(2024),
+      updatedAt: DateTime(2024),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          classListProvider.overrideWith(() => _MockClassListNotifier()),
+          currentClassIdProvider.overrideWith((ref) => 'class-1'),
+          wikiTreeProvider('class-1').overrideWith((ref) async => _mockPages),
+          fileListProvider(
+            'class-1',
+          ).overrideWith((ref) async => [..._mockFiles, summarizing]),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: SizedBox(width: 250, child: Sidebar())),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('lecture2.pdf'), findsOneWidget);
+    expect(find.byTooltip('Generating source summary...'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
   testWidgets('Sidebar shows Add Files button', (tester) async {
     setLargeTestSurface(tester);
     await tester.pumpWidget(

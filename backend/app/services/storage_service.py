@@ -16,8 +16,14 @@ directory itself as a git repo).
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
+import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+from uuid import UUID
 
 from app.config import settings
 from app.utils.logging import get_logger
@@ -53,7 +59,7 @@ def create_class_directories(class_id: str) -> Path:
     return root
 
 
-def _sanitize_filename(filename: str) -> str:
+def sanitize_filename(filename: str) -> str:
     """Reduce ``filename`` to a bare file name with no directory components.
 
     Guards against path traversal (``"../../etc/passwd"``) and absolute
@@ -92,7 +98,7 @@ def resolve_raw_path(class_id: str, filename: str) -> Path:
     numeric suffix is appended to avoid overwriting the existing file.
     """
     create_class_directories(class_id)
-    safe_filename = _sanitize_filename(filename)
+    safe_filename = sanitize_filename(filename)
     path = _next_available_path(raw_dir(class_id) / safe_filename)
     if path.name != filename:
         logger.info(
@@ -117,7 +123,20 @@ def save_raw_file(class_id: str, filename: str, file_bytes: bytes) -> Path:
 
 def get_raw_path(class_id: str, filename: str) -> Path:
     """Resolve the full path to a raw file, without checking it exists."""
-    return raw_dir(class_id) / _sanitize_filename(filename)
+    return raw_dir(class_id) / sanitize_filename(filename)
+
+
+def unique_filename(filename: str, taken: set[str]) -> str:
+    """Return ``filename``, or ``name-N.ext`` if it is already in ``taken``."""
+    if filename not in taken:
+        return filename
+    path = Path(filename)
+    counter = 1
+    while True:
+        candidate = f"{path.stem}-{counter}{path.suffix}"
+        if candidate not in taken:
+            return candidate
+        counter += 1
 
 
 def get_converted_path(class_id: str, filename: str) -> Path:
@@ -126,12 +145,39 @@ def get_converted_path(class_id: str, filename: str) -> Path:
     return converted_dir(class_id) / filename
 
 
+def converted_output_path(class_id: str, file_id: UUID) -> Path:
+    """Converted markdown path for a File; keyed by ID so sources never collide."""
+    return converted_dir(class_id) / f"{file_id}.md"
+
+
+def delete_converted_artifacts(class_id: str, file_id: UUID) -> None:
+    """Remove every converted artifact derived from a File (markdown, summary,
+    metadata sidecar, intermediate audio)."""
+    conv_dir = converted_dir(class_id)
+    if conv_dir.exists():
+        for artifact in conv_dir.glob(f"{file_id}.*"):
+            artifact.unlink(missing_ok=True)
+
+
+def _clear_readonly_and_retry(func: Callable[[str], Any], path: str, _exc: Any) -> None:
+    # Git marks object files read-only, which blocks unlink on Windows.
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _rmtree(path: Path) -> None:
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_clear_readonly_and_retry)
+    else:
+        shutil.rmtree(path, onerror=_clear_readonly_and_retry)
+
+
 def delete_class_directory(class_id: str) -> None:
     """Remove the entire data tree for a Class (raw, converted, wiki,
     thumbnails). No-op if the directory does not exist."""
     root = class_dir(class_id)
     if root.exists():
-        shutil.rmtree(root)
+        _rmtree(root)
         logger.info("class_directory_deleted", class_id=class_id)
 
 

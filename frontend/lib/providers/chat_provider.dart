@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/websocket_service.dart';
 import 'class_provider.dart';
 import 'file_provider.dart';
+import 'task_provider.dart';
 import 'wiki_provider.dart';
 
 final chatMessagesProvider =
@@ -114,6 +115,9 @@ class ChatMessagesNotifier
 
     final ws = ref.read(webSocketServiceProvider);
     ws.sendMessage(content);
+    if (content.startsWith('/')) {
+      ref.read(taskListProvider.notifier).startPolling();
+    }
   }
 
   Future<void> clearHistory() async {

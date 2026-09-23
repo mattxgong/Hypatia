@@ -1,13 +1,13 @@
----
-title: Hypatia
-description: Cross-platform desktop app for building persistent study wikis from course materials
----
+<h1 align="center">Hypatia</h1>
+
+<p align="center">
+    <strong>Cross-platform desktop app for building persistent study wikis from course materials</strong>
+</p>
 
 [![CI](https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml/badge.svg)](https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml)
 
 Hypatia is an LLM-powered study wiki builder. Upload lecture videos, notes,
-PDFs, and slides, then browse, search, and chat with the interlinked knowledge
-base that Hypatia maintains.
+PDFs, and slides, then browse, search, and chat with the interlinked knowledge base that Hypatia maintains.
 
 ## How It Works
 
@@ -39,7 +39,9 @@ You interact with each Class through a chat interface that supports natural-lang
 | **ffmpeg** | Any recent | Required for audio/video transcription |
 | **Git** | Any recent | Used for wiki version history |
 
-Optional: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) is installed automatically for local audio/video transcription. A CUDA-capable GPU accelerates transcription but is not required.
+Backend setup installs [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+for local audio and video transcription. A CUDA-capable GPU accelerates
+transcription but is not required.
 
 ## Quick Start
 
@@ -51,7 +53,8 @@ cd Hypatia
 ./scripts/setup.sh
 ```
 
-This creates the backend virtual environment, installs all dependencies, and runs `flutter pub get`.
+This creates the backend virtual environment, installs the exact dependency
+versions pinned in `backend/requirements.lock`, and runs `flutter pub get`.
 
 ### Windows PowerShell setup
 
@@ -64,7 +67,8 @@ Set-Location Hypatia
 Set-Location backend
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock
+.\.venv\Scripts\python.exe -m pip install --no-deps -e .
 Set-Location ..\frontend
 flutter pub get
 Set-Location ..
@@ -152,6 +156,15 @@ desktop builds.
 Maximum file size: 3 GB. Override it with
 `HYPATIA_MAX_UPLOAD_SIZE_BYTES` before starting the backend.
 
+File names must be unique within a Class. Uploading a name that already exists
+is rejected with a conflict error; rename the file or remove the existing source
+first. Uploads in one batch succeed or fail together, so a rejected file never
+leaves the rest of its batch half-processed.
+
+Removing a source cancels its conversion or wiki ingestion if either is still
+running, then deletes its converted artifacts and the wiki pages built only
+from it.
+
 ## Chat Commands
 
 Type these in the chat panel to manage your Class wiki:
@@ -203,6 +216,19 @@ credential store is available, keys fall back to an access-restricted file in
 | `HYPATIA_WHISPER_DEVICE` | `cpu` | Whisper device: `cpu` or `cuda` |
 | `HYPATIA_MAX_UPLOAD_SIZE_BYTES` | `3221225472` | Maximum uploaded file size in bytes |
 
+### Data and logs
+
+| Location | Contents |
+|----------|----------|
+| `~/.hypatia/data/hypatia.db` | SQLite database for Classes, files, wiki pages, and chat history |
+| `~/.hypatia/data/classes/<class-id>/` | Uploaded sources, converted Markdown, and the Git-versioned wiki |
+| `~/.hypatia/data/settings.json` | Non-secret settings saved from the Settings screen |
+| `~/.hypatia/logs/hypatia.log` | Structured JSON backend log, rotated at 10 MB with five backups |
+
+On Windows, `~` is your user profile directory, such as `C:\Users\<you>`.
+The test suite writes its logs under `backend/.pytest_cache/logs/` and never
+touches these directories.
+
 ## Packaged Desktop Builds
 
 The manual GitHub Actions workflow produces Windows, macOS, and Linux desktop
@@ -211,11 +237,13 @@ source, Alembic migrations, and Python dependency manifests in a neighboring
 `backend/` directory.
 
 Python itself is not bundled. On first launch, the desktop app finds an
-installed Python 3.11 or newer, creates `backend/.venv`, installs the packaged
-requirements when needed, selects an available port from 8000 through 8010,
-and starts the FastAPI backend. Keep the artifact directory intact so the app
-can find its `backend/` directory. The first dependency installation requires
-network access.
+installed Python 3.11 or newer, creates `backend/.venv`, installs the exact
+versions pinned in `backend/requirements.lock`, selects an available port from
+8000 through 8010, and starts the FastAPI backend. The app records which lock
+it installed and reinstalls automatically whenever a newer build ships a
+different lock, so an existing environment never runs with stale dependencies.
+Keep the artifact directory intact so the app can find its `backend/`
+directory. Dependency installation requires network access.
 
 Ollama, local model files, ffmpeg, and Git are also external prerequisites;
 the desktop artifact does not install them.
@@ -259,6 +287,25 @@ flutter analyze
 dart format --set-exit-if-changed .
 flutter test
 ```
+
+The fast backend run includes the end-to-end suite in `backend/tests/e2e/`,
+which drives the real FastAPI app against a temporary data directory with a
+mock LLM, including deleting files mid-conversion and mid-ingestion. Run it on
+its own with `pytest tests/e2e/ -v`. Integration tests that call a real LLM are
+marked `integration` and run nightly.
+
+### Updating backend dependencies
+
+`backend/requirements.lock` pins every backend package for all platforms, and
+CI fails if it is out of date with `backend/pyproject.toml`. After changing a
+dependency in `pyproject.toml`, regenerate the lock from `backend/`:
+
+```bash
+python -m uv pip compile pyproject.toml --extra dev --universal -o requirements.lock
+```
+
+Existing pins are kept unless the new constraints require a change. Reinstall
+with `pip install -r requirements.lock` to update your environment.
 
 ## Architecture
 

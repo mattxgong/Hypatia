@@ -79,6 +79,8 @@ class FileRead(BaseModel):
     metadata_json: dict | None
     created_at: datetime
     updated_at: datetime
+    # Queued for or undergoing wiki ingestion (source summary not written yet).
+    ingesting: bool = False
 
 
 class FileUploadResponse(BaseModel):
@@ -144,10 +146,12 @@ class CommandResponse(BaseModel):
 
 
 class WikiTreeNodeRead(BaseModel):
+    id: uuid.UUID
     path: str
     title: str
     category: WikiCategory
     user_edited: bool
+    updated_at: datetime
 
 
 class WikiPageUpdate(BaseModel):

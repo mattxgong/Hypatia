@@ -143,6 +143,14 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/FileUploadResponse"
+        "400":
+          description: A file name is empty or reduces to no usable name
+        "409":
+          description: >-
+            A file name repeats within the request or already exists in this
+            Class. Names must be unique per Class; nothing in the batch is stored.
+        "413":
+          description: A file exceeds the upload size limit; nothing in the batch is stored
 
   /api/classes/{class_id}/files/{file_id}:
     parameters:
@@ -161,7 +169,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
-      summary: Delete a file and trigger wiki cleanup
+      summary: Delete a file, cancel any in-flight conversion or ingestion, and clean up the wiki
       operationId: deleteFile
       responses:
         "204":
@@ -913,6 +921,9 @@ components:
         updated_at:
           type: string
           format: date-time
+        ingesting:
+          type: boolean
+          description: Queued for or undergoing wiki ingestion (source summary not written yet).
       required:
         - id
         - class_id
@@ -1000,10 +1011,12 @@ components:
           type: string
         category:
           $ref: "#/components/schemas/WikiCategory"
+        user_edited:
+          type: boolean
         updated_at:
           type: string
           format: date-time
-      required: [id, path, title, category, updated_at]
+      required: [id, path, title, category, user_edited, updated_at]
 
     WikiSearchResult:
       type: object

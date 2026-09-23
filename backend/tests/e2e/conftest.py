@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.config import settings
+from app.config import Settings, settings
 from app.database import get_session
 from app.dependencies import check_llm_available
 from app.main import app
@@ -77,6 +78,30 @@ def mock_llm() -> MockLLMProvider:
     return MockLLMProvider()
 
 
+# Modules that bind get_llm_provider by name at import time; patching only
+# llm_service would leave these calling the real configured provider.
+_LLM_PROVIDER_TARGETS = (
+    "app.services.llm_service.get_llm_provider",
+    "app.services.wiki_engine.get_llm_provider",
+    "app.dependencies.get_llm_provider",
+)
+
+_OLLAMA_HOOK_TARGETS = (
+    "app.main.refresh_if_native_ollama",
+    "app.main.unload_if_ollama",
+    "app.routers.settings.refresh_if_native_ollama",
+    "app.routers.settings.unload_if_ollama",
+)
+
+
+def _pin_baseline_settings(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
+    """Replace developer env/.env configuration with deterministic defaults."""
+    for name, field in Settings.model_fields.items():
+        if name != "logs_dir":
+            monkeypatch.setattr(settings, name, field.get_default(call_default_factory=True))
+    monkeypatch.setattr(settings, "data_dir", data_dir)
+
+
 @pytest.fixture
 async def e2e_engine():
     engine = create_async_engine(
@@ -109,7 +134,7 @@ async def e2e_client(
     """Full-stack test client with temporary data dir and mock LLM."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr(settings, "data_dir", data_dir)
+    _pin_baseline_settings(monkeypatch, data_dir)
 
     # Redirect module-level engine/session_factory so background tasks
     # (files.py, chat.py, wiki.py) and lifespan (main.py) use the
@@ -136,8 +161,12 @@ async def e2e_client(
     app.dependency_overrides[check_llm_available] = lambda: None
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        with patch("app.services.llm_service.get_llm_provider", return_value=mock_llm):
+    with ExitStack() as stack:
+        for target in _LLM_PROVIDER_TARGETS:
+            stack.enter_context(patch(target, return_value=mock_llm))
+        for target in _OLLAMA_HOOK_TARGETS:
+            stack.enter_context(patch(target, new_callable=AsyncMock, return_value=False))
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
 
     app.dependency_overrides.clear()

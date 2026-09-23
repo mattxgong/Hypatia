@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -330,4 +331,84 @@ void showSourceViewer(BuildContext context, SourceViewerRequest request) {
     context: context,
     builder: (_) => SourceViewerDialog(request: request),
   );
+}
+
+void showConvertedSourceViewer(
+  BuildContext context,
+  String classId,
+  SourceFile file,
+) {
+  showDialog<void>(
+    context: context,
+    builder: (_) => _ConvertedSourceDialog(classId: classId, file: file),
+  );
+}
+
+class _ConvertedSourceDialog extends ConsumerWidget {
+  const _ConvertedSourceDialog({required this.classId, required this.file});
+
+  final String classId;
+  final SourceFile file;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final screenSize = MediaQuery.of(context).size;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: SizedBox(
+        width: screenSize.width * 0.8,
+        height: screenSize.height * 0.8,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: theme.dividerColor)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.description_outlined, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      file.originalFilename,
+                      style: theme.textTheme.titleSmall,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: FutureBuilder<String>(
+                future: ref
+                    .read(apiClientProvider)
+                    .getFileConverted(classId, file.id),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(child: ErrorCard(error: snapshot.error!));
+                  }
+                  return Markdown(
+                    data: snapshot.data ?? '',
+                    selectable: true,
+                    padding: const EdgeInsets.all(16),
+                    styleSheet: MarkdownStyleSheet.fromTheme(theme),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

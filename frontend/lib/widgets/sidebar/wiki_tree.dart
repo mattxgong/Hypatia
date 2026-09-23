@@ -7,6 +7,7 @@ import '../../providers/class_provider.dart';
 import '../../providers/file_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/error_card.dart';
+import '../source_viewer/source_viewer.dart';
 
 class WikiTree extends ConsumerWidget {
   const WikiTree({super.key});
@@ -107,7 +108,17 @@ class WikiTree extends ConsumerWidget {
             _CategorySection(
               title: 'Source Files',
               icon: Icons.folder_outlined,
-              children: files.map((f) => _FileTile(file: f)).toList(),
+              children: files
+                  .map(
+                    (f) => _FileTile(
+                      file: f,
+                      onTap: f.convertedPath == null
+                          ? null
+                          : () =>
+                                showConvertedSourceViewer(context, classId, f),
+                    ),
+                  )
+                  .toList(),
             ),
           ],
         );
@@ -178,9 +189,10 @@ class _PageTile extends StatelessWidget {
 }
 
 class _FileTile extends StatelessWidget {
-  const _FileTile({required this.file});
+  const _FileTile({required this.file, required this.onTap});
 
   final SourceFile file;
+  final VoidCallback? onTap;
 
   IconData get _statusIcon {
     switch (file.status) {
@@ -195,9 +207,23 @@ class _FileTile extends StatelessWidget {
     }
   }
 
+  String? get _busyMessage {
+    if (file.isConverting) return 'Converting to markdown...';
+    if (file.isSummarizing) return 'Generating source summary...';
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final busyMessage = _busyMessage;
+    final hasError = file.status == FileStatus.error;
+    final icon = Icon(
+      file.convertedPath != null && !hasError
+          ? Icons.description_outlined
+          : _statusIcon,
+      size: 16,
+    );
     return ListTile(
       dense: true,
       visualDensity: VisualDensity.compact,
@@ -206,7 +232,23 @@ class _FileTile extends StatelessWidget {
         style: theme.textTheme.bodySmall,
         overflow: TextOverflow.ellipsis,
       ),
-      leading: Icon(_statusIcon, size: 16),
+      leading: hasError
+          ? Tooltip(
+              message: file.errorMessage ?? 'Processing failed',
+              child: icon,
+            )
+          : icon,
+      trailing: busyMessage == null
+          ? null
+          : Tooltip(
+              message: busyMessage,
+              child: const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+      onTap: onTap,
     );
   }
 }

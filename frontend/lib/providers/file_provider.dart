@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/source_file.dart';
 import '../services/api_client.dart';
+import 'task_provider.dart';
 import 'wiki_provider.dart';
 
 final fileListProvider = FutureProvider.family<List<SourceFile>, String>((
@@ -25,12 +26,18 @@ class FilePollingNotifier extends FamilyNotifier<bool, String> {
   @override
   bool build(String arg) {
     ref.onDispose(() => _timer?.cancel());
-    ref.listen(fileListProvider(arg), (_, next) {
+    ref.listen(fileListProvider(arg), (prev, next) {
       final files = next.valueOrNull ?? [];
-      final hasProcessing = files.any(
-        (f) =>
-            f.status == FileStatus.processing || f.status == FileStatus.pending,
-      );
+      final hasProcessing = files.any((f) => f.isConverting || f.isSummarizing);
+      final summarizingBefore = {
+        for (final f in prev?.valueOrNull ?? <SourceFile>[])
+          if (f.isSummarizing) f.id,
+      };
+      if (files.any(
+        (f) => summarizingBefore.contains(f.id) && !f.isSummarizing,
+      )) {
+        ref.invalidate(wikiTreeProvider(arg));
+      }
 
       if (hasProcessing && _timer == null) {
         _startPolling();
@@ -47,6 +54,7 @@ class FilePollingNotifier extends FamilyNotifier<bool, String> {
     state = true;
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
       ref.invalidate(fileListProvider(arg));
+      ref.read(taskListProvider.notifier).fetchTasks();
     });
   }
 

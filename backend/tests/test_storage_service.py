@@ -3,6 +3,7 @@ created correctly."""
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -116,6 +117,18 @@ def test_delete_file_is_noop_when_nothing_exists() -> None:
 def test_delete_class_directory_removes_entire_tree() -> None:
     root = storage_service.create_class_directories("class-1")
     storage_service.save_raw_file("class-1", "lecture.pdf", b"raw")
+
+    storage_service.delete_class_directory("class-1")
+
+    assert not root.exists()
+
+
+def test_delete_class_directory_removes_read_only_files() -> None:
+    root = storage_service.create_class_directories("class-1")
+    git_object = root / "wiki" / ".git" / "objects" / "67" / "f0ff9c"
+    git_object.parent.mkdir(parents=True)
+    git_object.write_bytes(b"blob")
+    git_object.chmod(stat.S_IREAD)
 
     storage_service.delete_class_directory("class-1")
 

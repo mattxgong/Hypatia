@@ -86,24 +86,15 @@ class TestWikiTree:
     async def test_returns_tree_nodes(
         self, client: AsyncClient, class_with_pages: tuple[uuid.UUID, list[WikiPage]]
     ) -> None:
-        class_id, _ = class_with_pages
-        with patch("app.routers.wiki.wiki_engine.get_wiki_tree", new_callable=AsyncMock) as mock:
-            from app.services.wiki_engine import WikiTreeNode
-
-            mock.return_value = [
-                WikiTreeNode(path="index.md", title="Index", category="index", user_edited=False),
-                WikiTreeNode(
-                    path="concepts/gravity.md",
-                    title="Gravity",
-                    category="concept",
-                    user_edited=False,
-                ),
-            ]
-            resp = await client.get(f"/api/classes/{class_id}/wiki/tree")
-            assert resp.status_code == 200
-            body = resp.json()
-            assert len(body) == 2
-            assert body[0]["path"] == "index.md"
+        class_id, pages = class_with_pages
+        resp = await client.get(f"/api/classes/{class_id}/wiki/tree")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 2
+        by_path = {node["path"]: node for node in body}
+        assert by_path["index.md"]["id"] == str(pages[0].id)
+        assert by_path["index.md"]["updated_at"]
+        assert by_path["concepts/gravity.md"]["category"] == "concept"
 
 
 class TestWikiIndex:

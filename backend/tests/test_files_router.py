@@ -112,6 +112,137 @@ async def test_upload_full_pipeline_marks_file_ready(
     assert body["status"] == "ready"
     assert body["converted_path"] is not None
     assert Path(body["converted_path"]).exists()
+    assert Path(body["converted_path"]).name == f"{file_id}.md"
+    assert body["ingesting"] is True
+
+
+async def test_list_files_reports_not_ingesting_when_not_queued(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    class_id = await _make_class(session_factory)
+    async with session_factory() as session:
+        session.add(
+            File(
+                class_id=class_id,
+                original_filename="done.pdf",
+                file_type=FileType.PDF,
+                file_size_bytes=10,
+                raw_path="raw/done.pdf",
+                converted_path="converted/done.md",
+                status=FileStatus.READY,
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/classes/{class_id}/files")
+
+    assert [item["ingesting"] for item in response.json()] == [False]
+
+
+async def test_upload_rejects_duplicate_filename_in_class(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    class_id = await _make_class(session_factory)
+    first = await client.post(
+        f"/api/classes/{class_id}/files",
+        files=[("files", ("notes.txt", b"first", "text/plain"))],
+    )
+    assert first.status_code == 202
+
+    second = await client.post(
+        f"/api/classes/{class_id}/files",
+        files=[("files", ("notes.txt", b"second", "text/plain"))],
+    )
+
+    assert second.status_code == 409
+    assert "notes.txt" in second.json()["detail"]
+    async with session_factory() as session:
+        records = (
+            (await session.execute(select(File).where(File.class_id == class_id))).scalars().all()
+        )
+    assert len(records) == 1
+    raw_files = list((tmp_path / "classes" / str(class_id) / "raw").iterdir())
+    assert [p.read_bytes() for p in raw_files] == [b"first"]
+
+
+async def test_upload_rejects_duplicate_names_within_one_request(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    class_id = await _make_class(session_factory)
+
+    response = await client.post(
+        f"/api/classes/{class_id}/files",
+        files=[
+            ("files", ("notes.txt", b"one", "text/plain")),
+            ("files", ("notes.txt", b"two", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 409
+    async with session_factory() as session:
+        assert (await session.execute(select(File))).scalars().all() == []
+    assert not (tmp_path / "classes" / str(class_id) / "raw").exists()
+
+
+async def test_upload_allows_same_filename_in_different_classes(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    class_a = await _make_class(session_factory, "Class A")
+    class_b = await _make_class(session_factory, "Class B")
+
+    for class_id in (class_a, class_b):
+        response = await client.post(
+            f"/api/classes/{class_id}/files",
+            files=[("files", ("notes.txt", b"hello", "text/plain"))],
+        )
+        assert response.status_code == 202
+
+
+async def test_upload_batch_failure_removes_earlier_files(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class_id = await _make_class(session_factory)
+    monkeypatch.setattr(settings, "max_upload_size_bytes", 5)
+
+    response = await client.post(
+        f"/api/classes/{class_id}/files",
+        files=[
+            ("files", ("small.txt", b"ok", "text/plain")),
+            ("files", ("large.txt", b"far too large", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 413
+    async with session_factory() as session:
+        assert (await session.execute(select(File))).scalars().all() == []
+    assert list((tmp_path / "classes" / str(class_id) / "raw").iterdir()) == []
+
+
+async def test_sources_with_same_stem_keep_separate_conversions(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    class_id = await _make_class(session_factory)
+
+    response = await client.post(
+        f"/api/classes/{class_id}/files",
+        files=[
+            ("files", ("notes.md", b"markdown source", "text/markdown")),
+            ("files", ("notes.txt", b"text source", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 202
+    async with session_factory() as session:
+        records = (
+            (await session.execute(select(File).where(File.class_id == class_id))).scalars().all()
+        )
+    converted = {r.original_filename: Path(r.converted_path or "") for r in records}
+    assert converted["notes.md"] != converted["notes.txt"]
+    assert "markdown source" in converted["notes.md"].read_text(encoding="utf-8")
+    assert "text source" in converted["notes.txt"].read_text(encoding="utf-8")
 
 
 async def test_upload_rejects_oversized_file(
@@ -158,6 +289,7 @@ async def test_upload_sanitizes_path_traversal_filename(
     async with session_factory() as session:
         result = await session.execute(select(File).where(File.class_id == class_id))
         file_ = result.scalar_one()
+        assert file_.original_filename == "passwd"
         assert Path(file_.raw_path).name == "passwd"
         assert Path(file_.raw_path).parent.name == "raw"
         assert Path(file_.raw_path).exists()

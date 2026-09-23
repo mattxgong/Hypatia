@@ -18,6 +18,22 @@ Verify with `ffmpeg -version`. Restart the backend after installing.
 
 ---
 
+## Upload rejected because a file already exists
+
+**Symptom**: Uploading a file fails with "A file named ... already exists in this class."
+
+**Solution**: File names are unique within a Class. Rename the file before uploading it, or remove the existing source first (for example with `/remove <filename>` in chat). Other files in the same upload are not stored, so upload them again after resolving the conflict.
+
+---
+
+## Desktop app reinstalls backend dependencies after an update
+
+**Symptom**: After installing a newer build, the first launch shows "Installing backend dependencies from requirements.lock".
+
+**Cause**: The app reinstalls whenever the packaged `backend/requirements.lock` differs from the lock it last installed into `backend/.venv`. This keeps the environment matched to the build. The install requires network access; if it fails, check your connection and relaunch.
+
+---
+
 ## LLM API key invalid or expired
 
 **Symptom**: Chat commands return errors like "Authentication failed" or "Invalid API key". The error response includes `code: "LLM_AUTH_FAILED"`.

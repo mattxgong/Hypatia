@@ -23,6 +23,8 @@ class BackendLauncher {
 
   static const _defaultPort = 8000;
   static const _maxPortAttempts = 11;
+  static const _lockFileName = 'requirements.lock';
+  static const _installedLockFileName = '.hypatia-installed-requirements.lock';
 
   Process? _process;
   int _port = _defaultPort;
@@ -65,6 +67,33 @@ class BackendLauncher {
     final exists = pathExists ?? (path) => File(path).existsSync();
     if (exists(command)) return [command];
     return command.split(' ').where((part) => part.isNotEmpty).toList();
+  }
+
+  static File _backendLockFile(Directory backendDir) =>
+      File('${backendDir.path}${Platform.pathSeparator}$_lockFileName');
+
+  static File _installedLockFile(Directory backendDir) => File(
+    [
+      backendDir.path,
+      '.venv',
+      _installedLockFileName,
+    ].join(Platform.pathSeparator),
+  );
+
+  /// Whether `.venv` was last installed from the backend's current lockfile.
+  static Future<bool> dependenciesMatchLock(Directory backendDir) async {
+    final lock = _backendLockFile(backendDir);
+    final installed = _installedLockFile(backendDir);
+    if (!await lock.exists() || !await installed.exists()) return false;
+    return await lock.readAsString() == await installed.readAsString();
+  }
+
+  /// Record the lockfile `.venv` was just installed from.
+  static Future<void> recordInstalledLock(Directory backendDir) async {
+    final lock = _backendLockFile(backendDir);
+    if (await lock.exists()) {
+      await lock.copy(_installedLockFile(backendDir).path);
+    }
   }
 
   void _setStatus(BackendStatus status) {
@@ -386,9 +415,13 @@ class BackendLauncher {
       }
     }
 
-    final depsCheck = await Process.run(venvPython, ['-c', 'import fastapi']);
-    if (depsCheck.exitCode != 0) {
-      _log('Installing backend dependencies (this may take a minute)...');
+    // An importable fastapi does not mean the venv matches this release, so
+    // reinstall whenever the packaged lockfile changes.
+    if (!await dependenciesMatchLock(backendDir)) {
+      _log(
+        'Installing backend dependencies from $_lockFileName '
+        '(this may take a few minutes)...',
+      );
       final install = await Process.start(venvPython, [
         '-m',
         'pip',
@@ -407,6 +440,7 @@ class BackendLauncher {
         _log('ERROR: dependency install failed (exit code $exitCode).');
         return null;
       }
+      await recordInstalledLock(backendDir);
     }
 
     return venvPython;

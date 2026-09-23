@@ -361,9 +361,19 @@ async def import_class(
             session.add(new_class)
 
             file_id_map: dict[uuid.UUID, uuid.UUID] = {}
+            imported_filenames: set[str] = set()
             for file_data in manifest.files:
                 if file_data.id in file_id_map:
                     raise _invalid_backup(f"duplicate file ID {file_data.id}")
+                try:
+                    safe_filename = storage_service.sanitize_filename(file_data.original_filename)
+                except ValueError as exc:
+                    raise _invalid_backup(
+                        f"unsafe file name {file_data.original_filename!r}"
+                    ) from exc
+                # Backups made before file names were unique may repeat a name.
+                filename = storage_service.unique_filename(safe_filename, imported_filenames)
+                imported_filenames.add(filename)
                 imported_file_id = uuid.uuid4()
                 file_id_map[file_data.id] = imported_file_id
                 raw_path = _restored_path(
@@ -386,7 +396,7 @@ async def import_class(
                     FileRecord(
                         id=imported_file_id,
                         class_id=new_class_id,
-                        original_filename=file_data.original_filename,
+                        original_filename=filename,
                         file_type=file_data.file_type,
                         file_size_bytes=file_data.file_size_bytes,
                         raw_path=raw_path,
