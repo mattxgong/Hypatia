@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../providers/class_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/frontmatter.dart';
 import '../common/error_card.dart';
+import '../common/wiki_markdown.dart';
 
 final sourceViewerRequestProvider = StateProvider<SourceViewerRequest?>(
   (ref) => null,
@@ -140,10 +141,8 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
   Widget _buildViewer(ThemeData theme, String content) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      child: Markdown(
-        data: _preprocessWikiLinks(content),
-        selectable: true,
-        onTapLink: (text, href, title) => _handleLink(href),
+      child: WikiMarkdown(
+        data: stripFrontmatter(content),
         styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
           h1: theme.textTheme.headlineMedium,
           h2: theme.textTheme.titleLarge,
@@ -206,51 +205,6 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  String _preprocessWikiLinks(String content) {
-    return content.replaceAllMapped(RegExp(r'\[\[([^\]]+)\]\]'), (match) {
-      final title = match.group(1)!;
-      final slug = title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-');
-      return '[$title](wiki://$slug)';
-    });
-  }
-
-  void _handleLink(String? href) {
-    if (href == null) return;
-
-    if (href.startsWith('wiki://')) {
-      final slug = href.substring('wiki://'.length);
-      _navigateToWikiPage(slug);
-    } else if (href.startsWith('hypatia://cite')) {
-      final uri = Uri.parse(href);
-      final file = uri.queryParameters['file'] ?? '';
-      final loc = uri.queryParameters['loc'] ?? '';
-      ref.read(sourceViewerRequestProvider.notifier).state =
-          SourceViewerRequest(fileRef: file, location: loc);
-    } else if (href.startsWith('http://') || href.startsWith('https://')) {
-      launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication);
-    }
-  }
-
-  void _navigateToWikiPage(String slug) {
-    final classId = ref.read(currentClassIdProvider);
-    if (classId == null) return;
-
-    final treeAsync = ref.read(wikiTreeProvider(classId));
-    final pages = treeAsync.valueOrNull ?? [];
-
-    final match = pages.where((p) {
-      final pageSlug = p.title.toLowerCase().replaceAll(
-        RegExp(r'[^a-z0-9]+'),
-        '-',
-      );
-      return pageSlug == slug || p.path.endsWith(slug);
-    }).firstOrNull;
-
-    if (match != null) {
-      ref.read(currentWikiPagePathProvider.notifier).state = match.path;
     }
   }
 

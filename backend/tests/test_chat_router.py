@@ -219,3 +219,24 @@ class TestChatWebSocket:
             ws.send_json({"type": "message", "content": "/help"})
             assert ws.receive_json()["type"] == "complete"
             mock_cancel.assert_called_once_with("task-123")
+
+
+def test_rebuild_summary_lists_removed_restored_and_failed() -> None:
+    from app.routers.chat import _rebuild_summary
+    from app.services.wiki_engine import RebuildResult
+
+    text = _rebuild_summary(
+        RebuildResult(
+            success=True,
+            pages_created=3,
+            pages_preserved=1,
+            pages_removed=["pages/concept/old-idea.md"],
+            pages_restored=["pages/concept/kept-idea.md"],
+            failed_sources=["notes.pdf: LLM error: boom"],
+        )
+    )
+
+    assert "3 pages written" in text
+    assert "- old idea" in text
+    assert "- [[kept-idea]]" in text
+    assert "- notes.pdf: LLM error: boom" in text

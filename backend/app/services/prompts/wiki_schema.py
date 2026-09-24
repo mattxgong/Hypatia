@@ -71,6 +71,8 @@ Updated content...
 - Link to other wiki pages with `[[page-slug]]` syntax.
 - Example: "This relates to [[backpropagation]] and [[gradient-descent]]."
 - Use the page's filename stem (without path or `.md`) as the link target.
+- The viewer displays a link as the target page's title. To fit the \
+sentence instead, write `[[page-slug|display text]]`.
 - When creating a new page about a concept already linked from other pages, \
 use the same slug those links expect.
 
@@ -89,7 +91,17 @@ Every factual claim derived from a source MUST include an inline citation:
 
 The `file` parameter is the source's original filename (or file ID). \
 Location parameters (`page`, `t`, `section`, `line`) pinpoint where in the \
-source the claim is supported.
+source the claim is supported. Always include the most specific location \
+available:
+- Converted PDFs mark the start of each page with `**[Page N]**`; cite the \
+page the supporting text appears on, not the printed page number.
+- Slide decks mark each slide with `<!-- Slide number: N -->`; cite it as `page=N`.
+- Transcripts head each segment with a `[HH:MM:SS - HH:MM:SS]` link carrying \
+`t=<seconds>`; cite that segment's `t` value.
+- Other documents: cite the nearest heading as `section=heading-slug`.
+
+Use one citation link per location. The viewer renders them as numbered \
+superscripts with a reference list, so the link text is not shown.
 
 ## Content Guidelines
 

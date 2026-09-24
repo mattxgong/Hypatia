@@ -503,10 +503,11 @@ paths:
 
   /api/settings/validate-key:
     post:
-      summary: Validate a hosted-provider credential
+      summary: Test a provider connection
       description: >-
-        Sends a small completion through a temporary provider. Invalid
-        credentials return HTTP 200 with valid set to false.
+        Sends a small completion through a temporary provider built from the
+        saved settings plus any unsaved overrides in the request. A failed
+        connection returns HTTP 200 with valid set to false.
       operationId: validateProviderKey
       requestBody:
         required: true
@@ -693,6 +694,15 @@ components:
         llm_model:
           type: string
           nullable: true
+        llm_models:
+          type: object
+          description: >-
+            Saved model per provider (null means the provider default).
+            Switching llm_provider restores that provider's entry into
+            llm_model; ollama and copilot-ollama share one entry.
+          additionalProperties:
+            type: string
+            nullable: true
         llm_temperature:
           type: number
           format: float
@@ -719,6 +729,7 @@ components:
       required:
         - llm_provider
         - llm_model
+        - llm_models
         - llm_temperature
         - llm_max_tokens
         - anthropic_api_key
@@ -737,7 +748,10 @@ components:
           type: string
           maxLength: 255
           nullable: true
-          description: Send an empty string to restore the provider default.
+          description: >-
+            Model for the active provider (after any llm_provider change in
+            the same request). Send an empty string to restore the provider
+            default.
         llm_temperature:
           type: number
           format: float
@@ -776,13 +790,25 @@ components:
       type: object
       properties:
         provider:
-          type: string
-          enum: [copilot, anthropic, openai]
+          $ref: "#/components/schemas/ProviderName"
         api_key:
           type: string
-          minLength: 1
           maxLength: 8192
-      required: [provider, api_key]
+          nullable: true
+          description: Omit to test the saved key; send an empty string to test without one.
+        model:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Omit to test the provider's saved model; send an empty string for its default.
+        ollama_base_url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          pattern: '^https?://[^\s]+$'
+          nullable: true
+          description: Omit to test the saved Ollama server.
+      required: [provider]
 
     ValidateKeyResponse:
       type: object
@@ -792,6 +818,7 @@ components:
         error:
           type: string
           nullable: true
+          description: Plain-language reason the connection test failed.
       required: [valid]
 
     ModelUsage:
@@ -1059,13 +1086,36 @@ components:
     RebuildPreview:
       type: object
       properties:
-        page_count:
+        pages_to_create:
+          type: array
+          items:
+            type: string
+        pages_to_delete:
+          type: array
+          items:
+            type: string
+          description: >-
+            Pages that will be regenerated. Those the rebuild does not write
+            again are removed, unless their source fails to re-ingest.
+        pages_preserved_user_edited:
+          type: array
+          items:
+            type: string
+        pages_preserved_synthesis:
+          type: array
+          items:
+            type: string
+        source_file_count:
           type: integer
-        file_count:
+        estimated_tokens:
           type: integer
-        estimated_seconds:
-          type: integer
-      required: [page_count, file_count]
+      required:
+        - pages_to_create
+        - pages_to_delete
+        - pages_preserved_user_edited
+        - pages_preserved_synthesis
+        - source_file_count
+        - estimated_tokens
 
     TaskStarted:
       type: object

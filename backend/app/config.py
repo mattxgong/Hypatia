@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     llm_provider: str = "copilot"
     llm_model: str | None = None
+    # Last model chosen for each provider (see settings_store.model_slot); llm_model
+    # is always the entry for llm_provider.
+    llm_models: dict[str, str] = {}
     llm_max_tokens: int = 8192
     # Total context window of the configured model. None means "infer from the
     # provider" (see llm_service.get_context_window), which for the native

@@ -87,6 +87,7 @@ class ProviderSelector extends ConsumerWidget {
           ),
         ),
         const SizedBox(width: 4),
+        const ConnectionStatusIndicator(),
         IconButton(
           icon: const Icon(Icons.settings, size: 18),
           onPressed: () => showProviderConfigDialog(context, currentProvider),
@@ -96,6 +97,54 @@ class ProviderSelector extends ConsumerWidget {
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
       ],
+    );
+  }
+}
+
+class ConnectionStatusIndicator extends ConsumerWidget {
+  const ConnectionStatusIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(llmConnectionStatusProvider);
+
+    final Widget icon;
+    final String tooltip;
+    if (status.isLoading) {
+      icon = const SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+      tooltip = 'Checking AI connection...';
+    } else {
+      final value = status.valueOrNull;
+      final label = providerOptions
+          .where((p) => p.id == value?.provider)
+          .map((p) => p.label)
+          .firstOrNull;
+      if (value != null && value.connected) {
+        icon = const Icon(Icons.check_circle, color: Colors.green, size: 18);
+        final model = value.model;
+        tooltip =
+            'Connected to ${label ?? value.provider}'
+            '${model != null && model.isNotEmpty ? ' ($model)' : ''}. '
+            'Click to re-check.';
+      } else {
+        icon = const Icon(Icons.error, color: Colors.red, size: 18);
+        final reason = value?.error ?? 'Could not reach the Hypatia backend.';
+        tooltip = 'Not connected: $reason\nClick to re-check.';
+      }
+    }
+
+    return IconButton(
+      icon: icon,
+      onPressed: status.isLoading
+          ? null
+          : () => ref.invalidate(llmConnectionStatusProvider),
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
     );
   }
 }

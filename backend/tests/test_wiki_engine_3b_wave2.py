@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from app.services.wiki_engine import (
     RebuildResult,
     RemoveResult,
     SummarizeResult,
+    _chunk_source,
     _clean_dead_links,
     handle_ask_stream,
     handle_lint,
@@ -252,6 +254,25 @@ def test_clean_dead_links(tmp_path: Path):
     assert "[[kept-page]]" in content
 
 
+def test_clean_dead_links_keeps_display_text(tmp_path: Path):
+    wiki_path = tmp_path / "wiki"
+    pages_dir = wiki_path / "pages"
+    pages_dir.mkdir(parents=True)
+    (pages_dir / "survivor.md").write_text("See [[deleted-page|the old page]].\n", encoding="utf-8")
+
+    assert _clean_dead_links(wiki_path, ["pages/deleted-page.md"]) == 1
+    assert (pages_dir / "survivor.md").read_text(encoding="utf-8") == "See the old page.\n"
+
+
+def test_chunk_source_repeats_page_marker_for_mid_page_chunks() -> None:
+    source = "**[Page 1]**\n\n" + "\n".join(f"line {i} of page one" for i in range(40))
+
+    chunks = _chunk_source(source, token_budget=60)
+
+    assert len(chunks) > 1
+    assert all(chunk.startswith("**[Page 1]**") for chunk in chunks)
+
+
 def test_clean_dead_links_no_deletions(tmp_path: Path):
     wiki_path = tmp_path / "wiki"
     wiki_path.mkdir()
@@ -471,6 +492,121 @@ async def test_handle_rebuild_includes_file_mid_ingestion(
     assert stub_ingestion_queue.cancelled_files == [(class_id, file_record.id)]
     await db_session.refresh(file_record)
     assert file_record.status == FileStatus.READY
+
+
+async def _rebuild_fixture(
+    db_session: AsyncSession, tmp_path: Path
+) -> tuple[uuid.UUID, Path, File]:
+    """A wiki with one source, a page generated from it, and a synthesis page."""
+    class_id = uuid.uuid4()
+    wiki_path = tmp_path / "wiki"
+    (wiki_path / "pages" / "concept").mkdir(parents=True)
+    (wiki_path / "pages" / "synthesis").mkdir(parents=True)
+    converted_path = tmp_path / "converted" / "notes.md"
+    converted_path.parent.mkdir(parents=True)
+    converted_path.write_text("Notes content here.", encoding="utf-8")
+
+    db_session.add(Class(id=class_id, name=f"Rebuild {class_id}"))
+    await db_session.flush()
+    file_record = File(
+        class_id=class_id,
+        original_filename="notes.pdf",
+        file_type=FileType.PDF,
+        file_size_bytes=500,
+        status=FileStatus.READY,
+        raw_path=str(tmp_path / "notes.pdf"),
+        converted_path=str(converted_path),
+    )
+    db_session.add(file_record)
+    await db_session.flush()
+
+    old = '---\ntitle: "Old Concept"\ntype: concept\nuser_edited: false\n---\n\nOld text.\n'
+    (wiki_path / "pages" / "concept" / "old-concept.md").write_text(old, encoding="utf-8")
+    db_session.add(
+        WikiPage(
+            class_id=class_id,
+            path="pages/concept/old-concept.md",
+            title="Old Concept",
+            category=WikiCategory.CONCEPT,
+            content=old,
+            source_file_ids=[str(file_record.id)],
+        )
+    )
+    (wiki_path / "pages" / "synthesis" / "overview.md").write_text(
+        '---\ntitle: "Overview"\ntype: synthesis\nuser_edited: false\n---\n\nSummary.\n',
+        encoding="utf-8",
+    )
+    await db_session.commit()
+    return class_id, wiki_path, file_record
+
+
+@contextmanager
+def _rebuild_env(wiki_path: Path, provider: AsyncMock) -> Iterator[None]:
+    with (
+        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_engine.get_llm_provider", return_value=provider),
+    ):
+        yield
+
+
+async def test_rebuild_keeps_synthesis_and_reports_removed_pages(
+    db_session: AsyncSession, tmp_path: Path
+):
+    class_id, wiki_path, _ = await _rebuild_fixture(db_session, tmp_path)
+    provider = AsyncMock()
+    provider.complete = AsyncMock(
+        return_value=(
+            '<wiki-page path="pages/concept/new-concept.md">\n'
+            '---\ntitle: "New Concept"\ntype: concept\nsources: []\ntags: []\n---\n\n'
+            "New text.\n</wiki-page>\n"
+        )
+    )
+
+    with _rebuild_env(wiki_path, provider):
+        result = await handle_rebuild(db_session, class_id)
+
+    assert result.success is True
+    assert (wiki_path / "pages" / "synthesis" / "overview.md").exists()
+    assert result.pages_removed == ["pages/concept/old-concept.md"]
+    assert result.pages_restored == []
+    assert not (wiki_path / "pages" / "concept" / "old-concept.md").exists()
+
+
+async def test_rebuild_restores_pages_when_reingest_fails(db_session: AsyncSession, tmp_path: Path):
+    class_id, wiki_path, file_record = await _rebuild_fixture(db_session, tmp_path)
+    provider = AsyncMock()
+    provider.complete = AsyncMock(side_effect=RuntimeError("model unavailable"))
+
+    with _rebuild_env(wiki_path, provider):
+        result = await handle_rebuild(db_session, class_id)
+
+    assert result.pages_restored == ["pages/concept/old-concept.md"]
+    assert result.pages_removed == []
+    assert result.failed_sources == ["notes.pdf: LLM error: model unavailable"]
+    restored = wiki_path / "pages" / "concept" / "old-concept.md"
+    assert "Old text." in restored.read_text(encoding="utf-8")
+    row = (
+        await db_session.execute(
+            select(WikiPage).where(WikiPage.path == "pages/concept/old-concept.md")
+        )
+    ).scalar_one()
+    assert row.source_file_ids == [str(file_record.id)]
+    await db_session.refresh(file_record)
+    assert file_record.status == FileStatus.READY
+
+
+async def test_handle_rebuild_preview_lists_synthesis_as_preserved(
+    db_session: AsyncSession, tmp_path: Path
+):
+    class_id, wiki_path, _ = await _rebuild_fixture(db_session, tmp_path)
+
+    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+        preview = await handle_rebuild_preview(db_session, class_id)
+
+    assert preview.pages_preserved_synthesis == ["pages/synthesis/overview.md"]
+    assert preview.pages_to_delete == ["pages/concept/old-concept.md"]
 
 
 # ---------------------------------------------------------------------------

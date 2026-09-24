@@ -195,6 +195,7 @@ class WikiSearchResponse(BaseModel):
 class SettingsRead(BaseModel):
     llm_provider: str
     llm_model: str | None
+    llm_models: dict[str, str | None]
     llm_temperature: float
     llm_max_tokens: int
     anthropic_api_key: str | None
@@ -219,8 +220,12 @@ class SettingsUpdate(BaseModel):
 
 
 class ValidateKeyRequest(BaseModel):
-    provider: Literal["copilot", "anthropic", "openai"]
-    api_key: Annotated[str, StringConstraints(min_length=1, max_length=8192)]
+    provider: ProviderName
+    # None tests the saved key; "" tests with no key at all.
+    api_key: BoundedSecret | None = None
+    # None tests the saved model; "" tests the provider's default.
+    model: BoundedModelName | None = None
+    ollama_base_url: OllamaBaseUrl | None = None
 
 
 class ValidateKeyResponse(BaseModel):

@@ -8,6 +8,7 @@ import 'package:frontend/models/source_file.dart';
 import 'package:frontend/models/wiki_page.dart';
 import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/file_provider.dart';
+import 'package:frontend/providers/settings_provider.dart';
 import 'package:frontend/providers/theme_provider.dart';
 import 'package:frontend/providers/wiki_provider.dart';
 import 'package:frontend/widgets/sidebar/sidebar.dart';
@@ -197,5 +198,38 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Toggle theme'), findsOneWidget);
+  });
+
+  testWidgets('Sidebar shows a green check when the AI is connected', (
+    tester,
+  ) async {
+    setLargeTestSurface(tester);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          classListProvider.overrideWith(() => _MockClassListNotifier()),
+          llmConnectionStatusProvider.overrideWith(
+            (ref) async => const LlmConnectionStatus(
+              provider: 'copilot',
+              model: 'gpt-5.4',
+              connected: true,
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: SizedBox(width: 250, child: Sidebar())),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byTooltip(
+        'Connected to GitHub Copilot (gpt-5.4). Click to re-check.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
   });
 }

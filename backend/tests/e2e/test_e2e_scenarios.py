@@ -331,7 +331,10 @@ class TestSettingsAPI:
             json={"provider": "openai", "api_key": "sk-bad"},
         )
         assert resp.status_code == 200
-        assert resp.json() == {"valid": False, "error": "invalid api key"}
+        assert resp.json() == {
+            "valid": False,
+            "error": "OpenAI rejected the API key. Check that it is correct.",
+        }
 
     async def test_list_ollama_models_uses_configured_server(
         self, e2e_client: AsyncClient, monkeypatch: pytest.MonkeyPatch

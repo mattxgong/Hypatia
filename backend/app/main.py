@@ -24,7 +24,7 @@ from app.routers import wiki as wiki_router
 from app.services.credential_store import CredentialStore
 from app.services.ingestion_queue import get_ingestion_queue
 from app.services.ollama_manager import refresh_if_native_ollama, unload_if_ollama
-from app.services.settings_store import load_settings
+from app.services.settings_store import load_settings, reconcile_active_model
 from app.services.wiki_search import ensure_fts_index
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
 
@@ -40,6 +40,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     for key, value in persisted.items():
         if hasattr(settings, key) and getattr(settings, key) == Settings.model_fields[key].default:
             setattr(settings, key, value)
+    reconcile_active_model(settings)
 
     cred_store = CredentialStore(settings.data_dir)
     _app.state.credential_store = cred_store

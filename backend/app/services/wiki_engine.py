@@ -89,6 +89,12 @@ _SOURCE_BUDGET_RATIO = 0.50  # the source document being ingested
 _RELATED_PAGES_RATIO = 0.30  # existing pages shown so the LLM can cross-link
 _ASK_CONTEXT_RATIO = 0.75  # wiki pages retrieved to answer a question
 
+#: Page headers file_converter writes into converted PDFs.
+_PAGE_MARKER_LINE = re.compile(r"^\*\*\[Page \d+\]\*\*$")
+
+#: `[[slug]]` or `[[slug|display text]]`.
+_WIKI_LINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+
 
 def _output_budget() -> int:
     """Tokens to allow the model to generate.
@@ -226,10 +232,12 @@ class RebuildPreview:
     """Preview of what /rebuild would do (dry-run)."""
 
     pages_to_create: list[str]
+    #: Regenerated from sources; removed if the rebuilt wiki no longer has them.
     pages_to_delete: list[str]
     pages_preserved_user_edited: list[str]
     source_file_count: int
     estimated_tokens: int
+    pages_preserved_synthesis: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -241,6 +249,12 @@ class RebuildResult:
     pages_deleted: int = 0
     pages_preserved: int = 0
     error: str | None = None
+    #: Pages that existed before and were not regenerated.
+    pages_removed: list[str] = field(default_factory=list)
+    #: Old pages put back because their source could not be re-ingested.
+    pages_restored: list[str] = field(default_factory=list)
+    #: Sources whose re-ingest failed, as "filename: error".
+    failed_sources: list[str] = field(default_factory=list)
 
 
 async def ingest_source(
@@ -434,6 +448,7 @@ def _chunk_source(content: str, token_budget: int) -> list[str]:
     chunks: list[str] = []
     current_chunk: list[str] = []
     current_tokens = 0
+    page_marker: str | None = None
 
     for line in lines:
         line_tokens = len(encoder.encode(line + "\n"))
@@ -441,6 +456,12 @@ def _chunk_source(content: str, token_budget: int) -> list[str]:
             chunks.append("\n".join(current_chunk))
             current_chunk = []
             current_tokens = 0
+            # A chunk that starts mid-page still needs to know which page it is on.
+            if page_marker is not None and not _PAGE_MARKER_LINE.match(line):
+                current_chunk.append(page_marker)
+                current_tokens += len(encoder.encode(page_marker + "\n"))
+        if _PAGE_MARKER_LINE.match(line):
+            page_marker = line
         current_chunk.append(line)
         current_tokens += line_tokens
 
@@ -1193,14 +1214,14 @@ def _clean_dead_links(wiki_path: Path, deleted_paths: list[str]) -> int:
         return 0
 
     cleaned = 0
-    link_pattern = re.compile(r"\[\[([^\]]+)\]\]")
+    link_pattern = _WIKI_LINK
 
     def _replace_dead_link(m: re.Match[str]) -> str:
         nonlocal cleaned
-        slug = m.group(1)
+        slug = m.group(1).strip()
         if slug in deleted_slugs:
             cleaned += 1
-            return slug
+            return (m.group(2) or slug).strip()
         return m.group(0)
 
     for md_file in pages_dir.rglob("*.md"):
@@ -1234,7 +1255,7 @@ async def handle_lint(
         all_pages[rel_path] = content
         all_slugs.add(md_file.stem)
 
-    link_pattern = re.compile(r"\[\[([^\]]+)\]\]")
+    link_pattern = _WIKI_LINK
     cite_pattern = re.compile(r"hypatia://cite\?file=([^&\"]+)")
     inbound_links: dict[str, int] = {slug: 0 for slug in all_slugs}
 
@@ -1245,7 +1266,7 @@ async def handle_lint(
 
     for page_path, content in all_pages.items():
         for match in link_pattern.finditer(content):
-            slug = match.group(1)
+            slug = match.group(1).strip()
             if slug in inbound_links:
                 inbound_links[slug] += 1
             elif slug not in all_slugs:
@@ -1348,14 +1369,17 @@ async def handle_rebuild_preview(
     source_files = source_files_q.scalars().all()
 
     user_edited: list[str] = []
+    synthesis: list[str] = []
     to_delete: list[str] = []
 
     if pages_dir.exists():
         for md_file in pages_dir.rglob("*.md"):
             rel_path = md_file.relative_to(wp).as_posix()
             content = md_file.read_text(encoding="utf-8")
-            if "user_edited: true" in content[:500]:
+            if _is_user_edited(content):
                 user_edited.append(rel_path)
+            elif _is_synthesis(content):
+                synthesis.append(rel_path)
             else:
                 to_delete.append(rel_path)
 
@@ -1380,6 +1404,7 @@ async def handle_rebuild_preview(
         pages_preserved_user_edited=user_edited,
         source_file_count=len(source_files),
         estimated_tokens=estimated_tokens,
+        pages_preserved_synthesis=synthesis,
     )
 
 
@@ -1389,11 +1414,12 @@ async def handle_rebuild(
     *,
     task_id: str | None = None,
 ) -> RebuildResult:
-    """Rebuild the entire wiki from source files, preserving user-edited pages.
+    """Rebuild the wiki from source files.
 
-    Each source file is re-ingested in its own transaction (via ingest_source).
-    If the process is interrupted, the wiki will be in a partially-rebuilt state;
-    re-running /rebuild will complete it. This is acceptable for a local app.
+    User-edited and synthesis pages are kept as they are. Every other page is
+    regenerated; one the rebuilt wiki no longer contains is removed, unless its
+    source failed to re-ingest (or the rebuild was cancelled first), in which
+    case the old page is put back.
     """
     from app.services.ingestion_queue import get_ingestion_queue
     from app.services.task_manager import task_manager
@@ -1422,74 +1448,195 @@ async def handle_rebuild(
     wp = init_wiki_repo(cid)
     pages_dir = wp / "pages"
 
-    user_edited_paths: list[str] = []
-    deleted_count = 0
+    existing_rows = {
+        row.path: row
+        for row in (
+            await session.execute(select(WikiPage).where(WikiPage.class_id == class_id))
+        ).scalars()
+    }
+    kept_paths: list[str] = []
+    backups: list[_PageBackup] = []
 
     if pages_dir.exists():
         for md_file in list(pages_dir.rglob("*.md")):
             rel_path = md_file.relative_to(wp).as_posix()
             content = md_file.read_text(encoding="utf-8")
-            if "user_edited: true" in content[:500]:
-                user_edited_paths.append(rel_path)
-            else:
-                md_file.unlink()
-                deleted_count += 1
+            if _is_user_edited(content) or _is_synthesis(content):
+                kept_paths.append(rel_path)
+                continue
+            backups.append(_PageBackup.capture(rel_path, content, existing_rows.get(rel_path)))
+            md_file.unlink()
 
+    for path, row in existing_rows.items():
+        if path not in kept_paths:
+            await delete_fts_page(session, row.id)
+            await _delete_embedding_safe(session, row.id)
     await session.execute(
         delete(WikiPage).where(
             WikiPage.class_id == class_id,
-            WikiPage.path.notin_(user_edited_paths),
+            WikiPage.path.notin_(kept_paths),
         )
     )
-    await session.flush()
+    # The LLM should see the wiki as it now stands, not the pages just removed.
+    _write_index(wp, _rebuild_index_from_disk(wp))
+    await session.commit()
 
     source_files_q = await session.execute(
-        select(File).where(File.class_id == class_id, File.status == FileStatus.READY)
+        select(File.id, File.original_filename).where(
+            File.class_id == class_id, File.status == FileStatus.READY
+        )
     )
-    source_files = source_files_q.scalars().all()
+    source_files = [(file_id, filename) for file_id, filename in source_files_q.all()]
 
     total = len(source_files)
     created_count = 0
+    unfinished = {str(file_id) for file_id, _ in source_files}
+    failed_sources: list[str] = []
+    cancelled = False
 
-    for i, file_record in enumerate(source_files):
+    for i, (file_id, filename) in enumerate(source_files):
         if task_id and task_manager.is_cancelled(task_id):
-            commit_wiki_change(cid, "rebuild: cancelled (partial)")
-            return RebuildResult(
-                success=False,
-                pages_created=created_count,
-                pages_deleted=deleted_count,
-                pages_preserved=len(user_edited_paths),
-                error="Cancelled by user",
-            )
+            cancelled = True
+            break
 
         if task_id:
             pct = int(((i + 1) / max(total, 1)) * 100)
-            task_manager.update_progress(
-                task_id, pct, f"Re-ingesting {file_record.original_filename} ({i + 1}/{total})"
-            )
+            task_manager.update_progress(task_id, pct, f"Re-ingesting {filename} ({i + 1}/{total})")
 
-        ingest_result = await ingest_source(session, class_id, file_record.id)
+        try:
+            ingest_result = await ingest_source(session, class_id, file_id)
+        except Exception as e:
+            logger.exception("rebuild_ingest_error", class_id=cid, file=filename, error=str(e))
+            await session.rollback()
+            ingest_result = IngestResult(success=False, error=str(e))
+
         if ingest_result.success:
+            unfinished.discard(str(file_id))
             created_count += len(ingest_result.pages_created) + len(ingest_result.pages_updated)
+        else:
+            failed_sources.append(f"{filename}: {ingest_result.error or 'unknown error'}")
+            # Its previous pages are restored below, so it is not awaiting ingestion.
+            await session.execute(
+                update(File).where(File.id == file_id).values(status=FileStatus.READY)
+            )
+            await session.commit()
 
-    index_content = _rebuild_index_from_disk(wp)
-    _write_index(wp, index_content)
+    known_ids = {str(file_id) for file_id, _ in source_files}
+    restored: list[str] = []
+    removed: list[str] = []
+    for backup in backups:
+        if (wp / backup.path).exists():
+            continue
+        sources = set(backup.source_file_ids)
+        # Pages whose sources are unknown are kept too while anything is unfinished.
+        if sources & unfinished or (unfinished and not sources & known_ids):
+            await _restore_page(session, class_id, wp, backup)
+            restored.append(backup.path)
+        else:
+            removed.append(backup.path)
+
+    _write_index(wp, _rebuild_index_from_disk(wp))
     append_log(
         wp,
         "rebuild",
-        f"{total} sources",
-        f"Created: {created_count}, Deleted: {deleted_count}, "
-        f"Preserved (user-edited): {len(user_edited_paths)}\n",
+        f"{total} sources" + (" (cancelled)" if cancelled else ""),
+        f"Created: {created_count}, Removed: {len(removed)}, Restored: {len(restored)}, "
+        f"Preserved: {len(kept_paths)}\n",
     )
     await session.commit()
-    commit_wiki_change(cid, f"rebuild: {total} sources re-ingested")
+    commit_wiki_change(
+        cid,
+        "rebuild: cancelled (partial)" if cancelled else f"rebuild: {total} sources re-ingested",
+    )
 
     return RebuildResult(
-        success=True,
+        success=not cancelled,
         pages_created=created_count,
-        pages_deleted=deleted_count,
-        pages_preserved=len(user_edited_paths),
+        pages_deleted=len(removed),
+        pages_preserved=len(kept_paths),
+        error="Cancelled by user" if cancelled else None,
+        pages_removed=removed,
+        pages_restored=restored,
+        failed_sources=failed_sources,
     )
+
+
+@dataclass
+class _PageBackup:
+    """A page removed at the start of a rebuild, kept in case it must be put back."""
+
+    id: uuid.UUID
+    path: str
+    content: str
+    title: str
+    category: WikiCategory
+    source_file_ids: list[str]
+    created_at: datetime | None
+
+    @classmethod
+    def capture(cls, path: str, content: str, row: WikiPage | None) -> _PageBackup:
+        if row is not None:
+            return cls(
+                id=row.id,
+                path=path,
+                content=content,
+                title=row.title,
+                category=row.category,
+                source_file_ids=[str(s) for s in row.source_file_ids or []],
+                created_at=row.created_at,
+            )
+        return cls(
+            id=uuid.uuid4(),
+            path=path,
+            content=content,
+            title=_extract_title_from_content(content) or Path(path).stem,
+            category=WikiCategory.CONCEPT,
+            source_file_ids=[],
+            created_at=None,
+        )
+
+
+async def _restore_page(
+    session: AsyncSession, class_id: uuid.UUID, wp: Path, backup: _PageBackup
+) -> None:
+    page_file = wp / backup.path
+    page_file.parent.mkdir(parents=True, exist_ok=True)
+    page_file.write_text(backup.content, encoding="utf-8")
+
+    row = WikiPage(
+        id=backup.id,
+        class_id=class_id,
+        path=backup.path,
+        title=backup.title,
+        category=backup.category,
+        content=backup.content,
+        source_file_ids=backup.source_file_ids,
+    )
+    if backup.created_at is not None:
+        row.created_at = backup.created_at
+    session.add(row)
+    await session.flush()
+    await sync_fts_page(
+        session,
+        page_id=row.id,
+        class_id=class_id,
+        path=backup.path,
+        title=backup.title,
+        content=backup.content,
+    )
+    await _upsert_embedding_safe(session, row.id, backup.content)
+
+
+_SYNTHESIS_TYPE = re.compile(r"^type:\s*[\"']?synthesis[\"']?\s*$", re.MULTILINE)
+
+
+def _is_user_edited(content: str) -> bool:
+    return "user_edited: true" in content[:500]
+
+
+def _is_synthesis(content: str) -> bool:
+    """Synthesis pages are built from other pages, so no source can regenerate them."""
+    return _SYNTHESIS_TYPE.search(content[:500]) is not None
 
 
 # ---------------------------------------------------------------------------

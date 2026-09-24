@@ -8,10 +8,18 @@ supported.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from copilot import CopilotClient
 from copilot.session import PermissionHandler, ProviderConfig, SystemMessageReplaceConfig
+from copilot.session_events import (
+    AssistantMessageData,
+    AssistantMessageDeltaData,
+    SessionErrorData,
+    SessionEvent,
+    SessionIdleData,
+)
 
 from app.errors import ErrorCode, LLMProviderError
 from app.utils.logging import get_logger
@@ -29,15 +37,17 @@ class CopilotProvider(LLMProvider):
         model: str = "gpt-5.4",
         provider_config: ProviderConfig | None = None,
         temperature: float = 0.3,
+        github_token: str | None = None,
     ) -> None:
         self._model = model
         self._provider_config = provider_config
         self._temperature = temperature
+        self._github_token = github_token
         self._client: CopilotClient | None = None
 
     async def _get_client(self) -> CopilotClient:
         if self._client is None:
-            self._client = CopilotClient()
+            self._client = CopilotClient(github_token=self._github_token)
             await self._client.__aenter__()
         return self._client
 
@@ -100,24 +110,41 @@ class CopilotProvider(LLMProvider):
             system_message=sys_msg,
             provider=self._provider_config,
             on_permission_request=PermissionHandler.approve_all,
+            streaming=True,
         )
+        # The SDK pushes events to a callback; a queue turns them into an iterator.
+        queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+        streamed = False
+
+        def on_event(event: SessionEvent) -> None:
+            nonlocal streamed
+            match event.data:
+                case AssistantMessageDeltaData(delta_content=delta) if delta:
+                    streamed = True
+                    queue.put_nowait(delta)
+                case AssistantMessageData(content=content) if content and not streamed:
+                    # Models that do not stream still send the whole message once.
+                    queue.put_nowait(content)
+                case SessionErrorData() as data:
+                    queue.put_nowait(RuntimeError(f"Session error: {data.message or data}"))
+                case SessionIdleData():
+                    queue.put_nowait(None)
+
+        unsubscribe = session.on(on_event)
         try:
-            if hasattr(session, "send") and callable(getattr(session, "send", None)):
-                async for event in session.send(user_prompt):  # type: ignore[attr-defined]
-                    if hasattr(event, "data") and hasattr(event.data, "content"):
-                        chunk = event.data.content
-                        if chunk:
-                            yield chunk
-            else:
-                response = await session.send_and_wait(user_prompt, timeout=180.0)
-                if response is not None:
-                    content = getattr(response.data, "content", "") or ""
-                    if content:
-                        yield content
+            await session.send(user_prompt)
+            while True:
+                item = await asyncio.wait_for(queue.get(), timeout=180.0)
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
         except Exception as exc:
             logger.warning("copilot_stream_error", error=str(exc))
             raise LLMProviderError(ErrorCode.LLM_UNAVAILABLE, str(exc)) from exc
         finally:
+            unsubscribe()
             await session.disconnect()
 
     async def list_models(self) -> list[str]:

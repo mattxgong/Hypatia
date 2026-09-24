@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../../models/chat_message.dart';
+import '../common/wiki_markdown.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({super.key, required this.message});
@@ -45,9 +46,9 @@ class MessageBubble extends StatelessWidget {
               ),
               child: isUser
                   ? Text(message.content, style: theme.textTheme.bodyMedium)
-                  : MarkdownBody(
+                  : WikiMarkdown(
                       data: message.content,
-                      selectable: true,
+                      scrollable: false,
                       styleSheet: MarkdownStyleSheet.fromTheme(
                         theme,
                       ).copyWith(p: theme.textTheme.bodyMedium),

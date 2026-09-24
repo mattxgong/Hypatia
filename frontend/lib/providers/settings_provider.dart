@@ -76,3 +76,51 @@ final ollamaModelsProvider = FutureProvider<List<String>>((ref) async {
     return [];
   }
 });
+
+class LlmConnectionStatus {
+  const LlmConnectionStatus({
+    required this.provider,
+    required this.model,
+    required this.connected,
+    this.error,
+  });
+
+  final String provider;
+  final String? model;
+  final bool connected;
+  final String? error;
+}
+
+/// Tests the saved provider configuration; re-runs whenever it changes.
+final llmConnectionStatusProvider = FutureProvider<LlmConnectionStatus>((
+  ref,
+) async {
+  final config = await ref.watch(
+    fullSettingsProvider.selectAsync(
+      (s) => (
+        provider: s['llm_provider'] as String? ?? 'copilot',
+        model: s['llm_model'] as String?,
+        baseUrl: s['ollama_base_url'] as String?,
+        keys: (s['anthropic_api_key'], s['openai_api_key'], s['github_token']),
+      ),
+    ),
+  );
+  try {
+    final result = await ref
+        .read(apiClientProvider)
+        .testConnection(config.provider);
+    return LlmConnectionStatus(
+      provider: config.provider,
+      model: config.model,
+      connected: result.valid,
+      error: result.error,
+    );
+  } on ApiException catch (e) {
+    return LlmConnectionStatus(
+      provider: config.provider,
+      model: config.model,
+      connected: false,
+      error: e.detail,
+    );
+  }
+});

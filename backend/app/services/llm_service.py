@@ -40,6 +40,7 @@ def get_llm_provider(cfg: Settings | None = None) -> LLMProvider:
         return CopilotProvider(
             model=model or cfg.copilot_model,
             temperature=temperature,
+            github_token=cfg.github_token,
         )
 
     if provider_name == "copilot-ollama":

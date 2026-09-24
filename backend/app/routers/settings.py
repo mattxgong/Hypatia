@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
+
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from app.config import settings
+from app.errors import ErrorCode, HypatiaError
 from app.models.schemas import (
     SettingsRead,
     SettingsUpdate,
@@ -17,7 +21,12 @@ from app.services.ollama_manager import (
     refresh_if_native_ollama,
     unload_if_ollama,
 )
-from app.services.settings_store import save_settings
+from app.services.settings_store import (
+    model_slot,
+    remember_model,
+    save_settings,
+    saved_model,
+)
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -39,6 +48,7 @@ def _build_response() -> SettingsRead:
     return SettingsRead(
         llm_provider=settings.llm_provider,
         llm_model=settings.llm_model,
+        llm_models={p: saved_model(settings, p) for p in VALID_PROVIDERS},
         llm_temperature=settings.llm_temperature,
         llm_max_tokens=settings.llm_max_tokens,
         anthropic_api_key=_mask_key(settings.anthropic_api_key),
@@ -72,13 +82,19 @@ async def update_settings(body: SettingsUpdate, request: Request) -> SettingsRea
                 status_code=422,
                 detail=f"Invalid provider. Must be one of: {', '.join(VALID_PROVIDERS)}",
             )
+        remember_model(settings, prev_provider, settings.llm_model)
         settings.llm_provider = body.llm_provider
+        settings.llm_model = settings.llm_models.get(model_slot(body.llm_provider))
         persist_fields["llm_provider"] = body.llm_provider
+        persist_fields["llm_model"] = settings.llm_model
+        persist_fields["llm_models"] = settings.llm_models
         logger.info("settings_updated", field="llm_provider", value=body.llm_provider)
 
     if body.llm_model is not None:
         settings.llm_model = body.llm_model if body.llm_model else None
+        remember_model(settings, settings.llm_provider, settings.llm_model)
         persist_fields["llm_model"] = settings.llm_model
+        persist_fields["llm_models"] = settings.llm_models
         logger.info("settings_updated", field="llm_model", value=body.llm_model)
 
     if body.llm_temperature is not None:
@@ -169,31 +185,111 @@ async def unload_ollama() -> dict[str, bool]:
     return {"unloaded": unloaded}
 
 
+_PROVIDER_LABELS = {
+    "copilot": "GitHub Copilot",
+    "copilot-ollama": "Ollama (via Copilot)",
+    "anthropic": "Anthropic",
+    "openai": "OpenAI",
+    "ollama": "Ollama",
+}
+
+#: Local models can take a while to load into memory on the first request.
+_CONNECTION_TEST_TIMEOUT = 120.0
+
+
+def _describe_connection_error(exc: Exception, provider: str, model: str | None) -> str:
+    """Turn a raw provider/SDK exception into a sentence a user can act on."""
+    label = _PROVIDER_LABELS.get(provider, provider)
+    raw = str(exc)
+    text = raw.lower()
+    code = exc.code if isinstance(exc, HypatiaError) else None
+    ollama = is_ollama_provider(provider)
+
+    if isinstance(exc, ValueError) and "api_key" in text:
+        return f"{label} needs an API key. Enter one and try again."
+    if (
+        "not available" in text
+        or "model_not_found" in text
+        or "not_found_error" in text
+        or "does not exist" in text
+        or "does not have the model" in text
+        or ("model" in text and "not found" in text)
+    ):
+        hint = f" Run `ollama pull {model}` or pick another model." if ollama and model else ""
+        subject = f'The model "{model}"' if model else "The default model"
+        return f"{subject} is not available on {label}. Check the model name.{hint}"
+    if code == ErrorCode.LLM_AUTH_FAILED or any(
+        s in text for s in ("401", "403", "unauthorized", "authentication", "api key", "x-api-key")
+    ):
+        if provider == "copilot":
+            return (
+                "GitHub sign-in failed. Run `copilot login` in a terminal, "
+                "or enter a valid GitHub token."
+            )
+        return f"{label} rejected the API key. Check that it is correct."
+    if code == ErrorCode.LLM_RATE_LIMITED or "429" in text or "rate limit" in text:
+        return f"{label} is rate limiting requests. Wait a moment and try again."
+    if "quota" in text or "credit balance" in text or "billing" in text:
+        return f"Your {label} account has no remaining quota or credits."
+    if code == ErrorCode.LLM_TIMEOUT or isinstance(exc, TimeoutError) or "timed out" in text:
+        return f"{label} did not respond in time. Try again, or check your connection."
+    if any(s in text for s in ("connect", "unreachable", "getaddrinfo", "name resolution")):
+        if ollama:
+            return "Could not reach the Ollama server. Start Ollama and check the base URL."
+        return f"Could not reach {label}. Check your internet connection."
+
+    # Drop SDK/transport prefixes such as "JSON-RPC Error -32603: Request ... failed with
+    # message:" or "Error code: 500 - " so what remains is the provider's own message.
+    detail = re.sub(r"^.*?failed with message:\s*", "", raw, flags=re.DOTALL)
+    lines = re.sub(r"^Error code: \d+ - ", "", detail).strip().splitlines()
+    summary = lines[0] if lines else type(exc).__name__
+    if len(summary) > 200:
+        summary = summary[:197] + "..."
+    return f"Could not connect to {label}: {summary}"
+
+
 @router.post("/validate-key", response_model=ValidateKeyResponse)
 async def validate_key(body: ValidateKeyRequest) -> ValidateKeyResponse:
-    """Test whether an API key is valid by constructing a temporary provider."""
+    """Test a provider configuration, which may be unsaved, with a tiny completion."""
     from app.services.llm_service import get_llm_provider
 
-    if body.provider not in VALID_PROVIDERS:
-        raise HTTPException(status_code=422, detail=f"Invalid provider: {body.provider}")
-
     temp_cfg = settings.model_copy(deep=True)
-
-    if body.provider == "anthropic":
-        temp_cfg.anthropic_api_key = body.api_key
-    elif body.provider == "openai":
-        temp_cfg.openai_api_key = body.api_key
-    elif body.provider == "copilot":
-        temp_cfg.github_token = body.api_key
-
     temp_cfg.llm_provider = body.provider
+    temp_cfg.llm_model = saved_model(settings, body.provider)
 
+    if body.api_key is not None:
+        key = body.api_key or None
+        if body.provider == "anthropic":
+            temp_cfg.anthropic_api_key = key
+        elif body.provider == "openai":
+            temp_cfg.openai_api_key = key
+        elif body.provider == "copilot":
+            temp_cfg.github_token = key
+    if body.model is not None:
+        temp_cfg.llm_model = body.model or None
+    if body.ollama_base_url is not None:
+        temp_cfg.ollama_base_url = body.ollama_base_url
+
+    provider = None
     try:
         provider = get_llm_provider(cfg=temp_cfg)
-        await provider.complete("test", "Say hello.", max_tokens=5)
+        await asyncio.wait_for(
+            provider.complete("test", "Say hello.", max_tokens=5),
+            timeout=_CONNECTION_TEST_TIMEOUT,
+        )
         return ValidateKeyResponse(valid=True)
     except Exception as exc:  # noqa: BLE001
-        return ValidateKeyResponse(valid=False, error=str(exc))
+        model = temp_cfg.llm_model
+        logger.warning(
+            "connection_test_failed", provider=body.provider, model=model, error=str(exc)
+        )
+        return ValidateKeyResponse(
+            valid=False, error=_describe_connection_error(exc, body.provider, model)
+        )
+    finally:
+        close = getattr(provider, "close", None)
+        if close is not None:
+            await close()
 
 
 @router.get("/usage")

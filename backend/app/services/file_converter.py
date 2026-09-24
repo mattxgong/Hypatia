@@ -11,12 +11,19 @@ the ``File`` row instead of crashing the pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from markitdown import MarkItDown
 from markitdown._exceptions import MarkItDownException
+from pdfminer.converter import TextConverter
+from pdfminer.layout import LAParams
+from pdfminer.pdffont import PDFFont
+from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+from pdfminer.pdfpage import PDFPage
+from pdfminer.psexceptions import PSException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db_models import FileStatus, FileType
@@ -52,6 +59,86 @@ class ConversionResult:
     error: str | None = None
 
 
+# LaTeX PDFs often embed Computer Modern math fonts without a Unicode map, so
+# pdfminer can only emit "(cid:N)". N is the glyph's slot in the TeX encoding.
+_CMEX_GLYPHS: dict[int, str] = {
+    **dict.fromkeys((0x00, 0x10, 0x12, 0x20), "("),
+    **dict.fromkeys((0x01, 0x11, 0x13, 0x21), ")"),
+    **dict.fromkeys((0x02, 0x14, 0x22, 0x68), "["),
+    **dict.fromkeys((0x03, 0x15, 0x23, 0x69), "]"),
+    **dict.fromkeys((0x04, 0x16, 0x24, 0x6A), "⌊"),
+    **dict.fromkeys((0x05, 0x17, 0x25, 0x6B), "⌋"),
+    **dict.fromkeys((0x06, 0x18, 0x26, 0x6C), "⌈"),
+    **dict.fromkeys((0x07, 0x19, 0x27, 0x6D), "⌉"),
+    **dict.fromkeys((0x08, 0x1A, 0x28, 0x6E), "{"),
+    **dict.fromkeys((0x09, 0x1B, 0x29, 0x6F), "}"),
+    **dict.fromkeys((0x0A, 0x1C, 0x2A, 0x44), "⟨"),
+    **dict.fromkeys((0x0B, 0x1D, 0x2B, 0x45), "⟩"),
+    0x0C: "|",
+    0x0D: "‖",
+    **dict.fromkeys((0x0E, 0x1E, 0x2C), "/"),
+    **dict.fromkeys((0x0F, 0x1F, 0x2D), "\\"),
+    **dict.fromkeys((0x48, 0x49), "∮"),
+    **dict.fromkeys((0x4C, 0x4D), "⨁"),
+    **dict.fromkeys((0x4E, 0x4F), "⨂"),
+    **dict.fromkeys((0x50, 0x58), "∑"),
+    **dict.fromkeys((0x51, 0x59), "∏"),
+    **dict.fromkeys((0x52, 0x5A), "∫"),
+    **dict.fromkeys((0x53, 0x5B), "⋃"),
+    **dict.fromkeys((0x54, 0x5C), "⋂"),
+    **dict.fromkeys((0x56, 0x5E), "⋀"),
+    **dict.fromkeys((0x57, 0x5F), "⋁"),
+    **dict.fromkeys((0x60, 0x61), "∐"),
+    **dict.fromkeys((0x70, 0x71, 0x72, 0x73, 0x74), "√"),
+}
+_CMSY_GLYPHS: dict[int, str] = dict(
+    enumerate(
+        "−·×∗÷⋄±∓⊕⊖⊗⊘⊙◯∘•≍≡⊆⊇≤≥⪯⪰∼≈⊂⊃≪≫≺≻←→↑↓↔↗↘≃⇐⇒⇑⇓⇔↖↙∝′∞∈∋△▽/|∀∃¬∅ℜℑ⊤⊥"
+        "ℵ𝒜ℬ𝒞𝒟ℰℱ𝒢ℋℐ𝒥𝒦ℒℳ𝒩𝒪𝒫𝒬ℛ𝒮𝒯𝒰𝒱𝒲𝒳𝒴𝒵∪∩⊎∧∨⊢⊣⌊⌋⌈⌉{}⟨⟩|‖↕⇕\\≀√⨿∇∫⊔⊓⊑⊒§†‡¶♣♦♥♠"
+    )
+)
+_LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl"})
+
+#: Heads each page of a converted PDF; the wiki schema tells the LLM to cite it.
+PDF_PAGE_MARKER = "**[Page {}]**"
+
+
+class _TexAwareTextConverter(TextConverter):
+    def handle_undefined_char(self, font: PDFFont, cid: int) -> str:
+        name = (getattr(font, "fontname", "") or "").split("+")[-1].upper()
+        if name.startswith("CMEX"):
+            glyph = _CMEX_GLYPHS.get(cid)
+        elif name.startswith("CMSY"):
+            glyph = _CMSY_GLYPHS.get(cid)
+        else:
+            glyph = None
+        return glyph if glyph is not None else super().handle_undefined_char(font, cid)
+
+
+def _extract_pdf_text(file_path: Path) -> str:
+    """Extract reading-order prose from a PDF.
+
+    MarkItDown's PDF converter guesses at borderless tables from word
+    positions; on math-heavy papers that turns prose into bogus tables and
+    drops inter-word spaces, so PDFs use pdfminer's text layout directly.
+
+    Each page starts with a ``**[Page N]**`` marker so wiki citations can
+    point at the page a claim came from.
+    """
+    rsrcmgr = PDFResourceManager()
+    out = StringIO()
+    device = _TexAwareTextConverter(rsrcmgr, out, laparams=LAParams())
+    try:
+        interpreter = PDFPageInterpreter(rsrcmgr, device)
+        with file_path.open("rb") as fp:
+            for number, page in enumerate(PDFPage.get_pages(fp), start=1):
+                out.write(f"{PDF_PAGE_MARKER.format(number)}\n\n")
+                interpreter.process_page(page)
+    finally:
+        device.close()
+    return out.getvalue().replace("\f", "\n\n").translate(_LIGATURES).strip() + "\n"
+
+
 def convert_document(file_path: Path, output_path: Path) -> ConversionResult:
     """Convert ``file_path`` to markdown and write the result to ``output_path``.
 
@@ -60,20 +147,22 @@ def convert_document(file_path: Path, output_path: Path) -> ConversionResult:
     support. On failure (unsupported format, corrupted file), returns a
     :class:`ConversionResult` with ``success=False`` and no file is written.
     """
+    title: str | None = None
     try:
-        result = _get_converter().convert(file_path)
-    except MarkItDownException as exc:
-        logger.warning("document_conversion_failed", file=str(file_path), error=str(exc))
-        return ConversionResult(success=False, error=str(exc))
-    except OSError as exc:
+        if file_path.suffix.lower() == ".pdf":
+            markdown_text = _extract_pdf_text(file_path)
+        else:
+            result = _get_converter().convert(file_path)
+            markdown_text = result.markdown
+            title = result.title
+    except (MarkItDownException, PSException, OSError) as exc:
         logger.warning("document_conversion_failed", file=str(file_path), error=str(exc))
         return ConversionResult(success=False, error=str(exc))
 
-    markdown_text = result.markdown
     metadata: dict[str, Any] = {
         "source_filename": file_path.name,
         "source_extension": file_path.suffix.lower(),
-        "title": result.title,
+        "title": title,
         "word_count": len(markdown_text.split()),
         "char_count": len(markdown_text),
     }

@@ -61,7 +61,8 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   Future<void> _loadCurrentSettings() async {
     final settings = await ref.read(fullSettingsProvider.future);
     if (!mounted) return;
-    _modelController.text = (settings['llm_model'] as String?) ?? '';
+    final models = settings['llm_models'] as Map<String, dynamic>?;
+    _modelController.text = (models?[widget.providerId] as String?) ?? '';
 
     String? masked;
     switch (widget.providerId) {
@@ -196,8 +197,8 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
   }
 
   Future<void> _testConnection() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
     final key = _apiKeyController.text.trim();
-    if (key.isEmpty) return;
     setState(() {
       _testing = true;
       _testResult = null;
@@ -205,7 +206,16 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
     });
     try {
       final apiClient = ref.read(apiClientProvider);
-      final result = await apiClient.validateApiKey(widget.providerId, key);
+      final result = await apiClient.testConnection(
+        widget.providerId,
+        apiKey: !_needsApiKey
+            ? null
+            : key.isNotEmpty
+            ? key
+            : (_clearStoredApiKey ? '' : null),
+        model: _modelController.text.trim(),
+        ollamaBaseUrl: _needsBaseUrl ? _baseUrlController.text.trim() : null,
+      );
       if (mounted) {
         setState(() {
           _testing = false;
@@ -218,10 +228,18 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
         setState(() {
           _testing = false;
           _testResult = false;
-          _testError = e.toString();
+          _testError = e is ApiException ? e.detail : e.toString();
         });
       }
     }
+  }
+
+  void _clearTestResult() {
+    if (_testResult == null) return;
+    setState(() {
+      _testResult = null;
+      _testError = null;
+    });
   }
 
   Future<void> _save() async {
@@ -290,6 +308,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
     final theme = Theme.of(context);
 
     return AlertDialog(
+      scrollable: true,
       title: Row(
         children: [
           ProviderIcon(providerId: widget.providerId, size: 24),
@@ -331,6 +350,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                   ),
                   maxLength: maxApiKeyLength,
                   validator: validateApiKey,
+                  onChanged: (_) => _clearTestResult(),
                 ),
                 if (_hasStoredApiKey && _apiKeyController.text.isEmpty) ...[
                   const SizedBox(height: 8),
@@ -361,43 +381,6 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                     ],
                   ),
                 ],
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed:
-                          _testing || _apiKeyController.text.trim().isEmpty
-                          ? null
-                          : _testConnection,
-                      icon: _testing
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.wifi_tethering, size: 16),
-                      label: const Text('Test Connection'),
-                    ),
-                    if (_testResult != null) ...[
-                      const SizedBox(width: 8),
-                      Icon(
-                        _testResult! ? Icons.check_circle : Icons.cancel,
-                        color: _testResult! ? Colors.green : Colors.red,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          _testResult! ? 'Valid' : (_testError ?? 'Invalid'),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: _testResult! ? Colors.green : Colors.red,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
                 const SizedBox(height: 16),
               ],
               if (_needsBaseUrl) ...[
@@ -410,6 +393,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                   ),
                   maxLength: maxBaseUrlLength,
                   validator: validateOllamaBaseUrl,
+                  onChanged: (_) => _clearTestResult(),
                 ),
                 const SizedBox(height: 16),
               ],
@@ -422,6 +406,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                 ),
                 maxLength: maxModelNameLength,
                 validator: validateModelName,
+                onChanged: (_) => _clearTestResult(),
               ),
               if (_needsBaseUrl) ...[
                 const SizedBox(height: 12),
@@ -462,6 +447,50 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                   ),
                 ],
               ],
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _testing ? null : _testConnection,
+                    icon: _testing
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.wifi_tethering, size: 16),
+                    label: const Text('Test Connection'),
+                  ),
+                  if (_testResult != null) ...[
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Icon(
+                        _testResult! ? Icons.check_circle : Icons.cancel,
+                        color: _testResult! ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 9),
+                        child: Text(
+                          _testResult!
+                              ? 'Connected'
+                              : (_testError ?? 'Connection failed'),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: _testResult! ? Colors.green : Colors.red,
+                          ),
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ],
           ),
         ),

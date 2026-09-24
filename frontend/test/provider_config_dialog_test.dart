@@ -10,11 +10,26 @@ class _FakeApiClient extends ApiClient {
 
   String? updatedProvider;
   String? updatedOpenAiKey;
+  String? testedModel;
+  String? testedApiKey;
+
+  @override
+  Future<({bool valid, String? error})> testConnection(
+    String provider, {
+    String? apiKey,
+    String? model,
+    String? ollamaBaseUrl,
+  }) async {
+    testedModel = model;
+    testedApiKey = apiKey;
+    return (valid: false, error: 'The model "$model" is not available.');
+  }
 
   @override
   Future<Map<String, dynamic>> getSettings() async => {
-    'llm_provider': 'openai',
-    'llm_model': 'gpt-test',
+    'llm_provider': 'copilot',
+    'llm_model': 'gpt-5.4',
+    'llm_models': {'copilot': 'gpt-5.4', 'openai': 'gpt-test'},
     'openai_api_key': 'sk-a...7890',
   };
 
@@ -77,5 +92,36 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(apiClient.updatedOpenAiKey, '');
+  });
+
+  testWidgets('shows the model saved for this provider', (tester) async {
+    await tester.pumpWidget(_app(_FakeApiClient()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('gpt-test'), findsOneWidget);
+    expect(find.text('gpt-5.4'), findsNothing);
+  });
+
+  testWidgets('test connection uses the unsaved model and saved key', (
+    tester,
+  ) async {
+    final apiClient = _FakeApiClient();
+    await tester.pumpWidget(_app(apiClient));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Model'),
+      'gpt-unsaved',
+    );
+    await tester.tap(find.text('Test Connection'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.testedModel, 'gpt-unsaved');
+    expect(apiClient.testedApiKey, isNull);
+    expect(apiClient.updatedProvider, isNull);
+    expect(
+      find.text('The model "gpt-unsaved" is not available.'),
+      findsOneWidget,
+    );
   });
 }

@@ -166,6 +166,34 @@ def test_convert_missing_file_fails_gracefully(tmp_path: Path) -> None:
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("fontname", "cid", "expected"),
+    [
+        ("JXTCGV+CMEX10", 88, "∑"),
+        ("JXTCGV+CMEX10", 16, "("),
+        ("KQSJBQ+CMSY8", 48, "′"),
+        ("KQSJBQ+CMSY8", 50, "∈"),
+        ("ABCDEF+Helvetica", 88, "(cid:88)"),
+    ],
+)
+def test_pdf_tex_glyphs_map_to_unicode(fontname: str, cid: int, expected: str) -> None:
+    converter = file_converter._TexAwareTextConverter(MagicMock(), MagicMock())
+    font = MagicMock(fontname=fontname)
+
+    assert converter.handle_undefined_char(font, cid) == expected
+
+
+def test_convert_corrupted_pdf_fails_gracefully(tmp_path: Path) -> None:
+    source = tmp_path / "broken.pdf"
+    source.write_bytes(b"not really a pdf")
+    output = tmp_path / "converted" / "broken.md"
+
+    result = file_converter.convert_document(source, output)
+
+    assert result.success is False
+    assert not output.exists()
+
+
 @pytest.mark.integration
 def test_convert_sample_pdf(tmp_path: Path) -> None:
     source = tmp_path / "sample.pdf"
@@ -176,6 +204,7 @@ def test_convert_sample_pdf(tmp_path: Path) -> None:
 
     assert result.success is True
     assert "Hello World" in result.markdown_text
+    assert result.markdown_text.startswith("**[Page 1]**")
     assert output.exists()
 
 

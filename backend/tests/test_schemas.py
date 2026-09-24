@@ -194,6 +194,6 @@ def test_settings_update_accepts_supported_values_and_secret_clear() -> None:
     assert update.openai_api_key == ""
 
 
-def test_validate_key_request_rejects_non_key_provider() -> None:
+def test_validate_key_request_rejects_unknown_provider() -> None:
     with pytest.raises(ValidationError):
-        ValidateKeyRequest(provider="ollama", api_key="unused")
+        ValidateKeyRequest(provider="gemini", api_key="unused")

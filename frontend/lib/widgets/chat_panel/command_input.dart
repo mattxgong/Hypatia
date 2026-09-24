@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
+import 'rebuild_confirm_dialog.dart';
 
 const _commands = [
   '/ask',
@@ -40,12 +41,18 @@ class _CommandInputState extends ConsumerState<CommandInput> {
     }
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
     final classId = ref.read(currentClassIdProvider);
     if (classId == null) return;
+
+    if (text.split(RegExp(r'\s+')).first == '/rebuild' &&
+        !await confirmRebuild(context, ref, classId)) {
+      return;
+    }
+    if (!mounted) return;
 
     ref.read(chatMessagesProvider(classId).notifier).sendMessage(text);
 

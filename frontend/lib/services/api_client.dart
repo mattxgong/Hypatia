@@ -487,14 +487,24 @@ class ApiClient {
     }
   }
 
-  Future<({bool valid, String? error})> validateApiKey(
-    String provider,
-    String apiKey,
-  ) async {
+  /// Omitted fields fall back to the saved settings on the backend.
+  Future<({bool valid, String? error})> testConnection(
+    String provider, {
+    String? apiKey,
+    String? model,
+    String? ollamaBaseUrl,
+  }) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
         '/api/settings/validate-key',
-        data: {'provider': provider, 'api_key': apiKey},
+        data: {
+          'provider': provider,
+          'api_key': ?apiKey,
+          'model': ?model,
+          'ollama_base_url': ?ollamaBaseUrl,
+        },
+        // Local models may need to load before the first reply.
+        options: Options(receiveTimeout: const Duration(seconds: 150)),
       );
       final data = response.data!;
       return (

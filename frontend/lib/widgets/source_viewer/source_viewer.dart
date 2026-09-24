@@ -8,6 +8,7 @@ import 'package:pdfrx/pdfrx.dart';
 import '../../models/source_file.dart';
 import '../../providers/class_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/frontmatter.dart';
 import '../common/error_card.dart';
 import '../wiki_viewer/wiki_viewer.dart';
 
@@ -23,6 +24,7 @@ final _sourceFileProvider =
       final files = await apiClient.listFiles(classId);
       final match = files.where(
         (f) =>
+            f.id == request.fileRef ||
             f.originalFilename == request.fileRef ||
             f.rawPath.endsWith(request.fileRef),
       );
@@ -104,6 +106,10 @@ class SourceViewerDialog extends ConsumerWidget {
       return '${m}m ${s}s';
     }
     if (loc.startsWith('p:')) return 'Page ${loc.substring(2)}';
+    if (loc.startsWith('s:')) {
+      return '§ ${loc.substring(2).replaceAll(RegExp(r'[-_]+'), ' ')}';
+    }
+    if (loc.startsWith('l:')) return 'Line ${loc.substring(2)}';
     return loc;
   }
 }
@@ -398,7 +404,7 @@ class _ConvertedSourceDialog extends ConsumerWidget {
                     return Center(child: ErrorCard(error: snapshot.error!));
                   }
                   return Markdown(
-                    data: snapshot.data ?? '',
+                    data: stripFrontmatter(snapshot.data ?? ''),
                     selectable: true,
                     padding: const EdgeInsets.all(16),
                     styleSheet: MarkdownStyleSheet.fromTheme(theme),

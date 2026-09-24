@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import delete, select
@@ -374,16 +375,28 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
         }
     )
 
+    outcome: dict[str, object] = {}
+
     async def _run() -> None:
         async with async_session_factory() as session:
             try:
-                await wiki_engine.handle_rebuild(session, class_id, task_id=task_id)
-                task_manager.complete_task(task_id)
+                result = await wiki_engine.handle_rebuild(session, class_id, task_id=task_id)
+                outcome["result"] = result
+                if task_manager.is_cancelled(task_id):
+                    return
+                if isinstance(result, wiki_engine.RebuildResult) and not result.success:
+                    task_manager.fail_task(task_id, result.error or "Rebuild failed")
+                else:
+                    task_manager.complete_task(task_id)
             except Exception as e:
                 logger.exception("chat_rebuild_error", class_id=str(class_id), error=str(e))
                 task_manager.fail_task(task_id, str(e))
 
+    # Not cancelled with the socket: a cancelled rebuild still has to put back
+    # the pages of sources it never reached.
     rebuild_task = asyncio.create_task(_run())
+    _background_tasks.add(rebuild_task)
+    rebuild_task.add_done_callback(_background_tasks.discard)
 
     try:
         while True:
@@ -391,16 +404,29 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
             if t is None:
                 break
             if t.status == "complete":
+                result = outcome.get("result")
                 await websocket.send_json(
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
-                        "content": "Rebuild complete.",
+                        "content": _rebuild_summary(result)
+                        if isinstance(result, wiki_engine.RebuildResult)
+                        else "Rebuild complete.",
                         "result": {"command": "/rebuild", "task_id": task_id},
                     }
                 )
                 break
-            elif t.status in ("failed", "cancelled"):
+            elif t.status == "cancelled":
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "Rebuild cancelled. Pages from sources that were not "
+                        "re-ingested yet are being restored.",
+                        "code": "REBUILD_ERROR",
+                    }
+                )
+                break
+            elif t.status == "failed":
                 await websocket.send_json(
                     {
                         "type": "error",
@@ -423,9 +449,28 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
     except WebSocketDisconnect:
         task_manager.cancel_task(task_id)
         raise
-    finally:
-        if not rebuild_task.done():
-            rebuild_task.cancel()
+
+
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _rebuild_summary(result: wiki_engine.RebuildResult) -> str:
+    def name(path: str) -> str:
+        return Path(path).stem.replace("-", " ")
+
+    lines = [f"Rebuild complete. {result.pages_created} pages written."]
+    if result.pages_preserved:
+        lines.append(f"Kept {result.pages_preserved} user-edited and synthesis pages unchanged.")
+    if result.pages_removed:
+        lines.append("\n**Removed** (not regenerated from any source):")
+        lines.extend(f"- {name(p)}" for p in result.pages_removed)
+    if result.pages_restored:
+        lines.append("\n**Restored** because their source could not be re-ingested:")
+        lines.extend(f"- [[{Path(p).stem}]]" for p in result.pages_restored)
+    if result.failed_sources:
+        lines.append("\n**Sources that failed to re-ingest:**")
+        lines.extend(f"- {s}" for s in result.failed_sources)
+    return "\n".join(lines)
 
 
 @router.get("/history", response_model=list[ChatMessageRead])
