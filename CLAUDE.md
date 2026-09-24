@@ -249,8 +249,9 @@ Test isolation (`backend/tests/conftest.py`, `backend/tests/e2e/conftest.py`):
 
 `backend/requirements.lock` is a universal `uv` lock of runtime + dev deps.
 CI regenerates it and fails on any diff; after editing `pyproject.toml` run
-`python -m uv pip compile pyproject.toml --extra dev --universal -o requirements.lock`
-from `backend/`.
+`python -m uv pip compile pyproject.toml --extra dev --universal --python-version 3.11 -o requirements.lock`
+from `backend/`. `--python-version 3.11` matches `requires-python`; without it
+uv targets the local interpreter and drops markers CI's 3.11 run needs.
 
 `.github/workflows/manual.yml` is a manually-triggered (`workflow_dispatch`)
 workflow that builds cross-platform Flutter desktop binaries, uploads them as

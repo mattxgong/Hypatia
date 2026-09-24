@@ -29,7 +29,7 @@ jobs:
 
       - name: Verify requirements.lock matches pyproject.toml
         run: |
-          uv pip compile pyproject.toml --extra dev --universal -o requirements.lock
+          uv pip compile pyproject.toml --extra dev --universal --python-version 3.11 -o requirements.lock
           git diff --exit-code -- requirements.lock
 
       - name: Install locked backend dependencies

@@ -301,7 +301,7 @@ CI fails if it is out of date with `backend/pyproject.toml`. After changing a
 dependency in `pyproject.toml`, regenerate the lock from `backend/`:
 
 ```bash
-python -m uv pip compile pyproject.toml --extra dev --universal -o requirements.lock
+python -m uv pip compile pyproject.toml --extra dev --universal --python-version 3.11 -o requirements.lock
 ```
 
 Existing pins are kept unless the new constraints require a change. Reinstall
