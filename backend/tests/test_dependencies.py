@@ -79,6 +79,39 @@ class TestLLMDependency:
         ):
             await check_llm_available()
 
+    async def test_probe_timeout_raises_unavailable_and_closes_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        import app.dependencies as deps
+        from app.exceptions import LLMUnavailableError
+
+        async def never_answers(*_args: object, **_kwargs: object) -> str:
+            await asyncio.sleep(10)
+            return ""
+
+        monkeypatch.setattr(deps, "_PROBE_TIMEOUT_SECONDS", 0.01)
+        mock_provider = AsyncMock()
+        mock_provider.complete = never_answers
+
+        with (
+            patch("app.dependencies.get_llm_provider", return_value=mock_provider),
+            pytest.raises(LLMUnavailableError),
+        ):
+            await check_llm_available()
+
+        mock_provider.close.assert_awaited_once()
+
+    async def test_successful_probe_closes_provider(self) -> None:
+        mock_provider = AsyncMock()
+        mock_provider.complete = AsyncMock(return_value="ok")
+
+        with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
+            await check_llm_available()
+
+        mock_provider.close.assert_awaited_once()
+
     async def test_cache_reuses_result(self) -> None:
         mock_provider = AsyncMock()
         mock_provider.complete = AsyncMock(return_value="ok")

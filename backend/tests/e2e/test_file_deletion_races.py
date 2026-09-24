@@ -130,7 +130,11 @@ async def test_delete_during_conversion_cancels_before_ingestion(
     cancelled = asyncio.Event()
 
     async def blocking_process_file(
-        session: AsyncSession, file_id: uuid.UUID, raw_path: Path, output_path: Path
+        session: AsyncSession,
+        file_id: uuid.UUID,
+        raw_path: Path,
+        output_path: Path,
+        **_kwargs: object,
     ) -> ProcessingResult:
         # A partial artifact, as a converter leaves behind mid-write.
         output_path.parent.mkdir(parents=True, exist_ok=True)

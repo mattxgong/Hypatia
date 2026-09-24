@@ -325,11 +325,14 @@ async def ingest_source(
                 result.success = False
                 result.error = "Cancelled by user"
                 return result
-            task_manager.update_progress(
-                task_id,
-                int(i / len(chunks) * 100),
-                f"Ingesting {filename} (part {i + 1}/{len(chunks)})",
-            )
+            if len(chunks) > 1:
+                task_manager.update_progress(
+                    task_id,
+                    int(i / len(chunks) * 100),
+                    f"Ingesting {filename} (part {i + 1}/{len(chunks)})",
+                )
+            else:
+                task_manager.update_progress(task_id, None, f"Ingesting {filename}")
 
         user_prompt = _build_ingest_prompt(
             chunk,
@@ -1500,7 +1503,7 @@ async def handle_rebuild(
             break
 
         if task_id:
-            pct = int(((i + 1) / max(total, 1)) * 100)
+            pct = int(i / total * 100) if total > 1 else None
             task_manager.update_progress(task_id, pct, f"Re-ingesting {filename} ({i + 1}/{total})")
 
         try:

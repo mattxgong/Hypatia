@@ -13,7 +13,7 @@ def test_start_task():
     assert t.operation == "rebuild"
     assert t.class_id == "class-1"
     assert t.status == "running"
-    assert t.progress == 0
+    assert t.progress is None
 
 
 def test_update_progress():

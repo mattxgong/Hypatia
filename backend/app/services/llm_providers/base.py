@@ -68,3 +68,6 @@ class LLMProvider(ABC):
     @abstractmethod
     async def list_models(self) -> list[str]:
         """Return available model IDs from this provider."""
+
+    async def close(self) -> None:
+        """Release any client resources held by this provider."""

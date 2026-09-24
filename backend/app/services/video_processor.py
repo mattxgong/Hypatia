@@ -235,13 +235,15 @@ def transcribe_audio(
     *,
     model_size: str | None = None,
     cancel_event: threading.Event | None = None,
+    on_progress: Callable[[int], None] | None = None,
 ) -> TranscriptionResult:
     """Transcribe audio_path into timestamped segments via faster-whisper.
 
     Uses settings.whisper_model_size (default base) unless model_size is
     given. Runs on CPU with int8 quantization, matching the configuration
     validated in spikes/faster_whisper_test.py. Setting ``cancel_event`` stops
-    decoding at the next segment.
+    decoding at the next segment. ``on_progress`` receives the percent of audio
+    duration transcribed so far, called from the worker thread.
     """
     model = _get_whisper_model(model_size or settings.whisper_model_size)
     segments_iter, info = model.transcribe(str(audio_path), beam_size=5)
@@ -250,6 +252,8 @@ def transcribe_audio(
         if cancel_event is not None and cancel_event.is_set():
             raise TranscriptionCancelledError(f"transcription of {audio_path} cancelled")
         segments.append(TranscriptSegment(start=seg.start, end=seg.end, text=seg.text.strip()))
+        if on_progress is not None and info.duration:
+            on_progress(min(100, int(seg.end / info.duration * 100)))
     logger.info(
         "audio_transcribed",
         file=str(audio_path),
@@ -345,6 +349,8 @@ async def process_video(
     file_id: UUID,
     file_path: Path,
     output_path: Path,
+    *,
+    on_progress: Callable[[int], None] | None = None,
 ) -> ProcessingResult:
     """Orchestrate the full video/audio -> transcript pipeline for one File.
 
@@ -371,6 +377,7 @@ async def process_video(
             stop=cancel_event,
             cleanup=tmp_wav,
             cancel_event=cancel_event,
+            on_progress=on_progress,
         )
         markdown = generate_transcript_markdown(transcription.segments, file_path.name)
 

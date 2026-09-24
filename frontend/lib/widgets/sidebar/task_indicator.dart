@@ -85,6 +85,7 @@ class _TaskTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final progress = task.progress;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -94,7 +95,8 @@ class _TaskTile extends ConsumerWidget {
             Expanded(
               child: Text(task.operation, style: theme.textTheme.titleSmall),
             ),
-            Text('${task.progress}%', style: theme.textTheme.bodySmall),
+            if (progress != null)
+              Text('$progress%', style: theme.textTheme.bodySmall),
             const SizedBox(width: 8),
             SizedBox(
               width: 24,
@@ -110,7 +112,9 @@ class _TaskTile extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 4),
-        LinearProgressIndicator(value: task.progress / 100),
+        LinearProgressIndicator(
+          value: progress == null ? null : progress / 100,
+        ),
         if (task.message.isNotEmpty) ...[
           const SizedBox(height: 2),
           Text(

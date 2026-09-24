@@ -20,7 +20,8 @@ class TaskStatus:
     task_id: str
     operation: str
     class_id: str
-    progress: int = 0
+    # None means progress is unknown; the UI shows an indeterminate indicator.
+    progress: int | None = None
     message: str = ""
     status: Literal["running", "complete", "failed", "cancelled"] = "running"
     error: str | None = None
@@ -44,7 +45,7 @@ class TaskManager:
         )
         return task_id
 
-    def update_progress(self, task_id: str, progress: int, message: str) -> None:
+    def update_progress(self, task_id: str, progress: int | None, message: str) -> None:
         """Update a running task's progress."""
         task = self._tasks.get(task_id)
         if task and task.status == "running":

@@ -1144,6 +1144,7 @@ components:
           minimum: 0
           maximum: 100
           nullable: true
+          description: Null when progress cannot be estimated.
         error:
           type: string
           nullable: true
@@ -1274,6 +1275,8 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+          nullable: true
+          description: Null when progress cannot be estimated.
         message:
           type: string
       required: [type, operation, operation_id, percent, message]

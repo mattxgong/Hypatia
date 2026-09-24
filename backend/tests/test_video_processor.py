@@ -123,6 +123,24 @@ def test_transcribe_audio_explicit_model_size_overrides_default(tmp_path: Path) 
     get_model.assert_called_once_with("small")
 
 
+def test_transcribe_audio_reports_progress_by_duration(tmp_path: Path) -> None:
+    fake_model = MagicMock()
+    fake_model.transcribe.return_value = (
+        [
+            MagicMock(start=0.0, end=25.0, text="a"),
+            MagicMock(start=25.0, end=50.0, text="b"),
+            MagicMock(start=50.0, end=100.0, text="c"),
+        ],
+        MagicMock(language="en", language_probability=1.0, duration=100.0),
+    )
+    reported: list[int] = []
+
+    with patch.object(video_processor, "_get_whisper_model", return_value=fake_model):
+        video_processor.transcribe_audio(tmp_path / "audio.wav", on_progress=reported.append)
+
+    assert reported == [25, 50, 100]
+
+
 def test_transcribe_audio_stops_when_cancelled(tmp_path: Path) -> None:
     cancel_event = threading.Event()
     cancel_event.set()

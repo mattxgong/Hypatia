@@ -370,7 +370,7 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
             "type": "progress",
             "operation": "rebuild",
             "operation_id": task_id,
-            "percent": 0,
+            "percent": None,
             "message": "Starting rebuild...",
         }
     )

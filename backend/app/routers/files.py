@@ -34,10 +34,16 @@ async def _convert_file(
     class_id: uuid.UUID, file_id: uuid.UUID, filename: str, raw_path: Path, output_path: Path
 ) -> bool:
     task_id = task_manager.start_task("convert", str(class_id))
-    task_manager.update_progress(task_id, 0, f"Converting {filename}")
+    task_manager.update_progress(task_id, None, f"Converting {filename}")
+
+    def on_progress(percent: int) -> None:
+        task_manager.update_progress(task_id, percent, f"Transcribing {filename}")
+
     try:
         async with async_session_factory() as session:
-            result = await process_file(session, file_id, raw_path, output_path)
+            result = await process_file(
+                session, file_id, raw_path, output_path, on_progress=on_progress
+            )
     except asyncio.CancelledError:
         task_manager.cancel_task(task_id)
         raise

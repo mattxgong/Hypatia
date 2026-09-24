@@ -162,7 +162,7 @@ class TaskStatusRead(BaseModel):
     task_id: str
     operation: str
     class_id: str
-    progress: int
+    progress: int | None = None
     message: str
     status: str
     error: str | None = None

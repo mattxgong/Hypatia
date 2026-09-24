@@ -35,7 +35,7 @@ class ChatWsProgress {
   });
   final String operation;
   final String operationId;
-  final int percent;
+  final int? percent;
   final String message;
 }
 
@@ -158,7 +158,7 @@ class WebSocketService {
           ChatWsProgress(
             operation: data['operation'] as String? ?? 'operation',
             operationId: data['operation_id'] as String? ?? '',
-            percent: (data['percent'] as num?)?.toInt() ?? 0,
+            percent: (data['percent'] as num?)?.toInt(),
             message: data['message'] as String? ?? '',
           ),
         );

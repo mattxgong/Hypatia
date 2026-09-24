@@ -68,7 +68,7 @@ class TestTasksRouter:
         assert tasks[0]["task_id"] == task_id
         assert tasks[0]["operation"] == "rebuild"
         assert tasks[0]["status"] == "running"
-        assert tasks[0]["progress"] == 0
+        assert tasks[0]["progress"] is None
 
     async def test_list_tasks_filter_by_class(self, client: AsyncClient) -> None:
         task_manager.start_task("rebuild", CLASS_ID)

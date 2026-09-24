@@ -10,6 +10,7 @@ the ``File`` row instead of crashing the pipeline.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -236,6 +237,8 @@ async def process_file(
     file_id: UUID,
     file_path: Path,
     output_path: Path,
+    *,
+    on_progress: Callable[[int], None] | None = None,
 ) -> ProcessingResult:
     """Dispatch a File to the right conversion pipeline by extension (Task 2.7).
 
@@ -249,7 +252,9 @@ async def process_file(
     file_type = classify_file_type(file_path.name)
 
     if file_type in (FileType.VIDEO, FileType.AUDIO):
-        return await video_processor.process_video(session, file_id, file_path, output_path)
+        return await video_processor.process_video(
+            session, file_id, file_path, output_path, on_progress=on_progress
+        )
 
     try:
         if file_type == FileType.MARKDOWN:

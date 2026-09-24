@@ -4,7 +4,7 @@ class TaskStatus {
     required this.operation,
     required this.classId,
     required this.status,
-    this.progress = 0,
+    this.progress,
     this.message = '',
     this.error,
     required this.createdAt,
@@ -16,7 +16,7 @@ class TaskStatus {
       operation: json['operation'] as String,
       classId: json['class_id'] as String,
       status: json['status'] as String,
-      progress: (json['progress'] as int?) ?? 0,
+      progress: json['progress'] as int?,
       message: (json['message'] as String?) ?? '',
       error: json['error'] as String?,
       createdAt: json['created_at'] as String,
@@ -27,7 +27,8 @@ class TaskStatus {
   final String operation;
   final String classId;
   final String status;
-  final int progress;
+  /// Null when the backend cannot estimate progress.
+  final int? progress;
   final String message;
   final String? error;
   final String createdAt;

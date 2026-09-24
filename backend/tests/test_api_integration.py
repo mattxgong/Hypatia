@@ -254,7 +254,7 @@ class TestWebSocketRebuildProgress:
 
                 first = ws.receive_json()
                 assert first["type"] == "progress"
-                assert first["percent"] == 0
+                assert first["percent"] is None
 
                 messages = [first]
                 while True:

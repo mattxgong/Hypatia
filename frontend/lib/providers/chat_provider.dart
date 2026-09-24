@@ -69,8 +69,10 @@ class ChatMessagesNotifier
     });
 
     _progressSub = ws.onProgress.listen((progress) {
-      ref.read(chatStreamingContentProvider.notifier).state =
-          '${progress.message} (${progress.percent}%)';
+      final percent = progress.percent;
+      ref.read(chatStreamingContentProvider.notifier).state = percent == null
+          ? progress.message
+          : '${progress.message} ($percent%)';
     });
 
     _errorSub = ws.onError.listen((error) {
