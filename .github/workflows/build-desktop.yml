@@ -187,7 +187,7 @@ jobs:
           cp -r "$BUILD_DIR" "$appdir"
           install -m 755 linux/packaging/AppRun "$appdir/AppRun"
           cp linux/packaging/hypatia.desktop "$appdir/hypatia.desktop"
-          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png "$appdir/hypatia.png"
+          cp assets/app_icon/app_icon.png "$appdir/hypatia.png"
 
           curl -fsSL -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
           chmod +x "$RUNNER_TEMP/appimagetool"

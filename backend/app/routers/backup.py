@@ -22,11 +22,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_session
 from app.models.db_models import (
+    CardOrigin,
+    CardType,
     ChatMessage,
     ChatRole,
     Class,
+    Deck,
     FileStatus,
     FileType,
+    Flashcard,
+    QuestionType,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+    StudyMethod,
     WikiCategory,
     WikiPage,
 )
@@ -94,6 +103,65 @@ class _ChatMessageManifest(_ManifestModel):
     updated_at: datetime | None = None
 
 
+class _FlashcardManifest(_ManifestModel):
+    card_type: CardType
+    front: str
+    back: str = ""
+    page_hashes: dict[str, str] | None = None
+    source_file_ids: list[uuid.UUID] | None = None
+    origin: CardOrigin
+    ease: float = Field(default=2.5, ge=1.0, le=10.0)
+    interval_days: int = Field(default=0, ge=0)
+    repetitions: int = Field(default=0, ge=0)
+    lapses: int = Field(default=0, ge=0)
+    due_at: datetime | None = None
+    last_reviewed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class _DeckManifest(_ManifestModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = None
+    generation_method: StudyMethod
+    scope_json: dict[str, object] | None = None
+    created_at: datetime | None = None
+    cards: list[_FlashcardManifest] = Field(default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES)
+
+
+class _QuizQuestionManifest(_ManifestModel):
+    id: uuid.UUID
+    position: int = Field(ge=0)
+    question_type: QuestionType
+    prompt: str
+    choices_json: dict[str, object] | None = None
+    answer_json: dict[str, object]
+    explanation: str | None = None
+    page_hashes: dict[str, str] | None = None
+    source_file_ids: list[uuid.UUID] | None = None
+
+
+class _QuizAttemptManifest(_ManifestModel):
+    answers_json: dict[str, object]
+    grading_json: dict[str, object]
+    score: float
+    max_score: float
+    created_at: datetime | None = None
+
+
+class _QuizManifest(_ManifestModel):
+    name: str = Field(min_length=1, max_length=255)
+    generation_method: StudyMethod
+    scope_json: dict[str, object] | None = None
+    settings_json: dict[str, object] | None = None
+    created_at: datetime | None = None
+    questions: list[_QuizQuestionManifest] = Field(
+        default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES
+    )
+    attempts: list[_QuizAttemptManifest] = Field(
+        default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES
+    )
+
+
 class _BackupManifest(_ManifestModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -106,6 +174,8 @@ class _BackupManifest(_ManifestModel):
     chat_messages: list[_ChatMessageManifest] = Field(
         default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES
     )
+    decks: list[_DeckManifest] = Field(default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES)
+    quizzes: list[_QuizManifest] = Field(default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES)
 
 
 def _invalid_backup(detail: str, status_code: int = status.HTTP_400_BAD_REQUEST) -> HTTPException:
@@ -255,6 +325,191 @@ def _serialize_chat_message(m: ChatMessage) -> dict:
     }
 
 
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _serialize_deck(deck: Deck, cards: list[Flashcard]) -> dict:
+    return {
+        "name": deck.name,
+        "description": deck.description,
+        "generation_method": deck.generation_method.value,
+        "scope_json": deck.scope_json,
+        "created_at": _iso(deck.created_at),
+        "cards": [
+            {
+                "card_type": c.card_type.value,
+                "front": c.front,
+                "back": c.back,
+                "page_hashes": c.page_hashes,
+                "source_file_ids": c.source_file_ids,
+                "origin": c.origin.value,
+                "ease": c.ease,
+                "interval_days": c.interval_days,
+                "repetitions": c.repetitions,
+                "lapses": c.lapses,
+                "due_at": _iso(c.due_at),
+                "last_reviewed_at": _iso(c.last_reviewed_at),
+                "created_at": _iso(c.created_at),
+            }
+            for c in cards
+        ],
+    }
+
+
+def _serialize_quiz(quiz: Quiz, questions: list[QuizQuestion], attempts: list[QuizAttempt]) -> dict:
+    return {
+        "name": quiz.name,
+        "generation_method": quiz.generation_method.value,
+        "scope_json": quiz.scope_json,
+        "settings_json": quiz.settings_json,
+        "created_at": _iso(quiz.created_at),
+        "questions": [
+            {
+                "id": str(q.id),
+                "position": q.position,
+                "question_type": q.question_type.value,
+                "prompt": q.prompt,
+                "choices_json": q.choices_json,
+                "answer_json": q.answer_json,
+                "explanation": q.explanation,
+                "page_hashes": q.page_hashes,
+                "source_file_ids": q.source_file_ids,
+            }
+            for q in questions
+        ],
+        "attempts": [
+            {
+                "answers_json": a.answers_json,
+                "grading_json": a.grading_json,
+                "score": a.score,
+                "max_score": a.max_score,
+                "created_at": _iso(a.created_at),
+            }
+            for a in attempts
+        ],
+    }
+
+
+async def _serialize_study(session: AsyncSession, class_id: uuid.UUID) -> tuple[list, list]:
+    decks = (await session.execute(select(Deck).where(Deck.class_id == class_id))).scalars()
+    deck_data = []
+    for deck in decks.all():
+        cards = await session.execute(select(Flashcard).where(Flashcard.deck_id == deck.id))
+        deck_data.append(_serialize_deck(deck, list(cards.scalars().all())))
+
+    quizzes = (await session.execute(select(Quiz).where(Quiz.class_id == class_id))).scalars()
+    quiz_data = []
+    for quiz in quizzes.all():
+        questions = await session.execute(
+            select(QuizQuestion).where(QuizQuestion.quiz_id == quiz.id)
+        )
+        attempts = await session.execute(select(QuizAttempt).where(QuizAttempt.quiz_id == quiz.id))
+        quiz_data.append(
+            _serialize_quiz(quiz, list(questions.scalars().all()), list(attempts.scalars().all()))
+        )
+    return deck_data, quiz_data
+
+
+def _mapped_file_ids(
+    ids: list[uuid.UUID] | None, file_id_map: dict[uuid.UUID, uuid.UUID]
+) -> list[str] | None:
+    # Study items are derived data, so references to missing files are dropped, not rejected.
+    mapped = [str(file_id_map[i]) for i in ids or [] if i in file_id_map]
+    return mapped or None
+
+
+def _timestamps(**values: datetime | None) -> dict[str, datetime]:
+    """Only pass timestamps the backup has, so missing ones fall back to column defaults."""
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _restore_study(
+    session: AsyncSession,
+    class_id: uuid.UUID,
+    manifest: _BackupManifest,
+    file_id_map: dict[uuid.UUID, uuid.UUID],
+) -> None:
+    for deck_data in manifest.decks:
+        deck = Deck(
+            id=uuid.uuid4(),
+            class_id=class_id,
+            name=deck_data.name,
+            description=deck_data.description,
+            generation_method=deck_data.generation_method,
+            scope_json=deck_data.scope_json,
+            **_timestamps(created_at=deck_data.created_at),
+        )
+        session.add(deck)
+        for card in deck_data.cards:
+            session.add(
+                Flashcard(
+                    deck_id=deck.id,
+                    card_type=card.card_type,
+                    front=card.front,
+                    back=card.back,
+                    page_hashes=card.page_hashes,
+                    source_file_ids=_mapped_file_ids(card.source_file_ids, file_id_map),
+                    origin=card.origin,
+                    ease=card.ease,
+                    interval_days=card.interval_days,
+                    repetitions=card.repetitions,
+                    lapses=card.lapses,
+                    last_reviewed_at=card.last_reviewed_at,
+                    **_timestamps(due_at=card.due_at, created_at=card.created_at),
+                )
+            )
+
+    for quiz_data in manifest.quizzes:
+        quiz = Quiz(
+            id=uuid.uuid4(),
+            class_id=class_id,
+            name=quiz_data.name,
+            generation_method=quiz_data.generation_method,
+            scope_json=quiz_data.scope_json,
+            settings_json=quiz_data.settings_json,
+            **_timestamps(created_at=quiz_data.created_at),
+        )
+        session.add(quiz)
+        question_ids: dict[str, str] = {}
+        for question in quiz_data.questions:
+            new_id = uuid.uuid4()
+            question_ids[str(question.id)] = str(new_id)
+            session.add(
+                QuizQuestion(
+                    id=new_id,
+                    quiz_id=quiz.id,
+                    position=question.position,
+                    question_type=question.question_type,
+                    prompt=question.prompt,
+                    choices_json=question.choices_json,
+                    answer_json=question.answer_json,
+                    explanation=question.explanation,
+                    page_hashes=question.page_hashes,
+                    source_file_ids=_mapped_file_ids(question.source_file_ids, file_id_map),
+                )
+            )
+        for attempt in quiz_data.attempts:
+            session.add(
+                QuizAttempt(
+                    quiz_id=quiz.id,
+                    answers_json={
+                        question_ids[k]: v
+                        for k, v in attempt.answers_json.items()
+                        if k in question_ids
+                    },
+                    grading_json={
+                        question_ids[k]: v
+                        for k, v in attempt.grading_json.items()
+                        if k in question_ids
+                    },
+                    score=attempt.score,
+                    max_score=attempt.max_score,
+                    **_timestamps(created_at=attempt.created_at),
+                )
+            )
+
+
 @router.post("/{class_id}/backup")
 async def backup_class(
     class_id: uuid.UUID, session: AsyncSession = Depends(get_session)
@@ -278,6 +533,7 @@ async def backup_class(
     files = files_result.scalars().all()
     pages = pages_result.scalars().all()
     messages = messages_result.scalars().all()
+    decks, quizzes = await _serialize_study(session, class_id)
 
     manifest = {
         "version": _BACKUP_VERSION,
@@ -289,6 +545,8 @@ async def backup_class(
         "files": [_serialize_file(f, class_root) for f in files],
         "wiki_pages": [_serialize_wiki_page(p) for p in pages],
         "chat_messages": [_serialize_chat_message(m) for m in messages],
+        "decks": decks,
+        "quizzes": quizzes,
     }
 
     tmp_dir = Path(tempfile.mkdtemp())
@@ -435,6 +693,8 @@ async def import_class(
                         metadata_json=msg_data.metadata_json,
                     )
                 )
+
+            _restore_study(session, new_class_id, manifest, file_id_map)
 
             await session.flush()
             class_root.parent.mkdir(parents=True, exist_ok=True)

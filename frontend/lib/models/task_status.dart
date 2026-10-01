@@ -7,6 +7,7 @@ class TaskStatus {
     this.progress,
     this.message = '',
     this.error,
+    this.result,
     required this.createdAt,
   });
 
@@ -19,6 +20,7 @@ class TaskStatus {
       progress: json['progress'] as int?,
       message: (json['message'] as String?) ?? '',
       error: json['error'] as String?,
+      result: (json['result'] as Map<String, dynamic>?)?.cast<String, String>(),
       createdAt: json['created_at'] as String,
     );
   }
@@ -32,6 +34,9 @@ class TaskStatus {
   final int? progress;
   final String message;
   final String? error;
+
+  /// What a completed task produced, e.g. `{kind: deck, id: ...}`.
+  final Map<String, String>? result;
   final String createdAt;
 
   bool get isActive => status == 'running';

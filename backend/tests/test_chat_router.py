@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,8 +15,10 @@ from starlette.testclient import TestClient
 
 from app.config import settings
 from app.database import get_session
+from app.errors import LLMUnavailableError
 from app.main import app
 from app.models.db_models import Base, ChatMessage, ChatRole
+from app.services.task_manager import task_manager
 
 
 def _configure_mock_session(mock_factory: MagicMock) -> MagicMock:
@@ -219,6 +222,97 @@ class TestChatWebSocket:
             ws.send_json({"type": "message", "content": "/help"})
             assert ws.receive_json()["type"] == "complete"
             mock_cancel.assert_called_once_with("task-123")
+
+
+class TestStudyCommands:
+    async def test_flashcards_fall_back_to_offline_without_an_llm(self) -> None:
+        class_id = uuid.uuid4()
+        deck = SimpleNamespace(id=uuid.uuid4(), name="entropy flashcards")
+        with (
+            patch(
+                "app.routers.chat.check_llm_available",
+                new_callable=AsyncMock,
+                side_effect=LLMUnavailableError(),
+            ),
+            patch("app.routers.chat.study_service") as service,
+            patch("app.routers.chat.async_session_factory") as mock_factory,
+        ):
+            _configure_mock_session(mock_factory)
+            service.get_class_or_404 = AsyncMock()
+            service.ensure_scope_has_pages = AsyncMock()
+            service.generate_deck = AsyncMock(return_value=deck)
+            service.deck_cards = AsyncMock(return_value=[1, 2, 3])
+
+            with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+                ws.send_json({"type": "message", "content": "/flashcards entropy"})
+                data = ws.receive_json()
+
+        assert data["type"] == "complete"
+        assert 'Created deck "entropy flashcards" with 3 cards.' in data["content"]
+        assert "built offline" in data["content"]
+        assert data["result"] == {"command": "/flashcards", "kind": "deck", "id": str(deck.id)}
+        request = service.generate_deck.await_args.args[2]
+        assert (request.scope.type, request.scope.query, request.method) == (
+            "topic",
+            "entropy",
+            "heuristic",
+        )
+
+    async def test_quiz_uses_the_llm_when_available(self) -> None:
+        class_id = uuid.uuid4()
+        quiz_id = str(uuid.uuid4())
+
+        def start(kind: str, cid: uuid.UUID, request: object) -> str:
+            assert (kind, cid, getattr(request, "method", None)) == ("quiz", class_id, "llm")
+            task_id = task_manager.start_task("Generate quiz", str(cid))
+            task_manager.complete_task(
+                task_id, {"kind": "quiz", "id": quiz_id, "name": "All pages quiz", "count": "4"}
+            )
+            return task_id
+
+        with (
+            patch("app.routers.chat.check_llm_available", new_callable=AsyncMock),
+            patch("app.routers.chat.study_service") as service,
+            patch("app.routers.chat.study_jobs.start_generation", side_effect=start),
+            patch("app.routers.chat.async_session_factory") as mock_factory,
+        ):
+            _configure_mock_session(mock_factory)
+            service.get_class_or_404 = AsyncMock()
+            service.ensure_scope_has_pages = AsyncMock()
+
+            with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+                ws.send_json({"type": "message", "content": "/quiz"})
+                data = ws.receive_json()
+
+        assert data["type"] == "complete"
+        assert data["content"].startswith('Created quiz "All pages quiz" with 4 questions.')
+        assert "offline" not in data["content"]
+        assert data["result"] == {"command": "/quiz", "kind": "quiz", "id": quiz_id}
+
+    async def test_failed_generation_reports_an_error(self) -> None:
+        class_id = uuid.uuid4()
+
+        def start(kind: str, cid: uuid.UUID, request: object) -> str:
+            task_id = task_manager.start_task("Generate flashcards", str(cid))
+            task_manager.fail_task(task_id, "LLM error: quota exceeded")
+            return task_id
+
+        with (
+            patch("app.routers.chat.check_llm_available", new_callable=AsyncMock),
+            patch("app.routers.chat.study_service") as service,
+            patch("app.routers.chat.study_jobs.start_generation", side_effect=start),
+            patch("app.routers.chat.async_session_factory") as mock_factory,
+        ):
+            _configure_mock_session(mock_factory)
+            service.get_class_or_404 = AsyncMock()
+            service.ensure_scope_has_pages = AsyncMock()
+
+            with TestClient(app) as tc, tc.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+                ws.send_json({"type": "message", "content": "/flashcards"})
+                data = ws.receive_json()
+
+        assert data["type"] == "error"
+        assert data["message"] == "LLM error: quota exceeded"
 
 
 def test_rebuild_summary_lists_removed_restored_and_failed() -> None:

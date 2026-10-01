@@ -1,14 +1,24 @@
 """Chat command parser (Task 4.5).
 
 Parses user chat input for known commands: /ask, /summarize, /remove, /lint,
-/rebuild, /export. Bare messages (no / prefix) default to /ask.
+/rebuild, /export, /flashcards, /quiz. Bare messages (no / prefix) default to /ask.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-VALID_COMMANDS = ("ask", "summarize", "remove", "lint", "rebuild", "export", "help")
+VALID_COMMANDS = (
+    "ask",
+    "summarize",
+    "remove",
+    "lint",
+    "rebuild",
+    "export",
+    "flashcards",
+    "quiz",
+    "help",
+)
 
 
 @dataclass

@@ -33,7 +33,17 @@ async def test_run_migrations_creates_all_tables(isolated_data_dir: Path) -> Non
     finally:
         engine.dispose()
 
-    assert {"classes", "files", "wiki_pages", "chat_messages"}.issubset(table_names)
+    assert {
+        "classes",
+        "files",
+        "wiki_pages",
+        "chat_messages",
+        "decks",
+        "flashcards",
+        "quizzes",
+        "quiz_questions",
+        "quiz_attempts",
+    }.issubset(table_names)
 
 
 async def test_run_migrations_is_idempotent(isolated_data_dir: Path) -> None:
@@ -42,6 +52,21 @@ async def test_run_migrations_is_idempotent(isolated_data_dir: Path) -> None:
 
     db_path = isolated_data_dir / "hypatia.db"
     assert db_path.is_file()
+
+
+def test_study_tables_downgrade_and_upgrade(isolated_data_dir: Path) -> None:
+    config = database._alembic_config()
+    isolated_data_dir.mkdir(parents=True)
+    command.upgrade(config, "head")
+    command.downgrade(config, "e5a9c3d1b7f2")
+
+    engine = sa.create_engine(f"sqlite:///{isolated_data_dir / 'hypatia.db'}")
+    try:
+        assert "flashcards" not in sa.inspect(engine).get_table_names()
+        command.upgrade(config, "head")
+        assert "flashcards" in sa.inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
 
 
 def test_unique_file_name_migration_renames_legacy_duplicates(isolated_data_dir: Path) -> None:

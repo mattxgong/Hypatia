@@ -56,8 +56,9 @@ The core innovation is the **LLM Wiki pattern**: instead of re-deriving answers 
 | 6 | [Frontend Features](./06-frontend-features.md) | Wiki viewer, chat panel, file management, user edits | 14 |
 | 7 | [Search & Retrieval](./07-search.md) | Hybrid search (FTS5 + embeddings), search UI, upload progress, drag-drop, source viewer | 8 |
 | 8 | [Integration & Polish](./08-integration.md) | Complete deferred work, E2E testing, error handling, cross-platform, backend bundling | 10 |
+| 9 | [Study Tools](./09-study-tools.md) | Flashcards (spaced repetition) and practice tests, heuristic and LLM generation, AI grading | 10 |
 
-**Total estimated tasks: ~99**
+**Total estimated tasks: ~109**
 
 ---
 

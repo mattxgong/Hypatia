@@ -25,6 +25,8 @@ class TaskStatus:
     message: str = ""
     status: Literal["running", "complete", "failed", "cancelled"] = "running"
     error: str | None = None
+    # Identifies what a completed task produced, e.g. {"kind": "deck", "id": ...}.
+    result: dict[str, str] | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
 
@@ -59,13 +61,14 @@ class TaskManager:
             task.status = "cancelled"
             task.message = "Cancelled by user"
 
-    def complete_task(self, task_id: str) -> None:
+    def complete_task(self, task_id: str, result: dict[str, str] | None = None) -> None:
         """Mark a task as successfully completed."""
         task = self._tasks.get(task_id)
         if task and task.status == "running":
             task.status = "complete"
             task.progress = 100
             task.message = "Complete"
+            task.result = result
 
     def fail_task(self, task_id: str, error: str) -> None:
         """Mark a task as failed."""

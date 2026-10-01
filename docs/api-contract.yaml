@@ -618,6 +618,433 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/classes/{class_id}/decks:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: List flashcard decks with card, due, and out-of-date counts
+      operationId: listDecks
+      responses:
+        "200":
+          description: Decks, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeckRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      summary: Create an empty deck for user-written cards
+      operationId: createDeck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeckCreate"
+      responses:
+        "201":
+          description: Created deck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeckRead"
+
+  /api/classes/{class_id}/decks/generate:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Generate a deck from wiki pages
+      description: >-
+        method heuristic builds the deck immediately (201). llm and hybrid
+        first check that the LLM is reachable, then run as a background task
+        (202); poll /api/tasks/{task_id}, whose result holds the new deck id.
+      operationId: generateDeck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeckGenerateRequest"
+      responses:
+        "201":
+          description: Generated deck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeckRead"
+        "202":
+          description: AI generation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudyTaskStarted"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: >-
+            Invalid request, or no cards could be extracted from the scope
+            (code VALIDATION_ERROR with a user_action hint).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/LLMUnavailable"
+
+  /api/classes/{class_id}/decks/{deck_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+    get:
+      summary: Get a deck
+      operationId: getDeck
+      responses:
+        "200":
+          description: Deck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeckRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      summary: Rename a deck or change its description
+      operationId: updateDeck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeckUpdate"
+      responses:
+        "200":
+          description: Updated deck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeckRead"
+    delete:
+      summary: Delete a deck and its cards
+      operationId: deleteDeck
+      responses:
+        "204":
+          description: Deleted
+
+  /api/classes/{class_id}/decks/{deck_id}/refresh:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+    post:
+      summary: Re-extract out-of-date generated cards from the current wiki pages
+      description: >-
+        Cards whose front still appears keep their review history and get the
+        new back; generated cards that no longer appear are removed. User
+        cards are left for the user to edit or acknowledge.
+      operationId: refreshDeck
+      responses:
+        "200":
+          description: Refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeckRefreshResponse"
+
+  /api/classes/{class_id}/decks/{deck_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum: [csv, anki]
+          default: csv
+    get:
+      summary: Export a deck as generic CSV or an Anki-importable TSV
+      operationId: exportDeck
+      responses:
+        "200":
+          description: Attachment (`.csv` or `.anki.txt` with Anki file headers)
+          content:
+            text/csv:
+              schema:
+                type: string
+            text/plain:
+              schema:
+                type: string
+
+  /api/classes/{class_id}/decks/{deck_id}/cards:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+    get:
+      summary: List a deck's cards
+      operationId: listCards
+      responses:
+        "200":
+          description: Cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FlashcardRead"
+    post:
+      summary: Add a user-written card
+      operationId: createCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlashcardCreate"
+      responses:
+        "201":
+          description: Created card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashcardRead"
+
+  /api/classes/{class_id}/decks/{deck_id}/due:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+    get:
+      summary: Cards due for review, most overdue first
+      operationId: listDueCards
+      responses:
+        "200":
+          description: Due cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FlashcardRead"
+
+  /api/classes/{class_id}/decks/{deck_id}/cards/{card_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - $ref: "#/components/parameters/CardId"
+    patch:
+      summary: Edit a card or accept its changed wiki pages
+      operationId: updateCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlashcardUpdate"
+      responses:
+        "200":
+          description: Updated card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashcardRead"
+    delete:
+      summary: Delete a card
+      operationId: deleteCard
+      responses:
+        "204":
+          description: Deleted
+
+  /api/classes/{class_id}/decks/{deck_id}/cards/{card_id}/review:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - $ref: "#/components/parameters/CardId"
+    post:
+      summary: Record a review and reschedule the card (SM-2)
+      operationId: reviewCard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rating:
+                  type: string
+                  enum: [again, hard, good, easy]
+              required: [rating]
+      responses:
+        "200":
+          description: Rescheduled card
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashcardRead"
+
+  /api/classes/{class_id}/quizzes:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    get:
+      summary: List practice quizzes
+      operationId: listQuizzes
+      responses:
+        "200":
+          description: Quizzes, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QuizSummaryRead"
+
+  /api/classes/{class_id}/quizzes/generate:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Generate a practice quiz from wiki pages
+      description: >-
+        Same 201/202 behaviour as deck generation. short questions need
+        method llm or hybrid.
+      operationId: generateQuiz
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuizGenerateRequest"
+      responses:
+        "201":
+          description: Generated quiz (answers are not included)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizRead"
+        "202":
+          description: AI generation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudyTaskStarted"
+        "422":
+          description: Invalid request, or no questions could be generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/LLMUnavailable"
+
+  /api/classes/{class_id}/quizzes/{quiz_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/QuizId"
+    get:
+      summary: Get a quiz without its answers
+      operationId: getQuiz
+      responses:
+        "200":
+          description: Quiz
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a quiz and its attempts
+      operationId: deleteQuiz
+      responses:
+        "204":
+          description: Deleted
+
+  /api/classes/{class_id}/quizzes/{quiz_id}/attempts:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/QuizId"
+    get:
+      summary: List graded attempts, newest first
+      operationId: listQuizAttempts
+      responses:
+        "200":
+          description: Attempts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QuizAttemptRead"
+    post:
+      summary: Submit answers and get them graded
+      operationId: submitQuizAttempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                answers:
+                  type: object
+                  description: >-
+                    Keyed by question ID. Responses are {"choice": int} (mcq),
+                    {"value": bool} (tf), {"pairs": [int]} (matching; index into
+                    the right column for each left item), {"text": str} (fill,
+                    short). Short answers are graded by the LLM when the quiz's
+                    ai_grading setting is on; otherwise, or if the LLM fails,
+                    they come back as needs_self_review.
+                  additionalProperties:
+                    type: object
+      responses:
+        "201":
+          description: Graded attempt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizAttemptRead"
+
+  /api/classes/{class_id}/quizzes/{quiz_id}/attempts/{attempt_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/QuizId"
+      - name: attempt_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Record the user's own verdict on short answers
+      operationId: selfGradeQuizAttempt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                grades:
+                  type: object
+                  description: Question ID to correct (true) or wrong (false).
+                  additionalProperties:
+                    type: boolean
+              required: [grades]
+      responses:
+        "200":
+          description: Regraded attempt
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizAttemptRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     ClassId:
@@ -629,6 +1056,27 @@ components:
         format: uuid
     FileId:
       name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeckId:
+      name: deck_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CardId:
+      name: card_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    QuizId:
+      name: quiz_id
       in: path
       required: true
       schema:
@@ -1148,6 +1596,14 @@ components:
         error:
           type: string
           nullable: true
+        result:
+          type: object
+          nullable: true
+          description: >-
+            What a completed task produced. Study generation sets kind
+            (deck|quiz), id, name, and count.
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
@@ -1291,3 +1747,366 @@ components:
         operation_id:
           type: string
       required: [type, operation_id]
+
+    StudyMethod:
+      type: string
+      enum: [heuristic, llm, hybrid]
+      description: >-
+        heuristic is offline; llm writes from the wiki pages; hybrid gives the
+        LLM offline drafts (cards) or key facts (quizzes) to refine.
+
+    StudyTaskStarted:
+      type: object
+      properties:
+        task_id:
+          type: string
+        kind:
+          type: string
+          enum: [deck, quiz]
+      required: [task_id, kind]
+
+    CardType:
+      type: string
+      enum: [basic, cloze]
+
+    QuestionType:
+      type: string
+      enum: [mcq, tf, matching, fill, short]
+
+    StudyScope:
+      type: object
+      description: >-
+        Which wiki pages to study. topic needs query (hybrid search), pages
+        needs paths, file needs file_id (pages citing that source).
+      properties:
+        type:
+          type: string
+          enum: [class, topic, pages, file]
+          default: class
+        query:
+          type: string
+          maxLength: 500
+        paths:
+          type: array
+          items:
+            type: string
+        file_id:
+          type: string
+          format: uuid
+
+    DeckGenerateRequest:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/StudyScope"
+        method:
+          $ref: "#/components/schemas/StudyMethod"
+        count:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 30
+        card_types:
+          type: array
+          items:
+            $ref: "#/components/schemas/CardType"
+          default: [basic, cloze]
+        name:
+          type: string
+          maxLength: 255
+
+    DeckCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+      required: [name]
+
+    DeckUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+
+    DeckRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        generation_method:
+          $ref: "#/components/schemas/StudyMethod"
+        scope_json:
+          type: object
+          nullable: true
+        card_count:
+          type: integer
+        due_count:
+          type: integer
+        stale_count:
+          type: integer
+          description: Cards whose source wiki pages changed since generation.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, class_id, name, generation_method, card_count, due_count, stale_count]
+
+    DeckRefreshResponse:
+      type: object
+      properties:
+        updated:
+          type: integer
+        removed:
+          type: integer
+        remaining_stale:
+          type: integer
+      required: [updated, removed, remaining_stale]
+
+    FlashcardCreate:
+      type: object
+      properties:
+        card_type:
+          $ref: "#/components/schemas/CardType"
+        front:
+          type: string
+          description: For cloze cards, must contain a {{c1::answer}} deletion.
+        back:
+          type: string
+      required: [front]
+
+    FlashcardUpdate:
+      type: object
+      properties:
+        front:
+          type: string
+        back:
+          type: string
+        acknowledge_changes:
+          type: boolean
+          default: false
+          description: Accept the current wiki pages as the new baseline (clears stale).
+
+    FlashcardRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        deck_id:
+          type: string
+          format: uuid
+        card_type:
+          $ref: "#/components/schemas/CardType"
+        front:
+          type: string
+        back:
+          type: string
+        origin:
+          type: string
+          enum: [heuristic, llm, user]
+        page_paths:
+          type: array
+          items:
+            type: string
+        source_file_ids:
+          type: array
+          items:
+            type: string
+        stale:
+          type: boolean
+        ease:
+          type: number
+        interval_days:
+          type: integer
+        repetitions:
+          type: integer
+        lapses:
+          type: integer
+        due_at:
+          type: string
+          format: date-time
+        last_reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, deck_id, card_type, front, back, origin, stale, due_at]
+
+    QuizGenerateRequest:
+      type: object
+      properties:
+        scope:
+          $ref: "#/components/schemas/StudyScope"
+        method:
+          $ref: "#/components/schemas/StudyMethod"
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+        question_types:
+          type: array
+          description: short requires method llm or hybrid.
+          items:
+            $ref: "#/components/schemas/QuestionType"
+          default: [mcq, tf, matching, fill]
+        name:
+          type: string
+        seed:
+          type: integer
+          description: Fixes question selection and ordering; random when omitted.
+        ai_grading:
+          type: boolean
+          default: true
+
+    QuizQuestionRead:
+      type: object
+      description: >-
+        choices is {"options": [str]} for mcq and {"left": [str], "right":
+        [str]} for matching; null otherwise.
+      properties:
+        id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        question_type:
+          $ref: "#/components/schemas/QuestionType"
+        prompt:
+          type: string
+        choices:
+          type: object
+          nullable: true
+        page_paths:
+          type: array
+          items:
+            type: string
+        stale:
+          type: boolean
+      required: [id, position, question_type, prompt, stale]
+
+    QuizSummaryRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        class_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        generation_method:
+          $ref: "#/components/schemas/StudyMethod"
+        scope_json:
+          type: object
+          nullable: true
+        settings_json:
+          type: object
+          nullable: true
+        question_count:
+          type: integer
+        stale_count:
+          type: integer
+        attempt_count:
+          type: integer
+        last_score:
+          type: number
+          nullable: true
+        last_max_score:
+          type: number
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, class_id, name, question_count, stale_count, attempt_count]
+
+    QuizRead:
+      allOf:
+        - $ref: "#/components/schemas/QuizSummaryRead"
+        - type: object
+          properties:
+            questions:
+              type: array
+              items:
+                $ref: "#/components/schemas/QuizQuestionRead"
+          required: [questions]
+
+    QuizAttemptRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        quiz_id:
+          type: string
+          format: uuid
+        score:
+          type: number
+        max_score:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              question_id:
+                type: string
+                format: uuid
+              score:
+                type: number
+                description: 0-1; matching gives partial credit.
+              correct:
+                type: boolean
+                nullable: true
+              status:
+                type: string
+                enum: [graded, unanswered, needs_self_review]
+              response:
+                type: object
+                nullable: true
+              expected:
+                type: object
+              explanation:
+                type: string
+                nullable: true
+              feedback:
+                type: string
+                nullable: true
+                description: AI grader's comment on a short answer.
+              grader:
+                type: string
+                enum: [ai, self]
+                nullable: true
+                description: Who graded a short answer.
+            required: [question_id, score, status, expected]
+      required: [id, quiz_id, score, max_score, results]

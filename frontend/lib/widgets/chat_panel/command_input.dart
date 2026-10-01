@@ -12,6 +12,8 @@ const _commands = [
   '/lint',
   '/rebuild',
   '/export',
+  '/flashcards',
+  '/quiz',
   '/help',
 ];
 

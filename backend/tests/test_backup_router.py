@@ -7,6 +7,7 @@ import json
 import uuid
 import zipfile
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -19,11 +20,20 @@ from app.database import get_session
 from app.main import app
 from app.models.db_models import (
     Base,
+    CardOrigin,
+    CardType,
     ChatMessage,
     ChatRole,
     Class,
+    Deck,
     FileStatus,
     FileType,
+    Flashcard,
+    QuestionType,
+    Quiz,
+    QuizAttempt,
+    QuizQuestion,
+    StudyMethod,
     WikiCategory,
     WikiPage,
 )
@@ -404,3 +414,123 @@ class TestImport:
                 .all()
             )
         assert sorted(names) == ["notes-1.md", "notes.md"]
+
+
+class TestStudyRoundTrip:
+    async def test_decks_and_quizzes_survive_backup_and_import(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        class_id = uuid.uuid4()
+        class_dir = tmp_path / "classes" / str(class_id)
+        (class_dir / "raw").mkdir(parents=True)
+        (class_dir / "raw" / "note.md").write_text("# Hello")
+        file_id = uuid.uuid4()
+        question_id = uuid.uuid4()
+        due = datetime(2030, 1, 2, 3, 4, 5, tzinfo=UTC)
+
+        async with session_factory() as session:
+            session.add(Class(id=class_id, name="Study Class"))
+            await session.flush()
+            session.add(
+                FileRecord(
+                    id=file_id,
+                    class_id=class_id,
+                    original_filename="note.md",
+                    file_type=FileType.MARKDOWN,
+                    file_size_bytes=7,
+                    raw_path=str(class_dir / "raw" / "note.md"),
+                    status=FileStatus.READY,
+                )
+            )
+            deck = Deck(class_id=class_id, name="Deck", generation_method=StudyMethod.HEURISTIC)
+            session.add(deck)
+            await session.flush()
+            session.add(
+                Flashcard(
+                    deck_id=deck.id,
+                    card_type=CardType.BASIC,
+                    front="Q?",
+                    back="A",
+                    page_hashes={"pages/concept/q.md": "abc"},
+                    source_file_ids=[str(file_id), str(uuid.uuid4())],
+                    origin=CardOrigin.HEURISTIC,
+                    ease=2.2,
+                    interval_days=6,
+                    repetitions=2,
+                    lapses=1,
+                    due_at=due,
+                )
+            )
+            quiz = Quiz(class_id=class_id, name="Quiz", generation_method=StudyMethod.HEURISTIC)
+            session.add(quiz)
+            await session.flush()
+            session.add(
+                QuizQuestion(
+                    id=question_id,
+                    quiz_id=quiz.id,
+                    position=0,
+                    question_type=QuestionType.MCQ,
+                    prompt="Pick",
+                    choices_json={"options": ["a", "b"]},
+                    answer_json={"choice": 1},
+                )
+            )
+            session.add(
+                QuizAttempt(
+                    quiz_id=quiz.id,
+                    answers_json={str(question_id): {"choice": 1}},
+                    grading_json={str(question_id): {"score": 1.0}},
+                    score=1.0,
+                    max_score=1.0,
+                )
+            )
+            await session.commit()
+
+        backup = await client.post(f"/api/classes/{class_id}/backup")
+        assert backup.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(backup.content)) as zf:
+            manifest = json.loads(zf.read("manifest.json"))
+        assert len(manifest["decks"][0]["cards"]) == 1
+        assert len(manifest["quizzes"][0]["attempts"]) == 1
+
+        async with session_factory() as session:
+            original = await session.get(Class, class_id)
+            assert original is not None
+            original.name = "Original"
+            await session.commit()
+
+        resp = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", backup.content, "application/zip")},
+        )
+        assert resp.status_code == 201, resp.text
+        new_class_id = uuid.UUID(resp.json()["id"])
+
+        async with session_factory() as session:
+            new_file = await session.scalar(
+                select(FileRecord).where(FileRecord.class_id == new_class_id)
+            )
+            new_deck = await session.scalar(select(Deck).where(Deck.class_id == new_class_id))
+            assert new_file is not None and new_deck is not None
+            card = await session.scalar(select(Flashcard).where(Flashcard.deck_id == new_deck.id))
+            assert card is not None
+            assert (card.ease, card.interval_days, card.repetitions, card.lapses) == (2.2, 6, 2, 1)
+            assert card.due_at.replace(tzinfo=None) == due.replace(tzinfo=None)
+            assert card.page_hashes == {"pages/concept/q.md": "abc"}
+            assert card.source_file_ids == [str(new_file.id)]
+
+            new_quiz = await session.scalar(select(Quiz).where(Quiz.class_id == new_class_id))
+            assert new_quiz is not None
+            new_question = await session.scalar(
+                select(QuizQuestion).where(QuizQuestion.quiz_id == new_quiz.id)
+            )
+            attempt = await session.scalar(
+                select(QuizAttempt).where(QuizAttempt.quiz_id == new_quiz.id)
+            )
+            assert new_question is not None and attempt is not None
+            assert new_question.id != question_id
+            assert attempt.answers_json == {str(new_question.id): {"choice": 1}}
+            assert attempt.grading_json == {str(new_question.id): {"score": 1.0}}

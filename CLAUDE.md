@@ -34,10 +34,12 @@ backend/            FastAPI Python backend
       schemas.py      Pydantic API schemas (request/response bodies)
     routers/
       backup.py       Backup export/import endpoints
-      chat.py         WebSocket chat with /ask, /summarize, /remove, /lint, /rebuild, /export
+      chat.py         WebSocket chat with /ask, /summarize, /remove, /lint, /rebuild, /export,
+                      /flashcards, /quiz
       classes.py      Class CRUD endpoints
       files.py        File upload and listing
       settings.py     Settings get/put and usage stats
+      study.py        Flashcard decks, SM-2 review, practice quizzes, deck export
       tasks.py        Background task status polling
       wiki.py         Wiki tree, page retrieval, search, export
     services/
@@ -45,6 +47,11 @@ backend/            FastAPI Python backend
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
       wiki_git.py     Per-Class git repo for wiki version history (init/commit/history/revert)
       wiki_search.py  FTS5 full-text search across wiki pages
+      study/          Study tools: extractors.py (offline cards from wiki
+                      markdown), quiz_builder.py, grading.py, scheduler.py
+                      (SM-2), llm_generator.py (AI cards/questions, short-
+                      answer grading), jobs.py (background AI generation),
+                      service.py (scope, staleness, export)
       file_converter.py  MarkItDown-based document-to-markdown conversion
       video_processor.py ffmpeg + faster-whisper transcription pipeline
       storage_service.py Per-Class file storage with path-traversal-safe filenames
@@ -60,7 +67,8 @@ backend/            FastAPI Python backend
       logging.py      structlog JSON logging setup (rotating file handler + stdout)
   alembic/            Alembic migration environment + versions/
   tests/
-    e2e/              End-to-end tests (conftest.py fixtures, test_e2e_scenarios.py)
+    e2e/              End-to-end tests (conftest.py fixtures, test_e2e_scenarios.py,
+                      test_study_flow.py: ingest -> deck/quiz -> backup with mock LLM)
     test_*.py         Unit test files (pytest, mocked LLM)
   pyproject.toml      Deps, ruff, mypy, pytest config
 
@@ -78,6 +86,7 @@ frontend/            Flutter application
       sidebar/         Sidebar (class dropdown, wiki tree, search bar, task indicator)
       source_viewer/   Source file viewer (PDF, video, images, text)
       wiki_viewer/     Wiki page renderer (markdown with citations)
+      study/           Study panel, generate dialog, flashcard review, quiz view
       common/          Shared widgets (error_card.dart)
 
 data/                Runtime data (gitignored; DB, wiki repos, uploaded files live here)
@@ -136,7 +145,7 @@ cd backend
   `backend/app/models/db_models.py` and versioned with Alembic
   (`backend/alembic/`). Migrations run automatically on backend startup via
   the FastAPI `lifespan` in `app/main.py`.
-- Four tables:
+- Core tables:
   - `classes` — a Class (name, description, timestamps).
   - `files` — uploaded source material for a Class (`file_type`, `status`,
     `raw_path`/`converted_path`, `metadata_json`). `original_filename` is
@@ -147,7 +156,14 @@ cd backend
     `category`, `content`, `source_file_ids`).
   - `chat_messages` — chat history for a Class (`role`, `content`, `command`,
     `metadata_json`).
-- Enums (`FileType`, `FileStatus`, `WikiCategory`, `ChatRole`) are Python
+- Study tables (Phase 9, DB-only, included in backups): `decks` →
+  `flashcards` (SM-2 state: `ease`, `interval_days`, `repetitions`, `lapses`,
+  `due_at`), and `quizzes` → `quiz_questions` / `quiz_attempts`. Cards and
+  questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
+  the current page body marks them out of date (computed on read, frontmatter
+  ignored).
+- Enums (`FileType`, `FileStatus`, `WikiCategory`, `ChatRole`, and the study
+  enums) are Python
   `str` enums stored by their string `.value` (via a `values_callable` helper),
   not by member name — e.g. `WikiCategory.SOURCE_SUMMARY` is stored as
   `"source-summary"`.

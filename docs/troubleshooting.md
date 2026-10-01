@@ -197,6 +197,69 @@ source backend/.venv/bin/activate
 
 ---
 
+## "No flashcards could be generated" or an empty quiz
+
+**Symptom**: Creating a deck or quiz fails with "No flashcards could be generated from the selected wiki pages" (or "No quiz questions ...").
+
+**Cause**: Study material is built from wiki pages, not raw uploads. Offline generation needs concept or entity pages with a definition or opening paragraph, tables, or bold terms. Source summaries, the index, and the log produce few or no cards. A topic search with no matching pages, or a source file that no wiki page cites yet, also gives an empty scope. Offline multiple choice needs at least four cards from four different pages, and matching needs four cards with short answers.
+
+**Solution**:
+
+1. Wait until uploads finish ingesting and the wiki tree shows concept pages.
+2. Widen the scope to **Whole class**, or use a broader topic.
+3. Use **AI** or **Hybrid** if a model is configured; they write questions from any page content.
+4. For quizzes, add more question types so others can make up for types the pages can't supply.
+
+---
+
+## AI and Hybrid are greyed out when creating study material
+
+**Symptom**: The Create study material dialog only allows **Offline**, or `/flashcards` and `/quiz` reply that they were "built offline".
+
+**Cause**: The app could not reach the configured LLM provider. Offline generation is always available.
+
+**Solution**: Check the provider status in the sidebar and re-test the connection (see "LLM API key invalid" above). The dialog re-checks when the provider settings change; chat commands re-check at most every 30 seconds.
+
+---
+
+## AI study generation failed or disappeared
+
+**Symptom**: A job in the Study tab shows an error, or "Lost track of this job; the backend may have restarted."
+
+**Cause**: AI generation runs as a background task. It fails when every batch of pages fails at the LLM (rate limits, timeouts, context-size errors with small local models) or when no generated item cited a page. Tasks are kept in memory, so a backend restart forgets running jobs; nothing partial is saved.
+
+**Solution**: Dismiss the job and try again, with a narrower scope or fewer cards for small local models. The backend log has the per-batch errors (`study_llm_batch_failed`).
+
+---
+
+## Short answers say "Check yourself" instead of a grade
+
+**Symptom**: After submitting a quiz, short answers show **Check yourself** with the model answer.
+
+**Cause**: The quiz was created with AI grading turned off, or the LLM could not be reached or returned no score while grading.
+
+**Solution**: Compare your answer with the model answer and choose **I got it right** or **I got it wrong**; the score updates. To get AI grading on later quizzes, keep **Grade short answers with AI** on when creating them and check the provider connection.
+
+---
+
+## Cards or questions marked out of date
+
+**Symptom**: A deck or quiz shows the out-of-date icon, or a card shows "The wiki page behind this card has changed."
+
+**Cause**: The wiki page a card or question came from was edited, re-ingested, rebuilt, or removed after it was generated. Changes to page metadata alone do not count.
+
+**Solution**: In a deck, use **Update from wiki** to re-extract offline cards (review history is kept when the question still exists). AI-written and your own cards stay flagged: choose **Keep**, **Edit**, or **Delete** on each. For quizzes, create a new quiz.
+
+---
+
+## Importing an exported deck into Anki
+
+**Symptom**: Anki shows the header lines as cards, or cloze cards import as plain text.
+
+**Solution**: Export with **Export for Anki** (not CSV) and import the `.anki.txt` file through **File > Import** in Anki 2.1.55 or later, which reads the file's header lines to pick the Basic and Cloze note types. The CSV export is meant for Quizlet and other tools that take plain front/back columns.
+
+---
+
 ## Logs location
 
 Backend logs are written to `~/.hypatia/logs/hypatia.log` (rotating, JSON-structured). Override with `HYPATIA_LOGS_DIR` in `.env`.

@@ -1,13 +1,24 @@
 <h1 align="center">Hypatia</h1>
 
 <p align="center">
+    <img src="frontend/assets/app_icon/app_icon.png" alt="Hypatia logo, a telescope among stars" width="128" height="128">
+</p>
+
+<p align="center">
     <strong>Cross-platform desktop app for building persistent study wikis from course materials</strong>
 </p>
 
-[![CI](https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml/badge.svg)](https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml)
+<p align="center">
+    <a href="https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml"><img src="https://github.com/mattxgong/Hypatia/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/mattxgong/Hypatia/releases/latest"><img src="https://img.shields.io/github/v/release/mattxgong/Hypatia?sort=semver" alt="Latest release"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/mattxgong/Hypatia" alt="License: Apache 2.0"></a>
+    <a href="#install"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue" alt="Platforms: Windows, macOS, Linux"></a>
+    <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python&amp;logoColor=white" alt="Python 3.11 or newer"></a>
+</p>
 
 Hypatia is an LLM-powered study wiki builder. Upload lecture videos, notes,
-PDFs, and slides, then browse, search, and chat with the interlinked knowledge base that Hypatia maintains.
+PDFs, and slides, then browse, search, and chat with the interlinked knowledge
+base that Hypatia maintains.
 
 ## How It Works
 
@@ -25,6 +36,7 @@ You interact with each Class through a chat interface that supports natural-lang
 * **LLM wiki generation**: Build interlinked wiki pages from your sources
 * **Chat interface**: Ask questions, get cited answers, and run management commands
 * **Full-text search**: Search all wiki pages through FTS5
+* **Flashcards and practice quizzes**: Build decks and quizzes offline or with your AI model, review with spaced repetition, get short answers graded by AI, and export decks to Anki or CSV
 * **Version history**: Track wiki revisions and roll back through Git
 * **Multiple LLM providers**: Use GitHub Copilot, Copilot with Ollama, Anthropic, OpenAI, or native Ollama
 * **Backup and restore**: Export and import complete Classes as ZIP archives
@@ -88,7 +100,7 @@ provider:
   credential store.
 * Ollama needs a running Ollama server and at least one downloaded model.
 
-Then follow [Create your first Class](#create-your-first-class).
+Then follow [Create Your First Class](#create-your-first-class).
 
 ### Security warnings
 
@@ -121,10 +133,12 @@ in a `backend-venv` folder in the app's support directory:
 | macOS | `~/Library/Application Support/com.hypatia.frontend/backend-venv` |
 | Linux | `~/.local/share/com.hypatia.frontend/backend-venv` |
 
-## Prerequisites
+## Run from Source
 
-These prerequisites apply when you build and run Hypatia from source. To use a
+These steps build and run Hypatia from a clone of this repository. To use a
 release package instead, see [Install](#install).
+
+### Prerequisites
 
 | Dependency | Version | Notes |
 |------------|---------|-------|
@@ -137,7 +151,12 @@ Backend setup installs [faster-whisper](https://github.com/SYSTRAN/faster-whispe
 for local audio and video transcription. A CUDA-capable GPU accelerates
 transcription but is not required.
 
-## Quick Start
+On Linux, Flutter's desktop toolchain and the app's video and secure-storage
+plugins also need these development packages (Debian or Ubuntu names):
+
+```bash
+sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev
+```
 
 ### macOS and Linux setup
 
@@ -225,7 +244,9 @@ The Flutter desktop app locates the repository backend, selects a free port,
 and launches it automatically. The same launcher behavior is used by packaged
 desktop builds.
 
-### Create your first Class
+## Create Your First Class
+
+Whether you installed a release or run from source:
 
 1. Click **+ New Class** in the sidebar
 2. Upload source material (drag-and-drop or file picker)
@@ -271,6 +292,8 @@ Type these in the chat panel to manage your Class wiki:
 | `/lint` | Check the wiki for contradictions and structural issues | `/lint` |
 | `/rebuild` | Regenerate the entire wiki from sources (long-running) | `/rebuild` |
 | `/export` | Export the wiki as a collection of markdown files | `/export` |
+| `/flashcards [topic]` | Make a flashcard deck from the wiki or one topic (AI when reachable, otherwise offline) | `/flashcards hidden markov models` |
+| `/quiz [topic]` | Make a practice quiz from the wiki or one topic | `/quiz` |
 
 You can also type plain text without a command prefix. This defaults to `/ask`.
 
@@ -314,7 +337,7 @@ credential store is available, keys fall back to an access-restricted file in
 
 | Location | Contents |
 |----------|----------|
-| `~/.hypatia/data/hypatia.db` | SQLite database for Classes, files, wiki pages, and chat history |
+| `~/.hypatia/data/hypatia.db` | SQLite database for Classes, files, wiki pages, chat history, flashcard decks, and quizzes |
 | `~/.hypatia/data/classes/<class-id>/` | Uploaded sources, converted Markdown, and the Git-versioned wiki |
 | `~/.hypatia/data/settings.json` | Non-secret settings saved from the Settings screen |
 | `~/.hypatia/logs/hypatia.log` | Structured JSON backend log, rotated at 10 MB with five backups |
@@ -381,7 +404,9 @@ through `HYPATIA_BACKEND_URL`. In this mode, Flutter connects to that process
 without launching or stopping another backend. A direct `flutter run` keeps the
 normal application-managed backend behavior.
 
-**Run quality checks locally (same as CI):**
+### Quality checks
+
+Run the same checks as CI:
 
 ```bash
 # Backend (from backend/)
@@ -417,7 +442,7 @@ with `pip install -r requirements.lock` to update your environment.
 
 ## Architecture
 
-```
+```text
 Flutter Desktop App ←→ FastAPI Backend ←→ SQLite + File Storage
        (UI)              (API + LLM)        (Persistence)
 ```

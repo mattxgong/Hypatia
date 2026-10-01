@@ -83,6 +83,7 @@ def mock_llm() -> MockLLMProvider:
 _LLM_PROVIDER_TARGETS = (
     "app.services.llm_service.get_llm_provider",
     "app.services.wiki_engine.get_llm_provider",
+    "app.services.study.llm_generator.get_llm_provider",
     "app.dependencies.get_llm_provider",
 )
 

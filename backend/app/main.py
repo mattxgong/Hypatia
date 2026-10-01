@@ -19,6 +19,7 @@ from app.routers import chat as chat_router
 from app.routers import classes as classes_router
 from app.routers import files as files_router
 from app.routers import settings as settings_router
+from app.routers import study as study_router
 from app.routers import tasks as tasks_router
 from app.routers import wiki as wiki_router
 from app.services.credential_store import CredentialStore
@@ -93,6 +94,7 @@ app.include_router(wiki_router.router)
 app.include_router(chat_router.router)
 app.include_router(tasks_router.router)
 app.include_router(settings_router.router)
+app.include_router(study_router.router)
 
 
 @app.exception_handler(HypatiaError)

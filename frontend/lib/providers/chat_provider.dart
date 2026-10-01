@@ -7,6 +7,7 @@ import '../services/api_client.dart';
 import '../services/websocket_service.dart';
 import 'class_provider.dart';
 import 'file_provider.dart';
+import 'study_provider.dart';
 import 'task_provider.dart';
 import 'wiki_provider.dart';
 
@@ -144,6 +145,21 @@ class ChatMessagesNotifier
       case '/lint':
       case '/export':
         break;
+      case '/flashcards':
+      case '/quiz':
+        final kind = command == '/flashcards' ? StudyKind.deck : StudyKind.quiz;
+        ref.invalidate(
+          kind == StudyKind.deck
+              ? deckListProvider(arg)
+              : quizListProvider(arg),
+        );
+        if (result['id'] case final String id) {
+          ref.read(sidebarModeProvider.notifier).state = SidebarMode.study;
+          ref.read(studySelectionProvider.notifier).state = StudySelection(
+            kind,
+            id,
+          );
+        }
     }
   }
 }

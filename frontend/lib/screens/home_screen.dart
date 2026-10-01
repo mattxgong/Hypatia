@@ -7,12 +7,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/class_provider.dart';
 import '../providers/search_provider.dart';
+import '../providers/study_provider.dart';
 import '../providers/upload_provider.dart';
+import '../providers/wiki_provider.dart';
 import '../widgets/chat_panel/chat_panel.dart';
 import '../widgets/sidebar/add_file_button.dart';
 import '../widgets/sidebar/class_dropdown.dart';
 import '../widgets/sidebar/sidebar.dart';
 import '../widgets/source_viewer/source_viewer.dart';
+import '../widgets/study/flashcard_review.dart';
+import '../widgets/study/quiz_view.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
 
 final _sidebarWidthProvider = StateProvider<double>((ref) => 250);
@@ -114,6 +118,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.read(sourceViewerRequestProvider.notifier).state = null;
       }
     });
+    // Opening a wiki page or switching class leaves the study view.
+    ref.listen(currentWikiPagePathProvider, (_, _) {
+      ref.read(studySelectionProvider.notifier).state = null;
+    });
+    ref.listen(currentClassIdProvider, (_, _) {
+      ref.read(studySelectionProvider.notifier).state = null;
+    });
+    final studySelection = ref.watch(studySelectionProvider);
     final sidebarWidth = ref.watch(_sidebarWidthProvider);
     final chatWidth = ref.watch(_chatPanelWidthProvider);
     final sidebarCollapsed = ref.watch(_sidebarCollapsedProvider);
@@ -227,7 +239,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                             .state =
                                         !chatCollapsed,
                               ),
-                              const Expanded(child: WikiViewer()),
+                              Expanded(
+                                child: switch (studySelection) {
+                                  StudySelection(
+                                    kind: StudyKind.deck,
+                                    :final id,
+                                  ) =>
+                                    FlashcardReview(
+                                      key: ValueKey('deck-$id'),
+                                      deckId: id,
+                                    ),
+                                  StudySelection(
+                                    kind: StudyKind.quiz,
+                                    :final id,
+                                  ) =>
+                                    QuizView(
+                                      key: ValueKey('quiz-$id'),
+                                      quizId: id,
+                                    ),
+                                  null => const WikiViewer(),
+                                },
+                              ),
                             ],
                           ),
                         ),

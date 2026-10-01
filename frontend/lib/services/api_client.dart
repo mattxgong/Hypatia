@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/chat_message.dart';
 import '../models/source_file.dart';
+import '../models/study.dart';
 import '../models/task_status.dart';
 import '../models/wiki_page.dart';
 import '../models/hypatia_class.dart';
@@ -388,6 +389,276 @@ class ApiClient {
   Future<void> cancelTask(String taskId) async {
     try {
       await _dio.post<void>('/api/tasks/$taskId/cancel');
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  // --- Study ---
+
+  Future<List<Deck>> listDecks(String classId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/api/classes/$classId/decks',
+      );
+      return response.data!
+          .map((e) => Deck.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<GenerationStart> generateDeck(
+    String classId, {
+    required StudyScope scope,
+    required int count,
+    required List<CardType> cardTypes,
+    GenerationMethod method = GenerationMethod.heuristic,
+    String? name,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/decks/generate',
+        data: {
+          'scope': scope.toJson(),
+          'method': method.value,
+          'count': count,
+          'card_types': [for (final t in cardTypes) t.value],
+          'name': ?name,
+        },
+        options: _generationOptions,
+      );
+      return _generationStart(response);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  // Starting AI generation first probes the provider, which can be slow.
+  static final _generationOptions = Options(
+    receiveTimeout: const Duration(seconds: 90),
+  );
+
+  static GenerationStart _generationStart(
+    Response<Map<String, dynamic>> response,
+  ) {
+    final data = response.data!;
+    return response.statusCode == 202
+        ? GenerationStart.running(data['task_id'] as String)
+        : GenerationStart.done(data['id'] as String);
+  }
+
+  Future<void> deleteDeck(String classId, String deckId) async {
+    try {
+      await _dio.delete<void>('/api/classes/$classId/decks/$deckId');
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> refreshDeck(
+    String classId,
+    String deckId,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/decks/$deckId/refresh',
+      );
+      return response.data!;
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Uint8List> exportDeck(
+    String classId,
+    String deckId, {
+    required String format,
+  }) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        '/api/classes/$classId/decks/$deckId/export',
+        queryParameters: {'format': format},
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<List<Flashcard>> listCards(String classId, String deckId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/api/classes/$classId/decks/$deckId/cards',
+      );
+      return response.data!
+          .map((e) => Flashcard.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<List<Flashcard>> listDueCards(
+    String classId,
+    String deckId, {
+    int limit = 20,
+  }) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/api/classes/$classId/decks/$deckId/due',
+        queryParameters: {'limit': limit},
+      );
+      return response.data!
+          .map((e) => Flashcard.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Flashcard> reviewCard(
+    String classId,
+    String deckId,
+    String cardId,
+    ReviewRating rating,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/decks/$deckId/cards/$cardId/review',
+        data: {'rating': rating.name},
+      );
+      return Flashcard.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Flashcard> updateCard(
+    String classId,
+    String deckId,
+    String cardId, {
+    String? front,
+    String? back,
+    bool acknowledgeChanges = false,
+  }) async {
+    try {
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/api/classes/$classId/decks/$deckId/cards/$cardId',
+        data: {
+          'front': ?front,
+          'back': ?back,
+          'acknowledge_changes': acknowledgeChanges,
+        },
+      );
+      return Flashcard.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<void> deleteCard(String classId, String deckId, String cardId) async {
+    try {
+      await _dio.delete<void>(
+        '/api/classes/$classId/decks/$deckId/cards/$cardId',
+      );
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<List<QuizSummary>> listQuizzes(String classId) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(
+        '/api/classes/$classId/quizzes',
+      );
+      return response.data!
+          .map((e) => QuizSummary.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<GenerationStart> generateQuiz(
+    String classId, {
+    required StudyScope scope,
+    required int count,
+    required List<QuestionType> questionTypes,
+    GenerationMethod method = GenerationMethod.heuristic,
+    bool aiGrading = true,
+    String? name,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/quizzes/generate',
+        data: {
+          'scope': scope.toJson(),
+          'method': method.value,
+          'count': count,
+          'question_types': [for (final t in questionTypes) t.value],
+          'ai_grading': aiGrading,
+          'name': ?name,
+        },
+        options: _generationOptions,
+      );
+      return _generationStart(response);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Quiz> getQuiz(String classId, String quizId) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/classes/$classId/quizzes/$quizId',
+      );
+      return Quiz.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<void> deleteQuiz(String classId, String quizId) async {
+    try {
+      await _dio.delete<void>('/api/classes/$classId/quizzes/$quizId');
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<QuizAttempt> submitQuizAttempt(
+    String classId,
+    String quizId,
+    Map<String, Map<String, dynamic>> answers,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/quizzes/$quizId/attempts',
+        data: {'answers': answers},
+        // Short answers are graded by the LLM before the response returns.
+        options: Options(receiveTimeout: const Duration(seconds: 150)),
+      );
+      return QuizAttempt.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<QuizAttempt> selfGradeAttempt(
+    String classId,
+    String quizId,
+    String attemptId,
+    Map<String, bool> grades,
+  ) async {
+    try {
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/api/classes/$classId/quizzes/$quizId/attempts/$attemptId',
+        data: {'grades': grades},
+      );
+      return QuizAttempt.fromJson(response.data!);
     } on DioException catch (e) {
       _handleError(e);
     }

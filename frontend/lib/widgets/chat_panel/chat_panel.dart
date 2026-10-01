@@ -197,6 +197,18 @@ class _CommandReferenceDialog extends StatelessWidget {
       'Export the wiki as a collection of markdown files.',
       '/export',
     ),
+    _CmdEntry(
+      '/flashcards [topic]',
+      'Make a flashcard deck from the whole wiki or one topic. Uses your AI '
+          'model when it is reachable, otherwise builds the deck offline.',
+      '/flashcards hidden markov models',
+    ),
+    _CmdEntry(
+      '/quiz [topic]',
+      'Make a practice quiz from the whole wiki or one topic, with AI when '
+          'available.',
+      '/quiz',
+    ),
   ];
 
   @override

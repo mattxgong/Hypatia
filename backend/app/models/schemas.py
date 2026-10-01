@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.models.db_models import ChatRole, FileStatus, FileType, WikiCategory
+from app.models.db_models import (
+    CardOrigin,
+    CardType,
+    ChatRole,
+    FileStatus,
+    FileType,
+    QuestionType,
+    StudyMethod,
+    WikiCategory,
+)
 
 ClassName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 ClassDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
@@ -166,6 +175,7 @@ class TaskStatusRead(BaseModel):
     message: str
     status: str
     error: str | None = None
+    result: dict[str, str] | None = None
     created_at: str
 
 
@@ -231,3 +241,213 @@ class ValidateKeyRequest(BaseModel):
 class ValidateKeyResponse(BaseModel):
     valid: bool
     error: str | None = None
+
+
+# --- Study (Phase 9) ---
+
+StudyName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+StudyDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+CardFront = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000)
+]
+CardBack = Annotated[str, StringConstraints(strip_whitespace=True, max_length=20_000)]
+ReviewRating = Literal["again", "hard", "good", "easy"]
+DeckExportFormat = Literal["csv", "anki"]
+GenerationMethod = Literal["heuristic", "llm", "hybrid"]
+_CLOZE_MARKER = "{{c1::"
+
+
+class StudyScope(BaseModel):
+    type: Literal["class", "topic", "pages", "file"] = "class"
+    query: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+        | None
+    ) = None
+    paths: list[Annotated[str, StringConstraints(min_length=1, max_length=1024)]] | None = Field(
+        default=None, max_length=500
+    )
+    file_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _check_required_field(self) -> StudyScope:
+        if self.type == "topic" and not self.query:
+            raise ValueError("topic scope requires 'query'")
+        if self.type == "pages" and not self.paths:
+            raise ValueError("pages scope requires 'paths'")
+        if self.type == "file" and self.file_id is None:
+            raise ValueError("file scope requires 'file_id'")
+        return self
+
+
+class DeckGenerateRequest(BaseModel):
+    scope: StudyScope = Field(default_factory=StudyScope)
+    method: GenerationMethod = "heuristic"
+    count: int = Field(default=30, ge=1, le=500)
+    card_types: list[CardType] = Field(
+        default_factory=lambda: [CardType.BASIC, CardType.CLOZE], min_length=1
+    )
+    name: StudyName | None = None
+
+
+class DeckCreate(BaseModel):
+    name: StudyName
+    description: StudyDescription | None = None
+
+
+class DeckUpdate(BaseModel):
+    name: StudyName | None = None
+    description: StudyDescription | None = None
+
+
+class DeckRead(BaseModel):
+    id: uuid.UUID
+    class_id: uuid.UUID
+    name: str
+    description: str | None
+    generation_method: StudyMethod
+    scope_json: dict | None
+    card_count: int
+    due_count: int
+    stale_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class FlashcardCreate(BaseModel):
+    card_type: CardType = CardType.BASIC
+    front: CardFront
+    back: CardBack = ""
+
+    @model_validator(mode="after")
+    def _check_cloze(self) -> FlashcardCreate:
+        if self.card_type == CardType.CLOZE and _CLOZE_MARKER not in self.front:
+            raise ValueError("cloze cards need a {{c1::answer}} deletion in 'front'")
+        return self
+
+
+class FlashcardUpdate(BaseModel):
+    front: CardFront | None = None
+    back: CardBack | None = None
+    # Accept the current wiki pages as the card's new baseline, clearing "out of date".
+    acknowledge_changes: bool = False
+
+
+class FlashcardRead(BaseModel):
+    id: uuid.UUID
+    deck_id: uuid.UUID
+    card_type: CardType
+    front: str
+    back: str
+    origin: CardOrigin
+    page_paths: list[str]
+    source_file_ids: list[str]
+    stale: bool
+    ease: float
+    interval_days: int
+    repetitions: int
+    lapses: int
+    due_at: datetime
+    last_reviewed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FlashcardReview(BaseModel):
+    rating: ReviewRating
+
+
+class DeckRefreshResponse(BaseModel):
+    updated: int
+    removed: int
+    remaining_stale: int
+
+
+class QuizGenerateRequest(BaseModel):
+    scope: StudyScope = Field(default_factory=StudyScope)
+    method: GenerationMethod = "heuristic"
+    count: int = Field(default=10, ge=1, le=100)
+    question_types: list[QuestionType] = Field(
+        default_factory=lambda: [
+            QuestionType.MCQ,
+            QuestionType.TRUE_FALSE,
+            QuestionType.MATCHING,
+            QuestionType.FILL,
+        ],
+        min_length=1,
+    )
+    name: StudyName | None = None
+    seed: int | None = None
+    ai_grading: bool = True
+
+    @model_validator(mode="after")
+    def _check_types(self) -> QuizGenerateRequest:
+        if self.method == "heuristic" and QuestionType.SHORT in self.question_types:
+            raise ValueError("short-answer questions require AI or hybrid generation")
+        return self
+
+
+class StudyTaskStarted(BaseModel):
+    """Returned (202) when AI generation runs as a background task; poll /api/tasks."""
+
+    task_id: str
+    kind: Literal["deck", "quiz"]
+
+
+class QuizQuestionRead(BaseModel):
+    id: uuid.UUID
+    position: int
+    question_type: QuestionType
+    prompt: str
+    choices: dict | None
+    page_paths: list[str]
+    stale: bool
+
+
+class QuizSummaryRead(BaseModel):
+    id: uuid.UUID
+    class_id: uuid.UUID
+    name: str
+    generation_method: StudyMethod
+    scope_json: dict | None
+    settings_json: dict | None
+    question_count: int
+    stale_count: int
+    attempt_count: int
+    last_score: float | None
+    last_max_score: float | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuizRead(QuizSummaryRead):
+    questions: list[QuizQuestionRead]
+
+
+class QuizAttemptCreate(BaseModel):
+    answers: dict[uuid.UUID, dict[str, Any]] = Field(default_factory=dict, max_length=500)
+
+
+class QuestionResultRead(BaseModel):
+    question_id: uuid.UUID
+    score: float
+    correct: bool | None
+    status: str
+    response: dict[str, Any] | None
+    expected: dict[str, Any]
+    explanation: str | None
+    feedback: str | None = None
+    # "ai" or "self" for short answers; None for deterministic grading.
+    grader: str | None = None
+
+
+class AttemptSelfGrade(BaseModel):
+    grades: dict[uuid.UUID, bool] = Field(min_length=1, max_length=500)
+
+
+class QuizAttemptRead(BaseModel):
+    id: uuid.UUID
+    quiz_id: uuid.UUID
+    score: float
+    max_score: float
+    results: list[QuestionResultRead]
+    created_at: datetime

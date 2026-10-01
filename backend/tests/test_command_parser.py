@@ -36,6 +36,12 @@ class TestParseCommand:
         result = parse_command("/export")
         assert result == ParsedCommand(command="export", args="")
 
+    def test_study_commands(self) -> None:
+        assert parse_command("/flashcards") == ParsedCommand(command="flashcards", args="")
+        assert parse_command("/quiz viterbi decoding") == ParsedCommand(
+            command="quiz", args="viterbi decoding"
+        )
+
     def test_command_case_insensitive(self) -> None:
         result = parse_command("/ASK what is this")
         assert result.command == "ask"

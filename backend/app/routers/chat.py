@@ -19,11 +19,19 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory, get_session
+from app.dependencies import check_llm_available
 from app.errors import ErrorCode, HypatiaError
 from app.models.db_models import ChatMessage, ChatRole
-from app.models.schemas import ChatMessageRead
+from app.models.schemas import (
+    ChatMessageRead,
+    DeckGenerateRequest,
+    QuizGenerateRequest,
+    StudyScope,
+)
 from app.services import wiki_engine
-from app.services.task_manager import task_manager
+from app.services.study import jobs as study_jobs
+from app.services.study import service as study_service
+from app.services.task_manager import TaskStatus, task_manager
 from app.utils.command_parser import parse_command
 from app.utils.logging import get_logger
 
@@ -78,6 +86,8 @@ async def _handle_command(
         await _handle_export(websocket, class_id)
     elif command == "rebuild":
         await _handle_rebuild(websocket, class_id)
+    elif command in ("flashcards", "quiz"):
+        await _handle_study(websocket, class_id, command, args.strip())
 
 
 _HELP_TEXT = """\
@@ -91,6 +101,8 @@ _HELP_TEXT = """\
 | `/lint` | Check the wiki for contradictions and structural issues |
 | `/rebuild` | Regenerate the entire wiki from all sources |
 | `/export` | Export the wiki as markdown files |
+| `/flashcards [topic]` | Make a flashcard deck from the wiki (or one topic) |
+| `/quiz [topic]` | Make a practice quiz from the wiki (or one topic) |
 | `/help` | Show this command reference |
 
 Type a message without a `/` prefix to default to `/ask`."""
@@ -452,6 +464,138 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
 
 
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _llm_ready() -> bool:
+    try:
+        await check_llm_available()
+    except HypatiaError:
+        return False
+    return True
+
+
+async def _follow_task(websocket: WebSocket, task_id: str, operation: str) -> TaskStatus | None:
+    """Relay a background task's progress until it finishes; returns its final state."""
+    try:
+        while True:
+            status = task_manager.get_status(task_id)
+            if status is None or status.status != "running":
+                return status
+            await websocket.send_json(
+                {
+                    "type": "progress",
+                    "operation": operation,
+                    "operation_id": task_id,
+                    "percent": status.progress,
+                    "message": status.message,
+                }
+            )
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        task_manager.cancel_task(task_id)
+        raise
+
+
+async def _handle_study(
+    websocket: WebSocket, class_id: uuid.UUID, command: str, topic: str
+) -> None:
+    """``/flashcards`` and ``/quiz``: AI generation when a model is reachable, else offline."""
+    kind: study_jobs.StudyKind = "deck" if command == "flashcards" else "quiz"
+    scope = StudyScope(type="topic", query=topic) if topic else StudyScope()
+    async with async_session_factory() as session:
+        try:
+            session.add(
+                ChatMessage(
+                    class_id=class_id,
+                    role=ChatRole.USER,
+                    content=f"/{command} {topic}".strip(),
+                )
+            )
+            await session.commit()
+            await study_service.get_class_or_404(session, class_id)
+            await study_service.ensure_scope_has_pages(session, class_id, scope)
+
+            if await _llm_ready():
+                request: DeckGenerateRequest | QuizGenerateRequest = (
+                    DeckGenerateRequest(scope=scope, method="llm")
+                    if kind == "deck"
+                    else QuizGenerateRequest(scope=scope, method="llm")
+                )
+                task_id = study_jobs.start_generation(kind, class_id, request)
+                final = await _follow_task(websocket, task_id, command)
+                if final is None or final.status != "complete" or final.result is None:
+                    if final is not None and final.status == "cancelled":
+                        message = "Generation cancelled."
+                    else:
+                        message = (final.error if final else None) or "Generation failed."
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": message,
+                            "code": ErrorCode.INTERNAL_ERROR.value,
+                        }
+                    )
+                    return
+                item_id, name, count = (
+                    final.result["id"],
+                    final.result["name"],
+                    final.result["count"],
+                )
+                note = ""
+            elif kind == "deck":
+                deck = await study_service.generate_deck(
+                    session, class_id, DeckGenerateRequest(scope=scope)
+                )
+                item_id, name = str(deck.id), deck.name
+                count = str(len(await study_service.deck_cards(session, deck.id)))
+                note = " No AI model is reachable, so it was built offline from your wiki."
+            else:
+                quiz = await study_service.generate_quiz(
+                    session, class_id, QuizGenerateRequest(scope=scope)
+                )
+                item_id, name = str(quiz.id), quiz.name
+                count = str(len(await study_service.quiz_questions(session, quiz.id)))
+                note = " No AI model is reachable, so it was built offline from your wiki."
+
+            noun = "cards" if kind == "deck" else "questions"
+            what = "deck" if kind == "deck" else "quiz"
+            content = (
+                f'Created {what} "{name}" with {count} {noun}.{note} '
+                "Open it from the Study tab in the sidebar."
+            )
+            session.add(
+                ChatMessage(
+                    class_id=class_id,
+                    role=ChatRole.ASSISTANT,
+                    content=content,
+                    command=command,
+                )
+            )
+            await session.commit()
+            await websocket.send_json(
+                {
+                    "type": "complete",
+                    "message_id": str(uuid.uuid4()),
+                    "content": content,
+                    "result": {"command": f"/{command}", "kind": kind, "id": item_id},
+                }
+            )
+        except HypatiaError as e:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": e.detail,
+                    "code": e.code.value,
+                    "user_action": e.user_action,
+                }
+            )
+        except WebSocketDisconnect:
+            raise
+        except Exception as e:
+            logger.exception("chat_study_error", class_id=str(class_id))
+            await websocket.send_json(
+                {"type": "error", "message": str(e), "code": ErrorCode.INTERNAL_ERROR.value}
+            )
 
 
 def _rebuild_summary(result: wiki_engine.RebuildResult) -> str:
