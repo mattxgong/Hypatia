@@ -27,6 +27,7 @@ class TaskStatus {
   final String operation;
   final String classId;
   final String status;
+
   /// Null when the backend cannot estimate progress.
   final int? progress;
   final String message;
