@@ -93,41 +93,100 @@ void main() {
 
   group('BackendLauncher dependency lock tracking', () {
     late Directory backend;
+    late Directory venv;
     late File lock;
 
     setUp(() {
       backend = Directory.systemTemp.createTempSync('hypatia-lock-');
-      Directory(
-        '${backend.path}${Platform.pathSeparator}.venv',
-      ).createSync(recursive: true);
+      venv = Directory.systemTemp.createTempSync('hypatia-venv-');
       lock = File('${backend.path}${Platform.pathSeparator}requirements.lock')
         ..writeAsStringSync('fastapi==1.0.0\n');
     });
 
-    tearDown(() => backend.deleteSync(recursive: true));
+    tearDown(() {
+      backend.deleteSync(recursive: true);
+      venv.deleteSync(recursive: true);
+    });
 
     test('requires an install when no lock has been recorded', () async {
-      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+      expect(
+        await BackendLauncher.dependenciesMatchLock(backend, venv),
+        isFalse,
+      );
     });
 
     test('matches after recording the installed lock', () async {
-      await BackendLauncher.recordInstalledLock(backend);
+      await BackendLauncher.recordInstalledLock(backend, venv);
 
-      expect(await BackendLauncher.dependenciesMatchLock(backend), isTrue);
+      expect(
+        await BackendLauncher.dependenciesMatchLock(backend, venv),
+        isTrue,
+      );
     });
 
     test('requires a reinstall when the packaged lock changes', () async {
-      await BackendLauncher.recordInstalledLock(backend);
+      await BackendLauncher.recordInstalledLock(backend, venv);
       lock.writeAsStringSync('fastapi==1.0.0\nnumpy==2.4.6\n');
 
-      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+      expect(
+        await BackendLauncher.dependenciesMatchLock(backend, venv),
+        isFalse,
+      );
     });
 
     test('requires an install when the backend has no lockfile', () async {
-      await BackendLauncher.recordInstalledLock(backend);
+      await BackendLauncher.recordInstalledLock(backend, venv);
       lock.deleteSync();
 
-      expect(await BackendLauncher.dependenciesMatchLock(backend), isFalse);
+      expect(
+        await BackendLauncher.dependenciesMatchLock(backend, venv),
+        isFalse,
+      );
+    });
+  });
+
+  group('BackendLauncher.resolveVenvDirectory', () {
+    late Directory backend;
+    late Directory appSupport;
+
+    setUp(() {
+      backend = Directory.systemTemp.createTempSync('hypatia-backend-');
+      appSupport = Directory.systemTemp.createTempSync('hypatia-support-');
+    });
+
+    tearDown(() {
+      backend.deleteSync(recursive: true);
+      appSupport.deleteSync(recursive: true);
+    });
+
+    test('uses a per-user directory for a packaged backend', () {
+      final venv = BackendLauncher.resolveVenvDirectory(backend, appSupport);
+
+      expect(
+        venv.path,
+        '${appSupport.path}${Platform.pathSeparator}backend-venv',
+      );
+    });
+
+    test('reuses an existing development checkout venv', () {
+      Directory('${backend.path}${Platform.pathSeparator}tests').createSync();
+      final local = Directory('${backend.path}${Platform.pathSeparator}.venv')
+        ..createSync();
+
+      final venv = BackendLauncher.resolveVenvDirectory(backend, appSupport);
+
+      expect(venv.path, local.path);
+    });
+
+    test('ignores a venv left in a packaged backend by an older release', () {
+      Directory('${backend.path}${Platform.pathSeparator}.venv').createSync();
+
+      final venv = BackendLauncher.resolveVenvDirectory(backend, appSupport);
+
+      expect(
+        venv.path,
+        '${appSupport.path}${Platform.pathSeparator}backend-venv',
+      );
     });
   });
 
@@ -176,6 +235,33 @@ void main() {
           '${release.path}${Platform.pathSeparator}unrelated',
         ),
         executable: executable,
+      );
+
+      expect(resolved?.path, backend.path);
+    });
+
+    test('finds backend inside a macOS app bundle', () {
+      final release = Directory.systemTemp.createTempSync('hypatia-macos-');
+      addTearDown(() => release.deleteSync(recursive: true));
+      final contents = [
+        release.path,
+        'Hypatia.app',
+        'Contents',
+      ].join(Platform.pathSeparator);
+      final backend = Directory(
+        [contents, 'Resources', 'backend'].join(Platform.pathSeparator),
+      );
+      File(
+        '${backend.path}${Platform.pathSeparator}app${Platform.pathSeparator}main.py',
+      ).createSync(recursive: true);
+
+      final resolved = BackendLauncher.resolveBackendDirectory(
+        workingDirectory: Directory(
+          '${release.path}${Platform.pathSeparator}unrelated',
+        ),
+        executable: File(
+          [contents, 'MacOS', 'Hypatia'].join(Platform.pathSeparator),
+        ),
       );
 
       expect(resolved?.path, backend.path);

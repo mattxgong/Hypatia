@@ -51,9 +51,11 @@ flutter run -d linux
 ```
 
 At startup, the app searches the repository or packaged artifact for a
-neighboring `backend/` directory. It finds an installed Python 3.11 or newer,
-creates `backend/.venv` when needed, installs backend requirements if FastAPI
-is unavailable, selects a port from 8000 through 8010, and starts Uvicorn.
+`backend/` directory. It finds an installed Python 3.11 or newer and reuses
+`backend/.venv` when a development checkout already has one. Otherwise it
+creates `backend-venv` in the app's per-user support directory. It installs
+backend requirements whenever `requirements.lock` changes, selects a port from
+8000 through 8010, and starts Uvicorn.
 
 The startup screen provides retry, Python selection, copied diagnostics, and
 troubleshooting actions when backend startup fails. Closing the desktop app
@@ -93,11 +95,29 @@ flutter build linux
 ```
 
 A raw local Flutter build does not copy the backend into its output. The
-[manual release workflow](../.github/workflows/manual.yml) builds each desktop
-target and adds `app/`, `alembic/`, `alembic.ini`, `pyproject.toml`,
-`requirements.txt`, and `requirements.lock` under an adjacent `backend/`
-directory before uploading the artifact.
+[desktop build workflow](../.github/workflows/build-desktop.yml), shared by the
+manual and release workflows, builds each desktop target and adds `app/`,
+`alembic/`, `alembic.ini`, `pyproject.toml`, `requirements.txt`, and
+`requirements.lock` under a `backend/` directory. On Windows and Linux, that
+directory sits beside the executable. On macOS, it goes inside the app at
+`Contents/Resources/backend`, and the workflow re-signs the bundle ad hoc
+afterwards.
 
-Keep that artifact layout intact. The packaged launcher depends on the
-adjacent backend directory and a Python 3.11 or newer installation on the
-user's machine; Python, Ollama, models, Git, and ffmpeg are not bundled.
+The workflow then packages each platform:
+
+* Windows: a portable zip and an Inno Setup installer built from
+  [windows/installer/hypatia.iss](windows/installer/hypatia.iss). The MSVC
+  runtime DLLs are copied beside `Hypatia.exe`.
+* macOS: a zip of `Hypatia.app`.
+* Linux: a tarball and an AppImage that uses
+  [linux/packaging/AppRun](linux/packaging/AppRun) and
+  [linux/packaging/hypatia.desktop](linux/packaging/hypatia.desktop).
+
+Before uploading, it installs the packaged backend's locked dependencies into
+a fresh virtual environment and checks that `/health` responds.
+
+The packaged launcher depends on the bundled backend directory and a Python
+3.11 or newer installation on the user's machine; Python, Ollama, models, Git,
+and ffmpeg are not bundled. The macOS build runs without the App Sandbox
+because it starts the user's Python and writes the backend environment outside
+its container.

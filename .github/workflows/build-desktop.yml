@@ -1,0 +1,239 @@
+name: Build desktop packages
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            build_dir: build/windows/x64/runner/Release
+          - os: macos-latest
+            target: macos
+            build_dir: build/macos/Build/Products/Release
+          # libmpv's soname differs between Ubuntu 22.04 (.so.1) and 24.04+ (.so.2).
+          - os: ubuntu-24.04
+            target: linux
+            build_dir: build/linux/x64/release/bundle
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      DIST_DIR: ${{ github.workspace }}/dist
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Linux build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev
+
+      - name: Read app version
+        shell: pwsh
+        run: |
+          $match = Select-String -Path pubspec.yaml -Pattern '^version:\s*([^+\s]+)'
+          if (-not $match) { throw 'pubspec.yaml has no version' }
+          "VERSION=$($match.Matches[0].Groups[1].Value)" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Enable ${{ matrix.target }} desktop support
+        run: flutter config --enable-${{ matrix.target }}-desktop
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build ${{ matrix.target }}
+        run: flutter build ${{ matrix.target }} --release
+
+      - name: Bundle backend runtime
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $PWD '${{ matrix.build_dir }}'
+          $repoRoot = Resolve-Path (Join-Path $PWD '..')
+          $backendSource = Resolve-Path (Join-Path $PWD '..' 'backend')
+          # macOS keeps the backend inside the app so it survives a drag to /Applications.
+          $bundleRoot = $buildDir
+          if ('${{ matrix.target }}' -eq 'macos') {
+            $app = Get-ChildItem $buildDir -Directory -Filter '*.app' | Select-Object -First 1
+            if (-not $app) { throw "No .app bundle found in $buildDir" }
+            $bundleRoot = Join-Path $app.FullName 'Contents' 'Resources'
+            "APP_BUNDLE=$($app.FullName)" | Out-File $env:GITHUB_ENV -Append
+          }
+          "BUILD_DIR=$buildDir" | Out-File $env:GITHUB_ENV -Append
+          "BUNDLE_ROOT=$bundleRoot" | Out-File $env:GITHUB_ENV -Append
+          $backendTarget = Join-Path $bundleRoot 'backend'
+
+          Remove-Item $backendTarget -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item $backendTarget -ItemType Directory -Force | Out-Null
+
+          @(
+            'app'
+            'alembic'
+            'alembic.ini'
+            'pyproject.toml'
+            'requirements.txt'
+            'requirements.lock'
+          ) | ForEach-Object {
+            Copy-Item (Join-Path $backendSource $_) $backendTarget -Recurse -Force
+          }
+
+          @('LICENSE', 'NOTICE') | ForEach-Object {
+            Copy-Item (Join-Path $repoRoot $_) $bundleRoot -Force
+          }
+
+          if ('${{ matrix.target }}' -eq 'windows') {
+            # Clean Windows installs may lack the MSVC runtime Flutter links against.
+            @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') | ForEach-Object {
+              Copy-Item (Join-Path $env:WINDIR 'System32' $_) $buildDir -Force
+            }
+          }
+
+      - name: Re-sign macOS app bundle
+        if: matrix.target == 'macos'
+        run: |
+          codesign --force --deep --sign - "$APP_BUNDLE"
+          codesign --verify --deep --strict "$APP_BUNDLE"
+
+      - name: Verify packaged application
+        shell: pwsh
+        run: |
+          $backendDir = Join-Path $env:BUNDLE_ROOT 'backend'
+          @(
+            'app/main.py'
+            'alembic/env.py'
+            'alembic.ini'
+            'pyproject.toml'
+            'requirements.txt'
+            'requirements.lock'
+          ) | ForEach-Object {
+            $requiredPath = Join-Path $backendDir $_
+            if (-not (Test-Path $requiredPath -PathType Leaf)) {
+              throw "Packaged backend is missing required file: $requiredPath"
+            }
+          }
+
+          @('LICENSE', 'NOTICE') | ForEach-Object {
+            $requiredPath = Join-Path $env:BUNDLE_ROOT $_
+            if (-not (Test-Path $requiredPath -PathType Leaf)) {
+              throw "Packaged artifact is missing required file: $requiredPath"
+            }
+          }
+
+          $dependencyNotices = @(
+            Get-ChildItem $env:BUILD_DIR -Recurse -File |
+              Where-Object {
+                $_.Name -in @('NOTICES', 'NOTICES.Z') -and $_.Length -gt 0
+              }
+          )
+          if ($dependencyNotices.Count -eq 0) {
+            throw 'Packaged artifact is missing Flutter dependency notices.'
+          }
+
+      - name: Package Windows zip and installer
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          New-Item $env:DIST_DIR -ItemType Directory -Force | Out-Null
+          $name = "Hypatia-$env:VERSION-windows-x64"
+          $staging = Join-Path $env:RUNNER_TEMP $name
+          Copy-Item $env:BUILD_DIR $staging -Recurse
+          Compress-Archive -Path $staging -DestinationPath (Join-Path $env:DIST_DIR "$name.zip")
+
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6' 'ISCC.exe' }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
+          }
+          & $iscc "/DAppVersion=$env:VERSION" "/DBuildDir=$env:BUILD_DIR" "/DOutputDir=$env:DIST_DIR" windows/installer/hypatia.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+
+      - name: Package macOS zip
+        if: matrix.target == 'macos'
+        run: |
+          mkdir -p "$DIST_DIR"
+          ditto -c -k --keepParent "$APP_BUNDLE" "$DIST_DIR/Hypatia-$VERSION-macos.zip"
+
+      - name: Package Linux tarball and AppImage
+        if: matrix.target == 'linux'
+        env:
+          APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+        run: |
+          mkdir -p "$DIST_DIR"
+          name="Hypatia-$VERSION-linux-x64"
+          cp -r "$BUILD_DIR" "$RUNNER_TEMP/$name"
+          tar -czf "$DIST_DIR/$name.tar.gz" -C "$RUNNER_TEMP" "$name"
+
+          appdir="$RUNNER_TEMP/Hypatia.AppDir"
+          cp -r "$BUILD_DIR" "$appdir"
+          install -m 755 linux/packaging/AppRun "$appdir/AppRun"
+          cp linux/packaging/hypatia.desktop "$appdir/hypatia.desktop"
+          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png "$appdir/hypatia.png"
+
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool" "$APPIMAGETOOL_URL"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          ARCH=x86_64 "$RUNNER_TEMP/appimagetool" --appimage-extract-and-run \
+            "$appdir" "$DIST_DIR/$name.AppImage"
+
+      - name: Smoke test packaged backend
+        shell: pwsh
+        run: |
+          $backendDir = Join-Path $env:BUNDLE_ROOT 'backend'
+          $venv = Join-Path $env:RUNNER_TEMP 'smoke-venv'
+          python -m venv $venv
+          $python = if ($IsWindows) { Join-Path $venv 'Scripts' 'python.exe' } else { Join-Path $venv 'bin' 'python' }
+          & $python -m pip install --quiet --disable-pip-version-check -r (Join-Path $backendDir 'requirements.txt')
+          if ($LASTEXITCODE -ne 0) { throw 'Backend dependency install failed' }
+
+          # Mirror the launcher: user data outside the app, no bytecode inside it.
+          $env:HYPATIA_DATA_DIR = Join-Path $env:RUNNER_TEMP 'smoke-data'
+          $env:HYPATIA_LOGS_DIR = Join-Path $env:RUNNER_TEMP 'smoke-logs'
+          $env:PYTHONPYCACHEPREFIX = Join-Path $env:RUNNER_TEMP 'smoke-pycache'
+          $log = Join-Path $env:RUNNER_TEMP 'smoke-backend'
+          $server = Start-Process $python `
+            -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8765' `
+            -WorkingDirectory $backendDir `
+            -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err" `
+            -PassThru
+          try {
+            $healthy = $false
+            for ($i = 0; $i -lt 90 -and -not $healthy -and -not $server.HasExited; $i++) {
+              Start-Sleep -Seconds 1
+              try {
+                $healthy = (Invoke-RestMethod 'http://127.0.0.1:8765/health' -TimeoutSec 2).status -eq 'ok'
+              } catch {}
+            }
+            if (-not $healthy) {
+              Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue
+              throw 'Packaged backend did not pass its health check'
+            }
+            Write-Output 'Packaged backend is healthy.'
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: hypatia-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

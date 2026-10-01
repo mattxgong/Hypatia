@@ -89,7 +89,8 @@ scripts/
   setup.sh            One-time dev environment setup (backend venv + deps, flutter pub get)
   run_dev.sh          Runs backend (uvicorn --reload) and frontend (flutter run) together
 spikes/               Early technical spikes/prototypes (Phase 0.5), not part of the app
-.github/workflows/    CI (ci.yml), nightly (nightly.yml), manual (manual.yml)
+.github/workflows/    CI (ci.yml), nightly (nightly.yml), manual (manual.yml),
+                      release (release.yml), shared desktop packaging (build-desktop.yml)
 ```
 
 ## Running the project
@@ -253,9 +254,14 @@ CI regenerates it and fails on any diff; after editing `pyproject.toml` run
 from `backend/`. `--python-version 3.11` matches `requires-python`; without it
 uv targets the local interpreter and drops markers CI's 3.11 run needs.
 
-`.github/workflows/manual.yml` is a manually-triggered (`workflow_dispatch`)
-workflow that builds cross-platform Flutter desktop binaries, uploads them as
-downloadable artifacts, and runs the backend E2E test suite.
+`.github/workflows/build-desktop.yml` is a reusable workflow that builds the
+Windows, macOS, and Linux desktop apps, bundles the backend source, packages
+them (Windows zip + Inno Setup installer, macOS zip, Linux tarball + AppImage),
+and smoke-tests the packaged backend's `/health`. `manual.yml`
+(`workflow_dispatch`) calls it to upload the packages as artifacts and also
+runs the backend E2E suite. `release.yml` runs on `v*` tags: it checks that the
+tag matches both `frontend/pubspec.yaml` and `backend/app/__init__.py`, calls
+the build, and publishes the packages plus `SHA256SUMS.txt` to GitHub Releases.
 
 ## Conventions for contributions
 

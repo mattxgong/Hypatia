@@ -1,0 +1,2 @@
+# AppImage runs AppRun directly; a CRLF shebang would break it.
+frontend/linux/packaging/AppRun text eol=lf

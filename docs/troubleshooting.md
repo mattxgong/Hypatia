@@ -30,7 +30,7 @@ Verify with `ffmpeg -version`. Restart the backend after installing.
 
 **Symptom**: After installing a newer build, the first launch shows "Installing backend dependencies from requirements.lock".
 
-**Cause**: The app reinstalls whenever the packaged `backend/requirements.lock` differs from the lock it last installed into `backend/.venv`. This keeps the environment matched to the build. The install requires network access; if it fails, check your connection and relaunch.
+**Cause**: The app reinstalls whenever the packaged `backend/requirements.lock` differs from the lock it last installed into its Python environment. That environment is `backend-venv` in the app's per-user support directory, or `backend/.venv` in a development checkout. This keeps the environment matched to the build. The install requires network access; if it fails, check your connection and relaunch.
 
 ---
 

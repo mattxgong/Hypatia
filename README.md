@@ -30,7 +30,101 @@ You interact with each Class through a chat interface that supports natural-lang
 * **Backup and restore**: Export and import complete Classes as ZIP archives
 * **Cross-platform desktop app**: Run on Windows, macOS, and Linux
 
+## Install
+
+Download the package for your platform from the
+[latest release](https://github.com/mattxgong/Hypatia/releases/latest). You
+don't need Flutter or a copy of this repository.
+
+| Platform | Download | How to install |
+|---|---|---|
+| Windows | `Hypatia-<version>-windows-x64-setup.exe` | Run the installer. It installs for your user account, adds a Start Menu shortcut, and registers an uninstaller. |
+| Windows, portable | `Hypatia-<version>-windows-x64.zip` | Extract it and run `Hypatia.exe`. Keep the extracted folder together. |
+| macOS | `Hypatia-<version>-macos.zip` | Unzip it and drag `Hypatia.app` into Applications. |
+| Linux | `Hypatia-<version>-linux-x64.AppImage` | Run `chmod +x` on the file, then run it. |
+| Linux, portable | `Hypatia-<version>-linux-x64.tar.gz` | Extract it and run `hypatia`. Keep the extracted folder together. |
+
+Each release also includes `SHA256SUMS.txt`. To verify a download, compare its
+hash with the matching line: run `Get-FileHash <file>` in PowerShell,
+`shasum -a 256 <file>` on macOS, or `sha256sum -c SHA256SUMS.txt --ignore-missing`
+on Linux.
+
+### Requirements
+
+The packages contain the app and the backend source, but not the tools the
+backend runs on. Install these first:
+
+| Requirement | Used for | Install |
+|---|---|---|
+| Python 3.11 or newer | Running the backend | [python.org](https://www.python.org/downloads/), `brew install python`, or your Linux package manager |
+| ffmpeg | Video and audio transcription | `winget install ffmpeg`, `brew install ffmpeg`, or `sudo apt install ffmpeg` |
+| Git | Wiki version history | [git-scm.com](https://git-scm.com/downloads), `brew install git`, or `sudo apt install git` |
+| An LLM provider | Building and querying the wiki | A GitHub Copilot subscription, an Anthropic or OpenAI API key, or a local [Ollama](https://ollama.com) install |
+
+On Linux, the app also uses the system GTK 3, libmpv, and libsecret libraries,
+and the AppImage needs FUSE 2. On Ubuntu 24.04 or Debian 13, install them with:
+
+```bash
+sudo apt install libgtk-3-0t64 libmpv2 libsecret-1-0 libfuse2t64
+```
+
+Older releases name two of these packages `libgtk-3-0` and `libfuse2`.
+
+### First launch
+
+The first time Hypatia starts, it finds your Python installation, creates a
+private Python environment, and downloads the backend's dependencies (about
+570 MB). This takes a few minutes and needs an internet connection. Later
+launches start in seconds, and the download repeats only when an update
+changes the backend's dependencies. If Hypatia can't find Python, the startup
+screen lets you pick the Python executable yourself.
+
+When the app opens, click the gear icon in the sidebar and choose an LLM
+provider:
+
+* GitHub Copilot signs in through the Copilot CLI by default. You can paste a
+  GitHub token in Settings instead.
+* Anthropic and OpenAI need an API key, which Hypatia stores in your system's
+  credential store.
+* Ollama needs a running Ollama server and at least one downloaded model.
+
+Then follow [Create your first Class](#create-your-first-class).
+
+### Security warnings
+
+Release packages are not code-signed yet, so your operating system warns you
+before the first launch:
+
+* Windows shows "Windows protected your PC". Select **More info**, then
+  **Run anyway**.
+* macOS says Apple can't check `Hypatia.app` for malicious software. Open
+  **System Settings > Privacy & Security**, scroll to the message about
+  Hypatia, and select **Open Anyway**. Alternatively, run
+  `xattr -dr com.apple.quarantine /Applications/Hypatia.app` once.
+* Linux shows no warning. If the AppImage reports that it can't load
+  `libfuse.so.2`, install FUSE 2 as shown above, or start it with
+  `--appimage-extract-and-run`.
+
+### Updating and uninstalling
+
+To update, run the newer installer, replace `Hypatia.app`, or replace the
+AppImage or portable folder. Your Classes and settings live in `~/.hypatia`
+(see [Data and logs](#data-and-logs)) and carry over between versions.
+
+Uninstalling the app leaves `~/.hypatia` and the private Python environment in
+place. Delete them by hand to remove everything. The Python environment lives
+in a `backend-venv` folder in the app's support directory:
+
+| Platform | Python environment location |
+|---|---|
+| Windows | `%APPDATA%\com.hypatia\Hypatia\backend-venv` |
+| macOS | `~/Library/Application Support/com.hypatia.frontend/backend-venv` |
+| Linux | `~/.local/share/com.hypatia.frontend/backend-venv` |
+
 ## Prerequisites
+
+These prerequisites apply when you build and run Hypatia from source. To use a
+release package instead, see [Install](#install).
 
 | Dependency | Version | Notes |
 |------------|---------|-------|
@@ -231,22 +325,36 @@ touches these directories.
 
 ## Packaged Desktop Builds
 
-The manual GitHub Actions workflow produces Windows, macOS, and Linux desktop
-artifacts. Each artifact contains the Flutter application plus the backend
-source, Alembic migrations, and Python dependency manifests in a neighboring
-`backend/` directory.
+Pushing a `v*` tag runs the release workflow, which publishes the packages
+listed under [Install](#install) to GitHub Releases along with a
+`SHA256SUMS.txt` file.
+
+Every package contains the Flutter application plus the backend source, Alembic
+migrations, and Python dependency manifests in a `backend/` directory. On
+macOS that directory lives inside the app at `Contents/Resources/backend`, so
+dragging the app into Applications keeps everything together. The Windows
+installer and the AppImage keep it beside the executable for you. The Linux
+packages are built on Ubuntu 24.04 and link against the system GTK 3, libmpv,
+and libsecret libraries.
 
 Python itself is not bundled. On first launch, the desktop app finds an
-installed Python 3.11 or newer, creates `backend/.venv`, installs the exact
+installed Python 3.11 or newer, creates a virtual environment named
+`backend-venv` in the app's per-user support directory, installs the exact
 versions pinned in `backend/requirements.lock`, selects an available port from
-8000 through 8010, and starts the FastAPI backend. The app records which lock
-it installed and reinstalls automatically whenever a newer build ships a
-different lock, so an existing environment never runs with stale dependencies.
-Keep the artifact directory intact so the app can find its `backend/`
-directory. Dependency installation requires network access.
+8000 through 8010, and starts the FastAPI backend. The install location stays
+read-only, so the app works from Program Files, Applications, or an AppImage.
+The app records which lock it installed and reinstalls automatically whenever
+a newer build ships a different lock, so an existing environment never runs
+with stale dependencies. Dependency installation requires network access.
 
 Ollama, local model files, ffmpeg, and Git are also external prerequisites;
-the desktop artifact does not install them.
+the desktop packages do not install them.
+
+To cut a release, set the same version in `frontend/pubspec.yaml` and
+`backend/app/__init__.py`, then push a matching tag such as `v0.1.0`. The
+workflow fails if the tag and the two versions disagree, and marks tags with a
+hyphen, such as `v0.2.0-rc1`, as prereleases. The manual workflow builds the
+same packages as downloadable artifacts without publishing a release.
 
 ## Troubleshooting
 

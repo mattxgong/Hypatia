@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: Check version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tag matches app versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          frontend=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/p' frontend/pubspec.yaml)
+          backend=$(sed -nE 's/^__version__ = "([^"]+)"/\1/p' backend/app/__init__.py)
+          echo "tag=$tag pubspec=$frontend backend=$backend"
+          if [ "$tag" != "$frontend" ] || [ "$tag" != "$backend" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME must match frontend/pubspec.yaml ($frontend) and backend/app/__init__.py ($backend)"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: check-version
+    uses: ./.github/workflows/build-desktop.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hypatia-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--generate-notes --verify-tag --title "Hypatia ${GITHUB_REF_NAME#v}")
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${flags[@]}"

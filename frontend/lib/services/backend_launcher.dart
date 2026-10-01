@@ -72,27 +72,45 @@ class BackendLauncher {
   static File _backendLockFile(Directory backendDir) =>
       File('${backendDir.path}${Platform.pathSeparator}$_lockFileName');
 
-  static File _installedLockFile(Directory backendDir) => File(
-    [
-      backendDir.path,
-      '.venv',
-      _installedLockFileName,
-    ].join(Platform.pathSeparator),
-  );
+  static File _installedLockFile(Directory venvDir) =>
+      File('${venvDir.path}${Platform.pathSeparator}$_installedLockFileName');
 
-  /// Whether `.venv` was last installed from the backend's current lockfile.
-  static Future<bool> dependenciesMatchLock(Directory backendDir) async {
+  /// The Python environment to run [backendDir] with.
+  ///
+  /// Reuses a development checkout's `backend/.venv`; otherwise uses a
+  /// per-user directory, since a packaged backend folder may be read-only.
+  /// Packaged builds never include `tests/`, so a stale `.venv` left by an
+  /// older release is ignored.
+  static Directory resolveVenvDirectory(
+    Directory backendDir,
+    Directory appSupportDir,
+  ) {
+    final sep = Platform.pathSeparator;
+    final local = Directory('${backendDir.path}$sep.venv');
+    final isCheckout = Directory('${backendDir.path}${sep}tests').existsSync();
+    if (isCheckout && local.existsSync()) return local;
+    return Directory('${appSupportDir.path}${sep}backend-venv');
+  }
+
+  /// Whether [venvDir] was last installed from the backend's current lockfile.
+  static Future<bool> dependenciesMatchLock(
+    Directory backendDir,
+    Directory venvDir,
+  ) async {
     final lock = _backendLockFile(backendDir);
-    final installed = _installedLockFile(backendDir);
+    final installed = _installedLockFile(venvDir);
     if (!await lock.exists() || !await installed.exists()) return false;
     return await lock.readAsString() == await installed.readAsString();
   }
 
-  /// Record the lockfile `.venv` was just installed from.
-  static Future<void> recordInstalledLock(Directory backendDir) async {
+  /// Record the lockfile [venvDir] was just installed from.
+  static Future<void> recordInstalledLock(
+    Directory backendDir,
+    Directory venvDir,
+  ) async {
     final lock = _backendLockFile(backendDir);
     if (await lock.exists()) {
-      await lock.copy(_installedLockFile(backendDir).path);
+      await lock.copy(_installedLockFile(venvDir).path);
     }
   }
 
@@ -134,7 +152,8 @@ class BackendLauncher {
     }
 
     _setStatus(BackendStatus.settingUpEnvironment);
-    final venvPython = await _ensureVenv(backendDir);
+    final appSupportDir = await getApplicationSupportDirectory();
+    final venvPython = await _ensureVenv(backendDir, appSupportDir);
     if (venvPython == null) {
       _setStatus(BackendStatus.error);
       return;
@@ -144,7 +163,7 @@ class BackendLauncher {
     await _writePortFile(_port);
 
     _setStatus(BackendStatus.starting);
-    final started = await _spawnProcess(venvPython, backendDir);
+    final started = await _spawnProcess(venvPython, backendDir, appSupportDir);
     if (!started) {
       _setStatus(BackendStatus.error);
       return;
@@ -375,6 +394,16 @@ class BackendLauncher {
     add(Directory('${cwd.path}${Platform.pathSeparator}backend'));
 
     final exeDir = Directory(resolvedExecutable.parent.path);
+    // macOS bundles the backend inside the app: Contents/MacOS -> Contents/Resources.
+    add(
+      Directory(
+        [
+          exeDir.parent.path,
+          'Resources',
+          'backend',
+        ].join(Platform.pathSeparator),
+      ),
+    );
     for (final start in [cwd, exeDir]) {
       var current = start;
       for (var i = 0; i < maxAncestorDepth; i++) {
@@ -391,24 +420,28 @@ class BackendLauncher {
     return null;
   }
 
-  String _venvPythonPath(Directory backendDir) {
-    final venv = '${backendDir.path}${Platform.pathSeparator}.venv';
+  String _venvPythonPath(Directory venvDir) {
+    final venv = venvDir.path;
     return Platform.isWindows
         ? '$venv${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe'
         : '$venv${Platform.pathSeparator}bin${Platform.pathSeparator}python';
   }
 
-  Future<String?> _ensureVenv(Directory backendDir) async {
-    final venvPython = _venvPythonPath(backendDir);
+  Future<String?> _ensureVenv(
+    Directory backendDir,
+    Directory appSupportDir,
+  ) async {
+    final venvDir = resolveVenvDirectory(backendDir, appSupportDir);
+    final venvPython = _venvPythonPath(venvDir);
     if (!await File(venvPython).exists()) {
-      _log('Creating Python virtual environment...');
+      _log('Creating Python virtual environment in ${venvDir.path}...');
       final parts = splitPythonCommand(_pythonPath!);
       final created = await Process.run(parts.first, [
         ...parts.skip(1),
         '-m',
         'venv',
-        '.venv',
-      ], workingDirectory: backendDir.path);
+        venvDir.path,
+      ]);
       if (created.exitCode != 0) {
         _log('ERROR creating venv: ${created.stderr}');
         return null;
@@ -417,7 +450,7 @@ class BackendLauncher {
 
     // An importable fastapi does not mean the venv matches this release, so
     // reinstall whenever the packaged lockfile changes.
-    if (!await dependenciesMatchLock(backendDir)) {
+    if (!await dependenciesMatchLock(backendDir, venvDir)) {
       _log(
         'Installing backend dependencies from $_lockFileName '
         '(this may take a few minutes)...',
@@ -440,7 +473,7 @@ class BackendLauncher {
         _log('ERROR: dependency install failed (exit code $exitCode).');
         return null;
       }
-      await recordInstalledLock(backendDir);
+      await recordInstalledLock(backendDir, venvDir);
     }
 
     return venvPython;
@@ -477,7 +510,11 @@ class BackendLauncher {
     } catch (_) {}
   }
 
-  Future<bool> _spawnProcess(String venvPython, Directory backendDir) async {
+  Future<bool> _spawnProcess(
+    String venvPython,
+    Directory backendDir,
+    Directory appSupportDir,
+  ) async {
     try {
       _process = await Process.start(
         venvPython,
@@ -491,6 +528,11 @@ class BackendLauncher {
           '$_port',
         ],
         workingDirectory: backendDir.path,
+        // Writing __pycache__ into a signed macOS bundle would invalidate it.
+        environment: {
+          'PYTHONPYCACHEPREFIX':
+              '${appSupportDir.path}${Platform.pathSeparator}pycache',
+        },
         runInShell: false,
       );
     } catch (e) {

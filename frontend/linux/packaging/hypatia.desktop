@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Hypatia
+Comment=Study wikis built from your course material
+Exec=hypatia
+Icon=hypatia
+Categories=Education;
+Terminal=false
