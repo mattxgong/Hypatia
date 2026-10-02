@@ -56,4 +56,36 @@ void main() {
     expect(spans.single.alignment, PlaceholderAlignment.baseline);
     expect(spans.single.baseline, TextBaseline.alphabetic);
   });
+
+  testWidgets('tall inline math on consecutive lines does not overlap', (
+    tester,
+  ) async {
+    const frac = '\$\\dfrac{a^2}{b_i}\$';
+    await tester.pumpWidget(_render('one $frac  \ntwo $frac  \nthree'));
+
+    final rects = tester
+        .widgetList(find.byType(Math))
+        .map((m) => tester.getRect(find.byWidget(m)))
+        .toList();
+    expect(rects, hasLength(2));
+    expect(rects[1].top - rects[0].bottom, greaterThanOrEqualTo(4));
+  });
+
+  testWidgets('short inline math keeps the regular line height', (
+    tester,
+  ) async {
+    double paragraphHeight() => tester
+        .getSize(
+          find.byWidgetPredicate(
+            (w) => w is RichText && w.text.toPlainText().contains('three'),
+          ),
+        )
+        .height;
+
+    await tester.pumpWidget(_render('one  \ntwo  \nthree'));
+    final plain = paragraphHeight();
+    await tester.pumpWidget(_render('a \$x\$ one  \na \$y\$ two  \nthree'));
+
+    expect(paragraphHeight(), plain);
+  });
 }

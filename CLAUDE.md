@@ -98,6 +98,9 @@ scripts/
   setup.sh            One-time dev environment setup (backend venv + deps, flutter pub get)
   run_dev.sh          Runs backend (uvicorn --reload) and frontend (flutter run) together
 spikes/               Early technical spikes/prototypes (Phase 0.5), not part of the app
+third_party/
+  flutter_markdown_plus/  Vendored 1.0.12 (lib/ only) with a "Hypatia patch" in
+                      builder.dart so tall inline math grows its line; see its pubspec.yaml
 .github/workflows/    CI (ci.yml), nightly (nightly.yml), manual (manual.yml),
                       release (release.yml), shared desktop packaging (build-desktop.yml)
 ```

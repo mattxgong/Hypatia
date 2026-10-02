@@ -13,6 +13,8 @@ Future<bool> showProviderConfigDialog(
 }) async {
   return await showDialog<bool>(
         context: context,
+        // Its snackbars need the app's ScaffoldMessenger, not the startup one.
+        useRootNavigator: false,
         builder: (_) => ProviderConfigDialog(
           providerId: providerId,
           activateProvider: activateProvider,

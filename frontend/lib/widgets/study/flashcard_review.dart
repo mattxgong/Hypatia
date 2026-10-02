@@ -563,6 +563,7 @@ Future<Flashcard?> showEditCardDialog(
   final isCloze = card.cardType == CardType.cloze;
   return showDialog<Flashcard>(
     context: context,
+    useRootNavigator: false,
     builder: (context) => AlertDialog(
       title: const Text('Edit card'),
       content: SizedBox(

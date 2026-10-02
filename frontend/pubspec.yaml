@@ -37,7 +37,9 @@ dependencies:
   flutter_riverpod: ^2.6.1
   dio: ^5.11.0
   web_socket_channel: ^3.0.3
-  flutter_markdown_plus: ^1.0.0
+  # Vendored with a line-height patch for inline math; see its pubspec.yaml.
+  flutter_markdown_plus:
+    path: ../third_party/flutter_markdown_plus
   file_picker: ^12.0.0
   go_router: ^17.5.0
   flutter_secure_storage: ^11.0.0

@@ -40,6 +40,9 @@ Future<void> showGenerateStudyDialog(
 }) {
   return showDialog<void>(
     context: context,
+    // The root navigator belongs to the startup MaterialApp, whose
+    // ScaffoldMessenger has no Scaffold to show snackbars in.
+    useRootNavigator: false,
     builder: (_) => GenerateStudyDialog(initialKind: kind),
   );
 }
@@ -130,7 +133,8 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
       _error = null;
     });
     final api = ref.read(apiClientProvider);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final navigator = Navigator.of(context);
     final name = _nameController.text.trim().isEmpty
         ? null
         : _nameController.text.trim();
@@ -169,14 +173,6 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
                 label: _jobLabel(scope, name),
               ),
             );
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Writing with AI in the background. Progress shows in the '
-              'Study tab.',
-            ),
-          ),
-        );
       } else {
         ref.invalidate(
           kind == StudyKind.deck
@@ -188,7 +184,17 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
           start.id!,
         );
       }
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) navigator.pop();
+      if (start.taskId != null) {
+        messenger?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Writing with AI in the background. Progress shows in the '
+              'Study tab.',
+            ),
+          ),
+        );
+      }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e);
     } finally {
@@ -282,8 +288,7 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
               const SizedBox(height: 16),
               Text('From', style: theme.textTheme.labelLarge),
               const SizedBox(height: 4),
-              DropdownButton<_ScopeType>(
-                isExpanded: true,
+              _DropdownField<_ScopeType>(
                 value: _scope,
                 onChanged: _busy
                     ? null
@@ -314,7 +319,8 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
                   ),
                 ],
               ),
-              if (_scope == _ScopeType.topic)
+              if (_scope == _ScopeType.topic) ...[
+                const SizedBox(height: 8),
                 TextField(
                   controller: _topicController,
                   autofocus: true,
@@ -324,10 +330,11 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
                   ),
                   onChanged: (_) => setState(() {}),
                 ),
-              if (_scope == _ScopeType.file)
-                DropdownButton<String>(
-                  isExpanded: true,
-                  hint: const Text('Choose a file'),
+              ],
+              if (_scope == _ScopeType.file) ...[
+                const SizedBox(height: 8),
+                _DropdownField<String>(
+                  hint: 'Choose a file',
                   value: _fileId,
                   onChanged: (v) => setState(() => _fileId = v),
                   items: [
@@ -341,6 +348,7 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
                       ),
                   ],
                 ),
+              ],
               const SizedBox(height: 16),
               Text(
                 _isFlashcards ? 'Card types' : 'Question types',
@@ -472,6 +480,42 @@ class _GenerateStudyDialogState extends ConsumerState<GenerateStudyDialog> {
           : (on) => setState(
               () => on ? selected.add(value) : selected.remove(value),
             ),
+    );
+  }
+}
+
+/// A dropdown drawn as a filled input field, so the closed value gets the
+/// same inner padding as the text fields around it.
+class _DropdownField<T> extends StatelessWidget {
+  const _DropdownField({
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.hint,
+  });
+
+  final T? value;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?>? onChanged;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return InputDecorator(
+      decoration: const InputDecoration(
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      ),
+      isEmpty: value == null && hint == null,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          isExpanded: true,
+          value: value,
+          hint: hint == null ? null : Text(hint!),
+          onChanged: onChanged,
+          items: items,
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
     );
   }
 }

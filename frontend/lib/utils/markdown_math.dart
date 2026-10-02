@@ -129,10 +129,20 @@ class _MathBuilder extends MarkdownElementBuilder {
           WidgetSpan(
             alignment: PlaceholderAlignment.baseline,
             baseline: TextBaseline.alphabetic,
-            child: math,
+            // Tall math (fractions) grows its line; this keeps a text-like gap
+            // to neighbouring lines.
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: _halfLeading(style)),
+              child: math,
+            ),
           ),
         ],
       ),
     );
+  }
+
+  static double _halfLeading(TextStyle style) {
+    final fontSize = style.fontSize ?? 14;
+    return fontSize * ((style.height ?? 1.2) - 1).clamp(0.25, 1.0) / 2;
   }
 }

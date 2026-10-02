@@ -2,3 +2,7 @@ Hypatia
 Copyright 2026 Matthew Gong
 
 This product is licensed under the Apache License, Version 2.0.
+
+This product includes a modified copy of flutter_markdown_plus
+(third_party/flutter_markdown_plus), Copyright 2013 The Flutter Authors,
+licensed under the BSD 3-Clause License (see third_party/flutter_markdown_plus/LICENSE).

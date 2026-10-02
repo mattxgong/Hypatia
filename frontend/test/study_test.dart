@@ -236,6 +236,7 @@ void main() {
     Widget child, {
     List<Override> overrides = const [],
     bool aiConnected = false,
+    bool nestedApp = false,
   }) {
     return ProviderScope(
       overrides: [
@@ -262,7 +263,12 @@ void main() {
         ).overrideWith((ref) async => [_quizSummary()]),
         ...overrides,
       ],
-      child: MaterialApp(home: Scaffold(body: child)),
+      // The real app nests its routed MaterialApp inside a startup MaterialApp.
+      child: nestedApp
+          ? MaterialApp(
+              home: MaterialApp(home: Scaffold(body: child)),
+            )
+          : MaterialApp(home: Scaffold(body: child)),
     );
   }
 
@@ -431,6 +437,7 @@ void main() {
           },
         ),
         aiConnected: true,
+        nestedApp: true,
       ),
     );
     await tester.tap(find.text('open'));
@@ -440,6 +447,8 @@ void main() {
     await tester.tap(find.text('Generate'));
     await tester.pumpAndSettle();
 
+    expect(tester.takeException(), isNull);
+    expect(find.text('Create study material'), findsNothing);
     expect(api.generatedMethods, [GenerationMethod.llm]);
     final job = capturedRef.read(studyJobsProvider).single;
     expect(
