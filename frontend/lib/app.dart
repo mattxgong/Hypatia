@@ -7,6 +7,7 @@ import 'providers/class_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/class_settings_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/backend_gate.dart';
 import 'widgets/common/hypatia_about_button.dart';
 import 'widgets/sidebar/class_dropdown.dart' show showCreateClassDialog;
 
@@ -160,8 +161,8 @@ class _NoClassesScreen extends ConsumerWidget {
   }
 }
 
-class HypatiaShell extends ConsumerWidget {
-  const HypatiaShell({super.key});
+class HypatiaApp extends ConsumerWidget {
+  const HypatiaApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -175,6 +176,7 @@ class HypatiaShell extends ConsumerWidget {
       darkTheme: HypatiaTheme.darkTheme,
       themeMode: themeMode,
       routerConfig: router,
+      builder: (context, child) => BackendGate(child: child!),
     );
   }
 }

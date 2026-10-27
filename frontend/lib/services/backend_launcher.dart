@@ -554,6 +554,9 @@ class BackendLauncher {
         // Writing __pycache__ into a signed macOS bundle would invalidate it.
         environment: {
           'HYPATIA_API_TOKEN': ?apiToken,
+          // The backend exits when this pipe closes, so it can't outlive the
+          // app even if the app crashes or is killed before stopBackend().
+          'HYPATIA_EXIT_ON_STDIN_CLOSE': '1',
           'PYTHONPYCACHEPREFIX':
               '${appSupportDir.path}${Platform.pathSeparator}pycache',
         },

@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # Bearer token every request except /health must carry (see app/security.py).
     # The desktop app generates one per launch; unset disables the check.
     api_token: str | None = None
+    # Exit when stdin closes. The desktop app holds the other end of the pipe,
+    # so the backend can't outlive it even if the app crashes or is killed.
+    exit_on_stdin_close: bool = False
 
 
 settings = Settings()

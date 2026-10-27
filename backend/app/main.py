@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import signal
+import sys
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -33,10 +37,38 @@ from app.utils.logging import bind_context, clear_context, configure_logging, ge
 configure_logging()
 logger = get_logger()
 
+_FORCED_EXIT_DELAY_SECONDS = 15
+
+
+def _watch_stdin_for_parent_exit() -> None:
+    """Shut down once stdin reaches EOF, meaning the parent process is gone.
+
+    Raises SIGINT so uvicorn runs the normal shutdown (ingestion queue, Ollama
+    unload), and force-exits if that hasn't finished in time.
+    """
+    stdin = sys.stdin
+    if stdin is None:
+        return
+
+    def wait_for_eof() -> None:
+        try:
+            while stdin.buffer.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        logger.warning("parent_process_gone", detail="stdin closed; shutting down")
+        signal.raise_signal(signal.SIGINT)
+        time.sleep(_FORCED_EXIT_DELAY_SECONDS)
+        os._exit(0)
+
+    threading.Thread(target=wait_for_eof, name="stdin-watchdog", daemon=True).start()
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    if settings.exit_on_stdin_close:
+        _watch_stdin_for_parent_exit()
 
     persisted = load_settings(settings.data_dir)
     for key, value in persisted.items():

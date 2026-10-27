@@ -131,6 +131,14 @@ launching a second backend, and the script stops Uvicorn when Flutter exits. In
 production or a direct `flutter run`, the app auto-launches and owns the backend
 itself (see `frontend/lib/services/backend_launcher.dart` and Task 1.9).
 
+`main()` creates the `BackendLauncher` and exposes it through
+`providers/backend_provider.dart`. There is a single `MaterialApp.router`, whose
+`builder` (`widgets/backend_gate.dart`) shows the startup and error screens
+until the backend is ready. Closing the window or quitting (Cmd+Q) awaits
+`stopBackend()` first (`_BackendShutdown` in `main.dart`). As a backstop, the
+launcher sets `HYPATIA_EXIT_ON_STDIN_CLOSE=1`, so the backend shuts itself down
+when the app's stdin pipe closes, even if the app crashed.
+
 To run just the backend:
 
 ```bash
