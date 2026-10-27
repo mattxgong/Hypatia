@@ -476,3 +476,55 @@ async def test_delete_file_calls_remove_and_deletes(
         resp = await client.delete(f"/api/classes/{file_.class_id}/files/{file_.id}")
         assert resp.status_code == 204
         mock_remove.assert_called_once()
+
+
+async def _mark_failed(
+    session_factory: async_sessionmaker[AsyncSession], file_: File, *, converted: bool
+) -> None:
+    async with session_factory() as session:
+        row = await session.get(File, file_.id)
+        assert row is not None
+        row.status = FileStatus.ERROR
+        row.error_message = "boom"
+        if not converted:
+            row.converted_path = None
+        await session.commit()
+
+
+async def test_retry_reingests_a_file_whose_ingest_failed(
+    client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    stub_ingestion_queue,
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    await _mark_failed(session_factory, file_, converted=True)
+
+    resp = await client.post(f"/api/classes/{file_.class_id}/files/{file_.id}/retry")
+
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "ready"
+    assert resp.json()["error_message"] is None
+    assert stub_ingestion_queue.enqueued == [(file_.class_id, file_.id)]
+
+
+async def test_retry_converts_again_when_conversion_failed(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    await _mark_failed(session_factory, file_, converted=False)
+
+    resp = await client.post(f"/api/classes/{file_.class_id}/files/{file_.id}/retry")
+    assert resp.status_code == 202
+
+    after = (await client.get(f"/api/classes/{file_.class_id}/files/{file_.id}")).json()
+    assert after["status"] == "ready"
+    assert after["converted_path"] is not None
+
+
+async def test_retry_refuses_a_file_that_did_not_fail(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    file_ = await _make_file_on_disk(session_factory, tmp_path)
+    resp = await client.post(f"/api/classes/{file_.class_id}/files/{file_.id}/retry")
+    assert resp.status_code == 409

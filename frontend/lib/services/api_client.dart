@@ -199,6 +199,18 @@ class ApiClient {
     }
   }
 
+  /// Processes a failed file again (re-ingest, or convert again).
+  Future<SourceFile> retryFile(String classId, String fileId) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/files/$fileId/retry',
+      );
+      return SourceFile.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
   String getFileRawUrl(String classId, String fileId) {
     return '${_dio.options.baseUrl}/api/classes/$classId/files/$fileId/raw';
   }

@@ -8,6 +8,7 @@ import '../../providers/file_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/error_card.dart';
 import '../source_viewer/source_viewer.dart';
+import 'source_file_actions.dart';
 
 class WikiTree extends ConsumerWidget {
   const WikiTree({super.key});
@@ -116,6 +117,13 @@ class WikiTree extends ConsumerWidget {
                           ? null
                           : () =>
                                 showConvertedSourceViewer(context, classId, f),
+                      onMenu: (position) => showSourceFileMenu(
+                        context,
+                        ref,
+                        classId,
+                        f,
+                        position,
+                      ),
                     ),
                   )
                   .toList(),
@@ -189,10 +197,17 @@ class _PageTile extends StatelessWidget {
 }
 
 class _FileTile extends StatelessWidget {
-  const _FileTile({required this.file, required this.onTap});
+  const _FileTile({
+    required this.file,
+    required this.onTap,
+    required this.onMenu,
+  });
 
   final SourceFile file;
   final VoidCallback? onTap;
+
+  /// Opens the file's actions (Open, Retry, Delete) at a global position.
+  final void Function(Offset position) onMenu;
 
   IconData get _statusIcon {
     switch (file.status) {
@@ -224,7 +239,7 @@ class _FileTile extends StatelessWidget {
           : _statusIcon,
       size: 16,
     );
-    return ListTile(
+    final tile = ListTile(
       dense: true,
       visualDensity: VisualDensity.compact,
       title: Text(
@@ -239,7 +254,9 @@ class _FileTile extends StatelessWidget {
             )
           : icon,
       trailing: busyMessage == null
-          ? null
+          ? (hasError
+                ? Icon(Icons.refresh, size: 16, color: theme.colorScheme.error)
+                : null)
           : Tooltip(
               message: busyMessage,
               child: const SizedBox(
@@ -248,7 +265,22 @@ class _FileTile extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
-      onTap: onTap,
+      onTap: onTap ?? (hasError ? () => onMenu(_center(context)) : null),
     );
+    return GestureDetector(
+      onSecondaryTapUp: (details) => onMenu(details.globalPosition),
+      onLongPressStart: (details) => onMenu(details.globalPosition),
+      child: Semantics(
+        hint: 'Right-click or long-press for file actions',
+        child: tile,
+      ),
+    );
+  }
+
+  Offset _center(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox?;
+    return box == null
+        ? Offset.zero
+        : box.localToGlobal(box.size.center(Offset.zero));
   }
 }

@@ -188,6 +188,28 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/classes/{class_id}/files/{file_id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/FileId"
+    post:
+      summary: Process a failed file again
+      description: >-
+        Re-queues ingestion when the file was converted and only the ingest
+        failed; otherwise converts it again. Only files with status error.
+      operationId: retryFile
+      responses:
+        "202":
+          description: Accepted; the file is ready to ingest or pending conversion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The file has not failed
+
   /api/classes/{class_id}/files/{file_id}/raw:
     parameters:
       - $ref: "#/components/parameters/ClassId"

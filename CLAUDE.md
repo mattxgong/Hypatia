@@ -92,7 +92,8 @@ frontend/            Flutter application
       source_viewer/   Source file viewer (PDF, video, images, text)
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
-      common/          Shared widgets (error_card.dart)
+      common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
+                       status strip + file finished/failed notices)
 
 data/                Runtime data (gitignored; DB, wiki repos, uploaded files live here)
 docs/
