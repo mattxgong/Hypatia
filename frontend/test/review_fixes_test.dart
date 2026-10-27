@@ -6,9 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:frontend/models/chat_message.dart';
 import 'package:frontend/models/hypatia_class.dart';
 import 'package:frontend/models/source_file.dart';
 import 'package:frontend/models/wiki_page.dart';
+import 'package:frontend/providers/backend_provider.dart';
 import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/file_provider.dart';
 import 'package:frontend/providers/search_provider.dart';
@@ -16,6 +18,9 @@ import 'package:frontend/providers/theme_provider.dart';
 import 'package:frontend/providers/upload_provider.dart';
 import 'package:frontend/providers/wiki_provider.dart';
 import 'package:frontend/services/api_client.dart';
+import 'package:frontend/services/backend_launcher.dart';
+import 'package:frontend/widgets/backend_gate.dart';
+import 'package:frontend/widgets/chat_panel/message_bubble.dart';
 import 'package:frontend/widgets/sidebar/class_dropdown.dart';
 import 'package:frontend/widgets/sidebar/search_bar.dart';
 import 'package:frontend/widgets/sidebar/wiki_tree.dart';
@@ -224,6 +229,50 @@ void main() {
     expect(citedLineIndex(lines, 't:30'), isNull);
   });
 
+  testWidgets('an answer links the pages it drew on', (tester) async {
+    final message = ChatMessage(
+      id: 'm1',
+      classId: _classId,
+      role: ChatRole.assistant,
+      content: 'Entropy measures uncertainty.',
+      metadataJson: {
+        'pages': [
+          {'path': 'pages/concepts/entropy.md', 'title': 'Entropy'},
+        ],
+      },
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+    );
+    await tester.pumpWidget(wrap(MessageBubble(message: message)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ActionChip, 'Entropy'));
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(MessageBubble)),
+    );
+    expect(
+      container.read(currentWikiPagePathProvider),
+      'pages/concepts/entropy.md',
+    );
+  });
+
+  testWidgets('startup shows which step it is on', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [backendStatusProvider.overrideWith(_SettingUp.new)],
+        child: const MaterialApp(home: BackendGate(child: Text('app'))),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('app'), findsNothing);
+    expect(find.text('Set up the backend environment'), findsOneWidget);
+    expect(find.textContaining('first launch'), findsOneWidget);
+    // Find Python is done; starting the backend is still to come.
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.byIcon(Icons.radio_button_unchecked), findsOneWidget);
+  });
+
   testWidgets('wiki tree sections collapse', (tester) async {
     await tester.pumpWidget(wrap(const WikiTree()));
     await tester.pumpAndSettle();
@@ -233,4 +282,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Entropy'), findsNothing);
   });
+}
+
+class _SettingUp extends BackendStatusNotifier {
+  @override
+  BackendStatus build() => BackendStatus.settingUpEnvironment;
 }

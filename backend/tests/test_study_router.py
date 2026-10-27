@@ -653,3 +653,22 @@ async def test_new_cards_per_day_are_limited(
     monkeypatch.setattr(settings, "study_new_cards_per_day", 3)
     [extra] = (await client.get(f"{base}/due", params={"limit": 500})).json()
     assert extra["id"] not in {due[0]["id"], due[1]["id"]}
+
+
+async def test_undo_restores_the_schedule_before_the_last_review(
+    client: AsyncClient, class_id: uuid.UUID
+) -> None:
+    deck = await _generate_deck(client, class_id)
+    base = f"/api/classes/{class_id}/decks/{deck['id']}"
+    [card] = (await client.get(f"{base}/due", params={"limit": 1})).json()
+
+    await client.post(f"{base}/cards/{card['id']}/review", json={"rating": "easy"})
+    undone = await client.post(f"{base}/cards/{card['id']}/review/undo")
+
+    assert undone.status_code == 200
+    restored = undone.json()
+    assert (restored["repetitions"], restored["learning_step"]) == (0, 0)
+    assert restored["last_reviewed_at"] is None
+    assert card["id"] in {c["id"] for c in (await client.get(f"{base}/due")).json()}
+    again = await client.post(f"{base}/cards/{card['id']}/review/undo")
+    assert again.status_code == 409

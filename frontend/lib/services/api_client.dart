@@ -546,6 +546,22 @@ class ApiClient {
     }
   }
 
+  /// Restores a card's schedule to before its latest review.
+  Future<Flashcard> undoReview(
+    String classId,
+    String deckId,
+    String cardId,
+  ) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/classes/$classId/decks/$deckId/cards/$cardId/review/undo',
+      );
+      return Flashcard.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
   Future<Flashcard> reviewCard(
     String classId,
     String deckId,

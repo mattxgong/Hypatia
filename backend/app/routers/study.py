@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -428,10 +430,56 @@ async def review_card(
 ) -> FlashcardRead:
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
+    _remember_for_undo(card)
     service.apply_review(card, body.rating, _now())
     await session.commit()
     await session.refresh(card)
     return (await _card_reads(session, class_id, [card]))[0]
+
+
+@router.post("/decks/{deck_id}/cards/{card_id}/review/undo", response_model=FlashcardRead)
+async def undo_review(
+    class_id: uuid.UUID,
+    deck_id: uuid.UUID,
+    card_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> FlashcardRead:
+    """Put a card's schedule back to before its most recent review."""
+    deck = await _get_deck(session, class_id, deck_id)
+    card = await _get_card(session, deck, card_id)
+    previous = _undo_states.pop(card.id, None)
+    if previous is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Nothing to undo for this card"
+        )
+    for field_name, value in previous.items():
+        setattr(card, field_name, value)
+    await session.commit()
+    await session.refresh(card)
+    return (await _card_reads(session, class_id, [card]))[0]
+
+
+#: Scheduling state before each card's latest review, for Undo. In memory and
+#: bounded: undo is offered for a few seconds right after rating.
+_undo_states: OrderedDict[uuid.UUID, dict[str, Any]] = OrderedDict()
+_MAX_UNDO_STATES = 200
+_SCHEDULE_FIELDS = (
+    "ease",
+    "interval_days",
+    "repetitions",
+    "lapses",
+    "learning_step",
+    "due_at",
+    "last_reviewed_at",
+    "first_reviewed_at",
+)
+
+
+def _remember_for_undo(card: Flashcard) -> None:
+    _undo_states[card.id] = {f: getattr(card, f) for f in _SCHEDULE_FIELDS}
+    _undo_states.move_to_end(card.id)
+    while len(_undo_states) > _MAX_UNDO_STATES:
+        _undo_states.popitem(last=False)
 
 
 # --- Quizzes ---

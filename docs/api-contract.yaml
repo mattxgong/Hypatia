@@ -1009,7 +1009,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/FlashcardRead"
 
-  /api/classes/{class_id}/quizzes:
+  /api/classes/{class_id}/decks/{deck_id}/cards/{card_id}/review/undo:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - $ref: "#/components/parameters/CardId"
+    post:
+      summary: Undo the card's last review, restoring its previous schedule
+      description: >
+        The previous schedule is held in memory for the most recent reviews
+        only, so undo is available until the backend restarts.
+      operationId: undoReview
+      responses:
+        "200":
+          description: Card with its schedule from before the last review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashcardRead"
+        "404":
+          description: Class, deck or card not found
+        "409":
+          description: The card has no review to undo
     parameters:
       - $ref: "#/components/parameters/ClassId"
     get:

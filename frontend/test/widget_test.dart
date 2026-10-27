@@ -93,7 +93,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Starting backend...'), findsOneWidget);
+    expect(find.text('Start the backend'), findsOneWidget);
     expect(find.text('Welcome to Hypatia'), findsNothing);
     expect(find.byType(MaterialApp), findsOneWidget);
 

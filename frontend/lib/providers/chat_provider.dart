@@ -99,6 +99,12 @@ class ChatMessagesNotifier
           classId: arg,
           role: ChatRole.assistant,
           content: content,
+          // Same shape as the saved message's metadata, so the bubble shows
+          // the pages it drew on before and after a history reload.
+          metadataJson:
+              complete.citations == null || complete.citations!.isEmpty
+              ? null
+              : {'pages': complete.citations},
           createdAt: now,
           updatedAt: now,
         );

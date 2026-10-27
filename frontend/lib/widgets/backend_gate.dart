@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/theme.dart';
 import '../providers/backend_provider.dart';
 import '../services/backend_launcher.dart';
 
@@ -34,35 +35,168 @@ class BackendGate extends ConsumerWidget {
   }
 }
 
-class _BackendLoadingScreen extends StatelessWidget {
+/// The startup steps, in order. A first launch spends minutes installing the
+/// backend's packages, so the screen shows where it is and what it's doing
+/// rather than a bare spinner.
+const _startupSteps = [
+  (BackendStatus.discoveringPython, 'Find Python'),
+  (BackendStatus.settingUpEnvironment, 'Set up the backend environment'),
+  (BackendStatus.starting, 'Start the backend'),
+];
+
+class _BackendLoadingScreen extends ConsumerStatefulWidget {
   const _BackendLoadingScreen({required this.status});
 
   final BackendStatus status;
 
-  String get _message {
-    switch (status) {
-      case BackendStatus.discoveringPython:
-        return 'Locating Python...';
-      case BackendStatus.settingUpEnvironment:
-        return 'Setting up backend environment...';
-      case BackendStatus.starting:
-        return 'Starting backend...';
-      default:
-        return 'Starting Hypatia...';
-    }
-  }
+  @override
+  ConsumerState<_BackendLoadingScreen> createState() =>
+      _BackendLoadingScreenState();
+}
+
+class _BackendLoadingScreenState extends ConsumerState<_BackendLoadingScreen> {
+  bool _showLog = false;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final log = ref.watch(backendLogProvider);
+    final current = _startupSteps.indexWhere((s) => s.$1 == widget.status);
+
     return Scaffold(
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 24),
-            Text(_message),
-          ],
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Starting Hypatia', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 16),
+                for (final (i, (_, label)) in _startupSteps.indexed)
+                  _StartupStep(
+                    label: label,
+                    state: current < 0 || i > current
+                        ? _StepState.pending
+                        : i < current
+                        ? _StepState.done
+                        : _StepState.active,
+                  ),
+                if (widget.status == BackendStatus.settingUpEnvironment)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 32, top: 4),
+                    child: Text(
+                      'The first launch installs packages and can take a few '
+                      'minutes.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                if (log.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      log.last,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => setState(() => _showLog = !_showLog),
+                    icon: Icon(
+                      _showLog ? Icons.expand_less : Icons.expand_more,
+                    ),
+                    label: Text(_showLog ? 'Hide details' : 'Show details'),
+                  ),
+                  if (_showLog) SizedBox(height: 240, child: _LogView(log)),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _StepState { pending, active, done }
+
+class _StartupStep extends StatelessWidget {
+  const _StartupStep({required this.label, required this.state});
+
+  final String label;
+  final _StepState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final icon = switch (state) {
+      _StepState.done => Icon(
+        Icons.check_circle,
+        size: 20,
+        color: StatusColors.of(context).success,
+      ),
+      _StepState.active => const SizedBox.square(
+        dimension: 20,
+        child: Padding(
+          padding: EdgeInsets.all(2),
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      _StepState.pending => Icon(
+        Icons.radio_button_unchecked,
+        size: 20,
+        color: theme.colorScheme.outline,
+      ),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          icon,
+          const SizedBox(width: 12),
+          Text(
+            label,
+            style: state == _StepState.pending
+                ? theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  )
+                : theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The backend's output, newest at the bottom.
+class _LogView extends StatelessWidget {
+  const _LogView(this.log);
+
+  final List<String> log;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(8),
+      color: Colors.black87,
+      child: ListView.builder(
+        reverse: true,
+        itemCount: log.length,
+        itemBuilder: (context, index) => Text(
+          log[log.length - 1 - index],
+          style: const TextStyle(
+            color: Colors.white,
+            fontFamily: 'monospace',
+            fontSize: 12,
+          ),
         ),
       ),
     );
@@ -133,26 +267,7 @@ class _BackendProblemScreen extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 16),
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                color: Colors.black87,
-                child: ListView(
-                  children: [
-                    for (final line in log)
-                      Text(
-                        line,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
+            Expanded(child: _LogView(log)),
           ],
         ),
       ),

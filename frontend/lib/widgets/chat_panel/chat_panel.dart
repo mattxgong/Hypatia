@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import '../../utils/shortcuts.dart';
@@ -76,6 +78,24 @@ class _ChatBody extends ConsumerWidget {
     if (classId == null) return _buildStarterCards(context, ref);
 
     final messagesAsync = ref.watch(chatMessagesProvider(classId!));
+    // Screen readers hear a reply when it arrives (one new message), not
+    // every message again when history loads.
+    ref.listen(chatMessagesProvider(classId!), (previous, next) {
+      final before = previous?.valueOrNull;
+      final after = next.valueOrNull;
+      if (before == null || after == null) return;
+      if (after.length != before.length + 1) return;
+      final reply = after.last;
+      if (reply.role == ChatRole.user) return;
+      final text = reply.content.length > 300
+          ? '${reply.content.substring(0, 300)}…'
+          : reply.content;
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        text,
+        Directionality.of(context),
+      );
+    });
     // Only whether something is streaming: the text itself is watched by the
     // streaming bubble, so each chunk doesn't rebuild every message.
     final streaming = ref.watch(

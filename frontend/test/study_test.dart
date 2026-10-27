@@ -61,7 +61,7 @@ QuizSummary _quizSummary() => QuizSummary.fromJson({
   'created_at': '2026-10-01T00:00:00',
 });
 
-Quiz _quiz() => Quiz.fromJson({
+Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
   'id': 'quiz-1',
   'class_id': _classId,
   'name': 'NLP quiz',
@@ -83,6 +83,16 @@ Quiz _quiz() => Quiz.fromJson({
       'page_paths': <String>[],
       'stale': false,
     },
+    if (twoQuestions)
+      {
+        'id': 'q2',
+        'position': 1,
+        'question_type': 'short',
+        'prompt': 'What does Viterbi find?',
+        'choices': null,
+        'page_paths': <String>[],
+        'stale': false,
+      },
   ],
 });
 
@@ -187,6 +197,18 @@ class _FakeApi extends ApiClient {
     error: taskStatus == 'failed' ? 'LLM error: quota' : null,
     createdAt: '2026-10-01T00:00:00',
   );
+
+  final undos = <String>[];
+
+  @override
+  Future<Flashcard> undoReview(
+    String classId,
+    String deckId,
+    String cardId,
+  ) async {
+    undos.add(cardId);
+    return due.firstWhere((c) => c.id == cardId);
+  }
 
   final selfGrades = <Map<String, bool>>[];
 
@@ -417,6 +439,96 @@ void main() {
     expect(find.text('Correct'), findsOneWidget);
     expect(find.text('Rank and frequency follow a power law.'), findsOneWidget);
     expect(find.text('Retake'), findsOneWidget);
+  });
+
+  testWidgets('a rating can be undone from its notice', (tester) async {
+    largeSurface(tester);
+    await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Show answer (Space)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Good (3)'));
+    await tester.pumpAndSettle();
+    expect(find.text('The [...] algorithm decodes.'), findsOneWidget);
+
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(api.reviews, [('c1', ReviewRating.good)]);
+    expect(api.undos, ['c1']);
+    expect(find.text('What is entropy?'), findsOneWidget);
+  });
+
+  Widget quizWrap({ValueNotifier<bool>? shown, bool twoQuestions = false}) =>
+      wrap(
+        shown == null
+            ? const QuizView(quizId: 'quiz-1')
+            : ValueListenableBuilder<bool>(
+                valueListenable: shown,
+                builder: (context, show, _) => show
+                    ? const QuizView(quizId: 'quiz-1')
+                    : const Text('elsewhere'),
+              ),
+        overrides: [
+          quizProvider((
+            classId: _classId,
+            quizId: 'quiz-1',
+          )).overrideWith((ref) async => _quiz(twoQuestions: twoQuestions)),
+        ],
+      );
+
+  testWidgets('submitting with unanswered questions asks first', (
+    tester,
+  ) async {
+    largeSurface(tester);
+    await tester.pumpWidget(quizWrap(twoQuestions: true));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.ancestor(
+        of: find.text('A power law'),
+        matching: find.byType(InkWell),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 question is unanswered'), findsOneWidget);
+    await tester.tap(find.text('Keep answering'));
+    await tester.pumpAndSettle();
+    expect(api.submitted, isEmpty);
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Submit anyway'));
+    await tester.pumpAndSettle();
+    expect(api.submitted.single, {
+      'q1': {'choice': 0},
+    });
+  });
+
+  testWidgets('quiz answers survive leaving the quiz', (tester) async {
+    largeSurface(tester);
+    final shown = ValueNotifier(true);
+    addTearDown(shown.dispose);
+    await tester.pumpWidget(quizWrap(shown: shown));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.ancestor(
+        of: find.text('A power law'),
+        matching: find.byType(InkWell),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 1 answered'), findsOneWidget);
+
+    shown.value = false;
+    await tester.pumpAndSettle();
+    expect(find.text('elsewhere'), findsOneWidget);
+    shown.value = true;
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 1 answered'), findsOneWidget);
   });
 
   testWidgets('generate dialog creates a deck and opens it', (tester) async {

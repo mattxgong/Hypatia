@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
+
 import '../../models/study.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/study_provider.dart';
@@ -19,19 +21,36 @@ class QuizView extends ConsumerStatefulWidget {
   ConsumerState<QuizView> createState() => _QuizViewState();
 }
 
+/// Answers typed into each quiz, kept when the user opens a wiki page
+/// mid-quiz and comes back (they were lost with the widget before).
+final _quizDraftsProvider =
+    Provider.family<Map<String, Map<String, dynamic>>, String>((ref, quizId) {
+      ref.keepAlive();
+      return {};
+    });
+
 class _QuizViewState extends ConsumerState<QuizView> {
-  final Map<String, Map<String, dynamic>> _answers = {};
+  late final Map<String, Map<String, dynamic>> _answers = ref.read(
+    _quizDraftsProvider(widget.quizId),
+  );
   QuizAttempt? _attempt;
   bool _submitting = false;
+  String? _grading;
 
   Future<void> _submit(String classId, Quiz quiz) async {
+    final unanswered = quiz.questions
+        .where((q) => !_isAnswered(_answers[q.id]))
+        .length;
+    if (unanswered > 0 && !await _confirmSubmit(unanswered)) return;
+    if (!mounted) return;
     setState(() => _submitting = true);
     try {
       final attempt = await ref
           .read(apiClientProvider)
-          .submitQuizAttempt(classId, quiz.summary.id, _answers);
+          .submitQuizAttempt(classId, quiz.summary.id, Map.of(_answers));
       if (!mounted) return;
       setState(() => _attempt = attempt);
+      _answers.clear(); // submitted: no draft to come back to
       ref.invalidate(quizListProvider(classId));
     } on ApiException catch (e) {
       if (mounted) {
@@ -42,6 +61,31 @@ class _QuizViewState extends ConsumerState<QuizView> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<bool> _confirmSubmit(int unanswered) async {
+    final submit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          unanswered == 1
+              ? '1 question is unanswered'
+              : '$unanswered questions are unanswered',
+        ),
+        content: const Text('Unanswered questions score zero.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep answering'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Submit anyway'),
+          ),
+        ],
+      ),
+    );
+    return submit ?? false;
   }
 
   void _retake() => setState(() {
@@ -56,6 +100,8 @@ class _QuizViewState extends ConsumerState<QuizView> {
     bool correct,
   ) async {
     final attempt = _attempt;
+    if (_grading != null) return;
+    setState(() => _grading = questionId);
     if (attempt == null) return;
     try {
       final updated = await ref.read(apiClientProvider).selfGradeAttempt(
@@ -73,6 +119,8 @@ class _QuizViewState extends ConsumerState<QuizView> {
           context,
         ).showSnackBar(SnackBar(content: Text('Could not save: ${e.detail}')));
       }
+    } finally {
+      if (mounted) setState(() => _grading = null);
     }
   }
 
@@ -120,7 +168,7 @@ class _QuizViewState extends ConsumerState<QuizView> {
         r.questionId: r,
     };
     final answered = quiz.questions
-        .where((q) => _answers.containsKey(q.id))
+        .where((q) => _isAnswered(_answers[q.id]))
         .length;
 
     return Column(
@@ -187,6 +235,7 @@ class _QuizViewState extends ConsumerState<QuizView> {
                     response: _answers[question.id],
                     result: results[question.id],
                     onAnswer: (response) => _answer(question.id, response),
+                    grading: _grading == question.id,
                     onSelfGrade: (correct) =>
                         _selfGrade(classId, quiz, question.id, correct),
                   ),
@@ -208,6 +257,7 @@ class _QuestionCard extends ConsumerWidget {
     required this.result,
     required this.onAnswer,
     required this.onSelfGrade,
+    this.grading = false,
   });
 
   final int number;
@@ -216,6 +266,9 @@ class _QuestionCard extends ConsumerWidget {
   final QuestionResult? result;
   final ValueChanged<Map<String, dynamic>> onAnswer;
   final ValueChanged<bool> onSelfGrade;
+
+  /// The self-grade is being saved; its buttons are disabled meanwhile.
+  final bool grading;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -278,15 +331,21 @@ class _QuestionCard extends ConsumerWidget {
                 children: [
                   const Text('Compare with the model answer:'),
                   OutlinedButton.icon(
-                    onPressed: () => onSelfGrade(true),
+                    onPressed: grading ? null : () => onSelfGrade(true),
                     icon: const Icon(Icons.check, size: 16),
                     label: const Text('I got it right'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => onSelfGrade(false),
+                    onPressed: grading ? null : () => onSelfGrade(false),
                     icon: const Icon(Icons.close, size: 16),
                     label: const Text('I got it wrong'),
                   ),
+                  if (grading)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                 ],
               ),
             ],
@@ -333,7 +392,7 @@ class _ResultBadge extends StatelessWidget {
       ),
       _ when result.correct == true => (
         Icons.check_circle,
-        Colors.green.shade600,
+        StatusColors.of(context).success,
         'Correct',
       ),
       _ when result.score > 0 => (
@@ -458,7 +517,7 @@ class _ChoiceList extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
                 side: BorderSide(
                   color: correct == i
-                      ? Colors.green.shade600
+                      ? StatusColors.of(context).success
                       : selected == i
                       ? theme.colorScheme.primary
                       : theme.dividerColor,
@@ -571,7 +630,7 @@ class _MatchingInput extends StatelessWidget {
                       : '\u2192 ${_letter(expected![i])}',
                   style: TextStyle(
                     color: current[i] == expected![i]
-                        ? Colors.green.shade600
+                        ? StatusColors.of(context).success
                         : theme.colorScheme.error,
                   ),
                 ),
