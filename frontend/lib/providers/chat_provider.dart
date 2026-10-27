@@ -35,6 +35,20 @@ final chatConnectionProvider = Provider<void>((ref) {
 
 final chatInputProvider = StateProvider<String>((ref) => '');
 
+/// Bumped to move keyboard focus to the chat input without changing its text.
+final chatInputFocusRequestProvider = StateProvider<int>((ref) => 0);
+
+/// The long-running operation (/rebuild, /flashcards, ...) a Class's chat is
+/// following, if any; Stop cancels it.
+final chatActiveOperationProvider = StateProvider.family<String?, String>(
+  (ref, classId) => null,
+);
+
+/// Whether a Class's chat has sent something and is waiting for its reply.
+final chatAwaitingReplyProvider = StateProvider.family<bool, String>(
+  (ref, classId) => false,
+);
+
 class ChatMessagesNotifier
     extends FamilyAsyncNotifier<List<ChatMessage>, String> {
   StreamSubscription<ChatWsChunk>? _chunkSub;
@@ -46,6 +60,13 @@ class ChatMessagesNotifier
 
   StateController<String> get _streaming =>
       ref.read(chatStreamingContentProvider(arg).notifier);
+
+  /// The reply is over (complete, failed or cut off): nothing is pending.
+  void _settle() {
+    _streaming.state = '';
+    ref.read(chatActiveOperationProvider(arg).notifier).state = null;
+    ref.read(chatAwaitingReplyProvider(arg).notifier).state = false;
+  }
 
   @override
   Future<List<ChatMessage>> build(String arg) async {
@@ -68,7 +89,7 @@ class ChatMessagesNotifier
       complete,
     ) {
       final streamedContent = _streaming.state;
-      _streaming.state = '';
+      _settle();
 
       final content = complete.content ?? streamedContent;
       if (content.isNotEmpty) {
@@ -91,13 +112,17 @@ class ChatMessagesNotifier
       progress,
     ) {
       final percent = progress.percent;
+      if (progress.operationId.isNotEmpty) {
+        ref.read(chatActiveOperationProvider(arg).notifier).state =
+            progress.operationId;
+      }
       _streaming.state = percent == null
           ? progress.message
           : '${progress.message} ($percent%)';
     });
 
     _errorSub = ws.onError.where((e) => e.classId == arg).listen((error) {
-      _streaming.state = '';
+      _settle();
       _appendSystemMessage('Error: ${error.message}');
     });
 
@@ -106,8 +131,9 @@ class ChatMessagesNotifier
       final connected = ws.isConnectedTo(arg);
       if (!connected) {
         // A reply cut off by a disconnect or Class switch would otherwise
-        // stay on screen as a half-finished bubble.
-        _streaming.state = '';
+        // stay on screen as a half-finished bubble. The command itself keeps
+        // running on the backend; its result arrives with the history reload.
+        _settle();
       } else if (!wasConnected) {
         // Replies that finished while the socket was down are in history.
         unawaited(_reloadHistory());
@@ -151,10 +177,18 @@ class ChatMessagesNotifier
     state = AsyncData([...state.valueOrNull ?? [], userMessage]);
 
     ws.sendMessage(arg, content);
+    ref.read(chatAwaitingReplyProvider(arg).notifier).state = true;
     if (content.startsWith('/')) {
       ref.read(taskListProvider.notifier).startPolling();
     }
     return true;
+  }
+
+  /// Asks the backend to cancel the operation this chat is following.
+  void stop() {
+    final operationId = ref.read(chatActiveOperationProvider(arg));
+    if (operationId == null) return;
+    ref.read(webSocketServiceProvider).cancelOperation(operationId);
   }
 
   void _appendSystemMessage(String content) {
