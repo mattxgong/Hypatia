@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.services.wiki_parser import parse_llm_output
+import pytest
+
+from app.services.wiki_parser import normalize_page_path, parse_llm_output
 
 SAMPLE_OUTPUT = """\
 <wiki-page path="pages/source-summaries/lecture-1.md">
@@ -137,3 +139,48 @@ Content.
 """
     pages = parse_llm_output(raw)
     assert pages[0].user_edited is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../../settings.json",
+        "pages/../../.credentials.md",
+        "/etc/passwd.md",
+        "C:/Users/x/evil.md",
+        "pages/.git/hooks/pre-commit.md",
+        "pages/.GIT./config.md",
+        "pages/x:stream.md",
+        "pages/notes.txt",
+        "index.md",
+        "pages//double.md",
+    ],
+)
+def test_unsafe_page_paths_rejected(path: str):
+    assert normalize_page_path(path) is None
+
+
+def test_page_path_normalized():
+    assert normalize_page_path(r"./pages\concepts\x.md") == "pages/concepts/x.md"
+    assert normalize_page_path("index.md", require_pages_dir=False) == "index.md"
+
+
+def test_unsafe_llm_page_path_skipped():
+    raw = """\
+<wiki-page path="../../settings.json">
+---
+title: "Evil"
+type: concept
+---
+{}
+</wiki-page>
+<wiki-page path="pages/concepts/ok.md">
+---
+title: "Ok"
+type: concept
+---
+Fine.
+</wiki-page>
+"""
+    pages = parse_llm_output(raw)
+    assert [p.path for p in pages] == ["pages/concepts/ok.md"]

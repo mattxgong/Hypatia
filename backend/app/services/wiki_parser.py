@@ -28,6 +28,35 @@ _FRONTMATTER_PATTERN = re.compile(
 
 _VALID_CATEGORIES = {c.value for c in WikiCategory}
 
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def is_git_path_part(part: str) -> bool:
+    """True for ``.git`` and the spellings Windows resolves to it (``.GIT``, ``.git.``)."""
+    return part.rstrip(". ").casefold() == ".git"
+
+
+def normalize_page_path(path: str, *, require_pages_dir: bool = True) -> str | None:
+    """Return ``path`` as a safe wiki-relative ``*.md`` path, or None if it could escape the wiki.
+
+    Page paths come from LLM output, API requests and backups, and are joined
+    onto the wiki directory, so anything absolute, with ``..``/``.git`` parts,
+    or (with ``require_pages_dir``) outside ``pages/`` is rejected.
+    """
+    candidate = path.strip().replace("\\", "/")
+    while candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate or candidate.startswith("/") or _DRIVE_RE.match(candidate):
+        return None
+    parts = candidate.split("/")
+    if any(part in {"", ".", ".."} or ":" in part or is_git_path_part(part) for part in parts):
+        return None
+    if not candidate.lower().endswith(".md"):
+        return None
+    if require_pages_dir and (len(parts) < 2 or parts[0] != "pages"):
+        return None
+    return candidate
+
 
 @dataclass
 class ParsedWikiPage:
@@ -56,7 +85,11 @@ def parse_llm_output(raw: str) -> list[ParsedWikiPage]:
         return []
 
     pages: list[ParsedWikiPage] = []
-    for path, action, body in matches:
+    for raw_path, action, body in matches:
+        path = normalize_page_path(raw_path)
+        if path is None:
+            logger.warning("wiki_parse_unsafe_path", path=raw_path)
+            continue
         page = _parse_single_page(path, action or "create", body.strip())
         if page is None:
             continue

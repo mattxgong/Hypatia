@@ -23,6 +23,7 @@ from app.models.schemas import (
 )
 from app.services import wiki_engine
 from app.services.task_manager import task_manager
+from app.services.wiki_parser import normalize_page_path
 from app.services.wiki_search import (
     SearchMode,
     count_wiki_search_results,
@@ -73,6 +74,12 @@ async def update_wiki_page(
     body: WikiPageUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> WikiPageRead:
+    safe_path = normalize_page_path(page_path)
+    if safe_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid wiki page path"
+        )
+    page_path = safe_path
     await wiki_engine.update_wiki_page(
         session, class_id, page_path, body.content, is_user_edit=True
     )

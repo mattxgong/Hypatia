@@ -22,7 +22,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.errors import HypatiaError
+from app.errors import ErrorCode, HypatiaError
 from app.models.db_models import (
     ChatMessage,
     ChatRole,
@@ -39,7 +39,7 @@ from app.services.prompts.query_prompt import ASK_SYSTEM_PROMPT
 from app.services.prompts.summarize_prompt import SUMMARIZE_SYSTEM_PROMPT
 from app.services.prompts.wiki_schema import WIKI_SCHEMA
 from app.services.wiki_git import commit_wiki_change, init_wiki_repo, wiki_dir
-from app.services.wiki_parser import ParsedWikiPage, parse_llm_output
+from app.services.wiki_parser import ParsedWikiPage, normalize_page_path, parse_llm_output
 from app.services.wiki_search import (
     delete_fts_page,
     hybrid_search,
@@ -828,6 +828,10 @@ async def update_wiki_page(
     is_user_edit: bool = False,
 ) -> None:
     """Write updated content to a wiki page, update DB and FTS."""
+    safe_path = normalize_page_path(page_path)
+    if safe_path is None:
+        raise HypatiaError(ErrorCode.VALIDATION_ERROR, f"Invalid wiki page path: {page_path!r}")
+    page_path = safe_path
     cid = str(class_id)
     wp = wiki_dir(cid)
     page_file = wp / page_path
