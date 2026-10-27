@@ -124,6 +124,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
     ref.listen(currentClassIdProvider, (_, _) {
       ref.read(studySelectionProvider.notifier).state = null;
+      // The open page belongs to the previous Class.
+      ref.read(currentWikiPagePathProvider.notifier).state = null;
     });
     final studySelection = ref.watch(studySelectionProvider);
     final sidebarWidth = ref.watch(_sidebarWidthProvider);
