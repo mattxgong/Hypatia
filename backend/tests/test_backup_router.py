@@ -38,6 +38,7 @@ from app.models.db_models import (
     WikiPage,
 )
 from app.models.db_models import File as FileRecord
+from app.services import wiki_git
 
 
 def _empty_manifest(name: str = "Imported Class") -> dict[str, object]:
@@ -534,3 +535,103 @@ class TestStudyRoundTrip:
             assert new_question.id != question_id
             assert attempt.answers_json == {str(new_question.id): {"choice": 1}}
             assert attempt.grading_json == {str(new_question.id): {"score": 1.0}}
+
+
+@pytest.mark.skipif(not wiki_git._GIT_AVAILABLE, reason="git is not installed")
+class TestWikiHistory:
+    async def test_backup_bundles_history_instead_of_git_dir(
+        self,
+        client: AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        class_id = uuid.uuid4()
+        async with session_factory() as session:
+            session.add(Class(id=class_id, name="History Class"))
+            await session.commit()
+        page = wiki_git.init_wiki_repo(str(class_id)) / "pages" / "concepts" / "x.md"
+        page.parent.mkdir(parents=True)
+        page.write_text("# X v1")
+        wiki_git.commit_wiki_change(str(class_id), "first")
+        page.write_text("# X v2")
+        wiki_git.commit_wiki_change(str(class_id), "second")
+
+        resp = await client.post(f"/api/classes/{class_id}/backup")
+        assert resp.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            names = zf.namelist()
+        assert "wiki/pages/concepts/x.md" in names
+        assert "wiki-history.bundle" in names
+        assert not [n for n in names if "/.git/" in n or n.startswith("wiki/.git")]
+
+        async with session_factory() as session:
+            await session.delete(await session.get(Class, class_id))
+            await session.commit()
+
+        imported = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", resp.content, "application/zip")},
+        )
+        assert imported.status_code == 201
+        new_id = imported.json()["id"]
+        messages = [h["message"] for h in wiki_git.get_wiki_history(new_id)]
+        assert messages[-2:] == ["second", "first"]
+        assert (wiki_git.wiki_dir(new_id) / "pages" / "concepts" / "x.md").read_text() == "# X v2"
+
+    async def test_import_ignores_git_dir_from_old_backups(
+        self, client: AsyncClient, tmp_path: Path
+    ) -> None:
+        archive = _backup_bytes(
+            _empty_manifest(),
+            {
+                "wiki/.git/config": b"[core]\n\tfsmonitor = touch pwned\n",
+                "wiki/.git/hooks/pre-commit": b"#!/bin/sh\ntouch pwned\n",
+                "wiki/.GIT./hooks/post-commit": b"#!/bin/sh\ntouch pwned\n",
+                "wiki/pages/concepts/x.md": b"# X",
+            },
+        )
+        resp = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", archive, "application/zip")},
+        )
+
+        assert resp.status_code == 201
+        git_dir = wiki_git.wiki_dir(resp.json()["id"]) / ".git"
+        assert "fsmonitor" not in (git_dir / "config").read_text()
+        assert not (git_dir / "hooks" / "pre-commit").exists()
+        assert not (git_dir / "hooks" / "post-commit").exists()
+
+    async def test_import_with_corrupt_bundle_still_creates_class(
+        self, client: AsyncClient
+    ) -> None:
+        archive = _backup_bytes(
+            _empty_manifest(),
+            {"wiki-history.bundle": b"not a bundle", "wiki/pages/x.md": b"# X"},
+        )
+        resp = await client.post(
+            "/api/classes/import",
+            files={"file": ("backup.zip", archive, "application/zip")},
+        )
+
+        assert resp.status_code == 201
+        assert (wiki_git.wiki_dir(resp.json()["id"]) / ".git").is_dir()
+
+
+async def test_import_rejects_unsafe_wiki_page_path(client: AsyncClient) -> None:
+    manifest = _empty_manifest()
+    manifest["wiki_pages"] = [
+        {
+            "id": str(uuid.uuid4()),
+            "path": "../../.credentials.md",
+            "title": "Evil",
+            "category": "concept",
+            "content": "x",
+        }
+    ]
+    resp = await client.post(
+        "/api/classes/import",
+        files={"file": ("backup.zip", _backup_bytes(manifest), "application/zip")},
+    )
+
+    assert resp.status_code == 400
+    assert "unsafe wiki page path" in resp.json()["detail"]

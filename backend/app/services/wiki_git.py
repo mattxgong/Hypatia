@@ -91,6 +91,63 @@ def commit_wiki_change(class_id: str, message: str) -> str | None:
     return sha
 
 
+def create_history_bundle(class_id: str, dest: Path) -> bool:
+    """Write the wiki's commit history to a git bundle at ``dest``.
+
+    Backups carry history as a bundle rather than the ``.git`` directory, since
+    a bundle holds only commits and refs, never config or hooks. Returns False
+    when there is no history to bundle or git is unavailable.
+    """
+    if not _GIT_AVAILABLE:
+        _warn_git_missing()
+        return False
+
+    path = wiki_dir(class_id)
+    if not (path / ".git").exists():
+        return False
+    if _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=path).returncode != 0:
+        return False
+
+    result = _run_git(["bundle", "create", str(dest), "HEAD"], cwd=path)
+    if result.returncode != 0:
+        logger.warning("wiki_bundle_failed", class_id=class_id, stderr=result.stderr.strip())
+        return False
+    return True
+
+
+def restore_history_bundle(class_id: str, bundle: Path) -> bool:
+    """Load the history in ``bundle`` into the Class's wiki repo, keeping its files.
+
+    The repo must be freshly initialized. The working tree is left as is, and
+    any difference from the bundled history is committed on top of it. Returns
+    False (leaving a plain fresh repo) if the bundle is unusable.
+    """
+    path = init_wiki_repo(class_id)
+    if not _GIT_AVAILABLE or not (path / ".git").exists():
+        return False
+
+    steps = {
+        "verify": ["bundle", "verify", "--quiet", str(bundle)],
+        # The bundle comes from an untrusted archive, so check every object.
+        "fetch": ["-c", "transfer.fsckObjects=true", "fetch", "--quiet", str(bundle), "HEAD"],
+        "reset": ["reset", "--quiet", "FETCH_HEAD"],
+    }
+    for step, args in steps.items():
+        result = _run_git(args, cwd=path)
+        if result.returncode != 0:
+            logger.warning(
+                "wiki_bundle_restore_failed",
+                class_id=class_id,
+                step=step,
+                stderr=result.stderr.strip(),
+            )
+            return False
+
+    commit_wiki_change(class_id, "Import backup")
+    logger.info("wiki_history_restored", class_id=class_id)
+    return True
+
+
 def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[str, str]]:
     """Return commit history for a Class's wiki, optionally scoped to a
     single page path (relative to the wiki root). Most recent first."""

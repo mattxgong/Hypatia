@@ -43,7 +43,12 @@ from app.models.db_models import (
     File as FileRecord,
 )
 from app.services import storage_service
-from app.services.wiki_git import init_wiki_repo
+from app.services.wiki_git import (
+    create_history_bundle,
+    init_wiki_repo,
+    restore_history_bundle,
+)
+from app.services.wiki_parser import is_git_path_part, normalize_page_path
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -51,6 +56,8 @@ logger = get_logger()
 router = APIRouter(prefix="/api/classes", tags=["backup"])
 
 _MANIFEST_FILENAME = "manifest.json"
+# Wiki git history travels as a bundle; a .git directory is never exported or imported.
+_HISTORY_FILENAME = "wiki-history.bundle"
 _BACKUP_VERSION = 1
 _MAX_ARCHIVE_ENTRIES = 10_000
 _MAX_MANIFEST_SIZE_BYTES = 10 * 1024 * 1024
@@ -188,6 +195,7 @@ def _archive_path(info: zipfile.ZipInfo) -> PurePosixPath:
     if (
         not name
         or "\\" in name
+        or ":" in name
         or path.is_absolute()
         or any(part in {"", ".", ".."} for part in path.parts)
         or path.parts[0] not in _ARCHIVE_ROOTS
@@ -209,6 +217,7 @@ def _inspect_archive(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, PurePos
 
     seen_names: set[str] = set()
     expanded_size = 0
+    skipped_git_entries = 0
     entries: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
     for info in infos:
         normalized_name = info.filename.casefold()
@@ -238,8 +247,16 @@ def _inspect_archive(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, PurePos
                     status.HTTP_413_CONTENT_TOO_LARGE,
                 )
             continue
+        if info.filename == _HISTORY_FILENAME:
+            continue
+        # Older backups included wiki/.git; its config and hooks could run commands.
+        if any(is_git_path_part(part) for part in info.filename.replace("\\", "/").split("/")):
+            skipped_git_entries += 1
+            continue
         entries.append((info, _archive_path(info)))
 
+    if skipped_git_entries:
+        logger.info("backup_git_entries_skipped", count=skipped_git_entries)
     return entries
 
 
@@ -559,9 +576,16 @@ async def backup_class(
             dir_path = class_root / subdir
             if dir_path.exists():
                 for file_path in dir_path.rglob("*"):
-                    if file_path.is_file():
-                        arcname = str(file_path.relative_to(class_root))
-                        zf.write(file_path, arcname)
+                    relative = file_path.relative_to(class_root)
+                    if file_path.is_file() and not any(
+                        is_git_path_part(part) for part in relative.parts
+                    ):
+                        zf.write(file_path, relative.as_posix())
+
+        history_path = tmp_dir / _HISTORY_FILENAME
+        if create_history_bundle(str(class_id), history_path):
+            zf.write(history_path, _HISTORY_FILENAME)
+            history_path.unlink()
 
     from starlette.background import BackgroundTask
 
@@ -613,6 +637,11 @@ async def import_class(
 
             stage_root = tmp_dir / "class"
             _extract_archive(zf, archive_entries, stage_root)
+            history_path: Path | None = None
+            if _HISTORY_FILENAME in zf.namelist():
+                history_path = tmp_dir / _HISTORY_FILENAME
+                with zf.open(_HISTORY_FILENAME) as source, history_path.open("wb") as dest:
+                    shutil.copyfileobj(source, dest, length=1024 * 1024)
 
             new_class.name = manifest.class_info.name
             new_class.description = manifest.class_info.description
@@ -666,6 +695,9 @@ async def import_class(
                 )
 
             for page_data in manifest.wiki_pages:
+                page_path = normalize_page_path(page_data.path, require_pages_dir=False)
+                if page_path is None:
+                    raise _invalid_backup(f"unsafe wiki page path {page_data.path!r}")
                 source_file_ids: list[str] = []
                 for source_id in page_data.source_file_ids or []:
                     imported_source_id = file_id_map.get(source_id)
@@ -675,7 +707,7 @@ async def import_class(
                 session.add(
                     WikiPage(
                         class_id=new_class_id,
-                        path=page_data.path,
+                        path=page_path,
                         title=page_data.title,
                         category=page_data.category,
                         content=page_data.content,
@@ -700,7 +732,8 @@ async def import_class(
             class_root.parent.mkdir(parents=True, exist_ok=True)
             stage_root.replace(class_root)
             class_directory_created = True
-            init_wiki_repo(str(new_class_id))
+            if history_path is None or not restore_history_bundle(str(new_class_id), history_path):
+                init_wiki_repo(str(new_class_id))
             await session.commit()
 
     except HTTPException:
