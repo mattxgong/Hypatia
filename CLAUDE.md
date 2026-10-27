@@ -155,7 +155,8 @@ cd backend
 
 ## Database
 
-- SQLite, single file at `<data_dir>/hypatia.db`, where `data_dir` defaults to
+- SQLite in WAL mode with a 5s busy timeout (`app/database.py`), single file at
+  `<data_dir>/hypatia.db`, where `data_dir` defaults to
   `~/.hypatia/data` (overridable via the `HYPATIA_DATA_DIR` env var / `.env`;
   see `backend/app/config.py`).
 - Schema is defined with SQLAlchemy 2.0 async ORM models in
@@ -177,7 +178,10 @@ cd backend
     Nothing reads page files back. Ingest collects the LLM's pages in memory
     and writes them in one transaction only once every chunk succeeds, so
     a cancel or failure changes nothing. Ingest, `/rebuild`, `/remove` and
-    `/summarize` take `wiki_store.class_operation_lock(class_id)`.
+    `/summarize` take `wiki_store.class_operation_lock(class_id)`. `/rebuild`
+    writes the pages it deletes to `.rebuild-backup.json` in the Class
+    directory first; `recover_interrupted_rebuilds` (startup) restores any a
+    crash left missing.
   - `chat_messages` — chat history for a Class (`role`, `content`, `command`,
     `metadata_json`).
 - Study tables (Phase 9, DB-only, included in backups): `decks` →

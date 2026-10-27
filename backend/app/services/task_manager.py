@@ -38,6 +38,7 @@ class TaskManager:
 
     def start_task(self, operation: str, class_id: str) -> str:
         """Register a new running task. Returns the task_id."""
+        self.cleanup_completed()
         task_id = str(uuid.uuid4())
         self._tasks[task_id] = TaskStatus(
             task_id=task_id,

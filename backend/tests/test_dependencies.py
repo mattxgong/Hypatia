@@ -62,7 +62,7 @@ def _reset_cache() -> None:
 class TestLLMDependency:
     async def test_llm_available_passes(self) -> None:
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(return_value="ok")
+        mock_provider.check = AsyncMock(return_value="ok")
 
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             await check_llm_available()
@@ -71,7 +71,7 @@ class TestLLMDependency:
         from app.exceptions import LLMUnavailableError
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(side_effect=RuntimeError("no LLM"))
+        mock_provider.check = AsyncMock(side_effect=RuntimeError("no LLM"))
 
         with (
             patch("app.dependencies.get_llm_provider", return_value=mock_provider),
@@ -93,7 +93,7 @@ class TestLLMDependency:
 
         monkeypatch.setattr(deps, "_PROBE_TIMEOUT_SECONDS", 0.01)
         mock_provider = AsyncMock()
-        mock_provider.complete = never_answers
+        mock_provider.check = never_answers
 
         with (
             patch("app.dependencies.get_llm_provider", return_value=mock_provider),
@@ -103,9 +103,18 @@ class TestLLMDependency:
 
         mock_provider.close.assert_awaited_once()
 
+    async def test_probe_never_spends_a_completion(self) -> None:
+        mock_provider = AsyncMock()
+
+        with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
+            await check_llm_available()
+
+        mock_provider.check.assert_awaited_once()
+        mock_provider.complete.assert_not_called()
+
     async def test_successful_probe_closes_provider(self) -> None:
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(return_value="ok")
+        mock_provider.check = AsyncMock(return_value="ok")
 
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             await check_llm_available()
@@ -114,19 +123,19 @@ class TestLLMDependency:
 
     async def test_cache_reuses_result(self) -> None:
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(return_value="ok")
+        mock_provider.check = AsyncMock(return_value="ok")
 
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             await check_llm_available()
             await check_llm_available()
 
-        assert mock_provider.complete.call_count == 1
+        assert mock_provider.check.call_count == 1
 
     async def test_cache_expires(self) -> None:
         import app.dependencies as deps
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(return_value="ok")
+        mock_provider.check = AsyncMock(return_value="ok")
 
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             await check_llm_available()
@@ -136,7 +145,7 @@ class TestLLMDependency:
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             await check_llm_available()
 
-        assert mock_provider.complete.call_count == 2
+        assert mock_provider.check.call_count == 2
 
 
 class TestGracefulDegradation:
@@ -144,7 +153,7 @@ class TestGracefulDegradation:
         app.dependency_overrides.pop(check_llm_available, None)
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(side_effect=RuntimeError("down"))
+        mock_provider.check = AsyncMock(side_effect=RuntimeError("down"))
 
         class_id = uuid.uuid4()
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
@@ -157,7 +166,7 @@ class TestGracefulDegradation:
         app.dependency_overrides.pop(check_llm_available, None)
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(side_effect=RuntimeError("down"))
+        mock_provider.check = AsyncMock(side_effect=RuntimeError("down"))
 
         class_id = uuid.uuid4()
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):

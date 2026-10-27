@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -22,13 +23,24 @@ logger = get_logger()
 router = APIRouter(prefix="/api/classes", tags=["classes"])
 
 
+async def _commit_unique_name(session: AsyncSession, name: str) -> None:
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'A class named "{name}" already exists',
+        ) from exc
+
+
 @router.post("", response_model=ClassRead, status_code=status.HTTP_201_CREATED)
 async def create_class(
     body: ClassCreate, session: AsyncSession = Depends(get_session)
 ) -> ClassRead:
     class_ = Class(name=body.name, description=body.description)
     session.add(class_)
-    await session.commit()
+    await _commit_unique_name(session, body.name)
     await session.refresh(class_)
 
     storage_service.create_class_directories(str(class_.id))
@@ -103,7 +115,7 @@ async def update_class(
     if body.description is not None:
         class_.description = body.description
 
-    await session.commit()
+    await _commit_unique_name(session, class_.name)
     await session.refresh(class_)
     logger.info("class_updated", class_id=str(class_id))
     return ClassRead.model_validate(class_)

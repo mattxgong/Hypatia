@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -10,19 +11,24 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.database import async_session_factory, get_session
 from app.dependencies import check_llm_available
 from app.models.db_models import WikiPage
 from app.models.schemas import (
+    WikiHistoryEntry,
     WikiPageRead,
     WikiPageUpdate,
+    WikiRevertRequest,
+    WikiRevertResponse,
     WikiSearchResponse,
     WikiSearchResultRead,
     WikiTreeNodeRead,
 )
 from app.services import wiki_engine
 from app.services.task_manager import task_manager
+from app.services.wiki_git import get_wiki_history
 from app.services.wiki_parser import normalize_page_path
 from app.services.wiki_search import (
     SearchMode,
@@ -138,7 +144,30 @@ async def export_wiki(
         result.export_path,
         filename=Path(result.export_path).name,
         media_type="application/zip",
+        # Downloaded once; nothing else needs the file afterwards.
+        background=BackgroundTask(Path(result.export_path).unlink, missing_ok=True),
     )
+
+
+@router.get("/history", response_model=list[WikiHistoryEntry])
+async def wiki_history(class_id: uuid.UUID, path: str | None = None) -> list[WikiHistoryEntry]:
+    """The wiki's versions (or one page's), newest first."""
+    if path is not None and normalize_page_path(path) is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid page path")
+    entries = await asyncio.to_thread(get_wiki_history, str(class_id), path)
+    return [WikiHistoryEntry(**e) for e in entries]
+
+
+@router.post("/revert", response_model=WikiRevertResponse)
+async def revert_wiki(
+    class_id: uuid.UUID, body: WikiRevertRequest, session: AsyncSession = Depends(get_session)
+) -> WikiRevertResponse:
+    """Make the wiki what it was at an earlier version, recorded as a new version."""
+    if not await wiki_engine.revert_wiki(session, class_id, body.commit_sha):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="That version could not be read"
+        )
+    return WikiRevertResponse(commit_sha=body.commit_sha)
 
 
 @router.post("/lint", dependencies=[Depends(check_llm_available)])

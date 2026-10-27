@@ -71,6 +71,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClassRead"
+        "409":
+          description: A Class with this name already exists
 
   /api/classes/{class_id}:
     parameters:
@@ -105,6 +107,8 @@ paths:
                 $ref: "#/components/schemas/ClassRead"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another Class already has this name
     delete:
       summary: Delete a Class and all its data
       operationId: deleteClass
@@ -342,6 +346,64 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/classes/{class_id}/wiki/history:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Limit to one page's versions (pages/**/*.md).
+    get:
+      summary: The wiki's versions, newest first
+      operationId: getWikiHistory
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WikiHistoryEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/classes/{class_id}/wiki/revert:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Make the wiki what it was at an earlier version
+      description: >-
+        Loads that version's pages into the database and records the change
+        as a new version, so history is kept.
+      operationId: revertWiki
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                commit_sha:
+                  type: string
+                  pattern: "^[0-9a-f]{7,40}$"
+              required: [commit_sha]
+      responses:
+        "200":
+          description: Reverted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit_sha:
+                    type: string
+                required: [commit_sha]
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/classes/{class_id}/wiki/search:
     parameters:
       - $ref: "#/components/parameters/ClassId"
@@ -496,7 +558,9 @@ paths:
       description: >-
         Any .git entries (from older backups) are ignored; history is restored
         from wiki-history.bundle when present, otherwise the wiki starts with
-        a fresh repository.
+        a fresh repository. If a Class with the backup's name exists, the
+        import is named "<name> (imported)" (or "(imported 2)", ...). Original
+        timestamps are kept and pages are indexed for search.
       operationId: importClass
       requestBody:
         required: true
@@ -1753,6 +1817,20 @@ components:
           type: string
       required: [type, content]
 
+    WikiHistoryEntry:
+      type: object
+      properties:
+        sha:
+          type: string
+        author:
+          type: string
+        date:
+          type: string
+          format: date-time
+        message:
+          type: string
+      required: [sha, author, date, message]
+
     ChatWsComplete:
       description: Server -> client. Assistant reply finished.
       type: object
@@ -1769,8 +1847,16 @@ components:
           nullable: true
         citations:
           type: array
+          description: >-
+            For /ask, the wiki pages the answer was based on (also saved on
+            the reply's metadata_json as "pages").
           items:
             type: object
+            properties:
+              path:
+                type: string
+              title:
+                type: string
         result:
           type: object
           nullable: true

@@ -60,7 +60,9 @@ async def test_ask_finishes_after_the_client_disconnects(
 ) -> None:
     class_id = e2e_class["id"]
 
-    async def slow_answer(session: object, cid: uuid.UUID, query: str) -> AsyncIterator[str]:
+    async def slow_answer(
+        session: object, cid: uuid.UUID, query: str, **kwargs: object
+    ) -> AsyncIterator[str]:
         yield "First part. "
         await asyncio.sleep(0.3)
         yield "Second part."
@@ -88,7 +90,9 @@ async def test_cancel_reaches_a_running_command(e2e_client: AsyncClient, e2e_cla
     class_id = e2e_class["id"]
     started = asyncio.Event()
 
-    async def wait_for_cancel(session: object, cid: uuid.UUID, query: str) -> AsyncIterator[str]:
+    async def wait_for_cancel(
+        session: object, cid: uuid.UUID, query: str, **kwargs: object
+    ) -> AsyncIterator[str]:
         started.set()
         for _ in range(100):
             await asyncio.sleep(0.02)

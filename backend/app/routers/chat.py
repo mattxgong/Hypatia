@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session_factory, get_session
 from app.dependencies import check_llm_available
 from app.errors import ErrorCode, HypatiaError
-from app.models.db_models import ChatMessage, ChatRole
+from app.models.db_models import ChatMessage, ChatRole, WikiPage
 from app.models.schemas import (
     ChatMessageRead,
     DeckGenerateRequest,
@@ -185,33 +185,74 @@ async def _handle_help(conn: ChatConnection) -> None:
     )
 
 
+#: Earlier messages /ask sees, so follow-up questions make sense.
+_ASK_HISTORY_MESSAGES = 6
+
+
+async def _recent_turns(session: AsyncSession, class_id: uuid.UUID) -> list[tuple[str, str]]:
+    """The last few questions and answers, oldest first."""
+    rows = (
+        await session.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.class_id == class_id,
+                ChatMessage.role.in_((ChatRole.USER, ChatRole.ASSISTANT)),
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(_ASK_HISTORY_MESSAGES)
+        )
+    ).scalars()
+    return [(m.role.value, m.content) for m in reversed(list(rows))]
+
+
+async def _page_citations(
+    session: AsyncSession, class_id: uuid.UUID, paths: list[str]
+) -> list[dict[str, str]]:
+    if not paths:
+        return []
+    titles = dict(
+        (
+            await session.execute(
+                select(WikiPage.path, WikiPage.title).where(
+                    WikiPage.class_id == class_id, WikiPage.path.in_(paths)
+                )
+            )
+        ).tuples()
+    )
+    return [{"path": p, "title": titles.get(p, p)} for p in paths]
+
+
 async def _handle_ask_stream(conn: ChatConnection, class_id: uuid.UUID, query: str) -> None:
     async with async_session_factory() as session:
         try:
+            history = await _recent_turns(session, class_id)
             session.add(ChatMessage(class_id=class_id, role=ChatRole.USER, content=query))
             await session.commit()
 
             chunks: list[str] = []
-            async for chunk in wiki_engine.handle_ask_stream(session, class_id, query):
+            consulted: list[str] = []
+            async for chunk in wiki_engine.handle_ask_stream(
+                session, class_id, query, history=history, consulted=consulted
+            ):
                 chunks.append(chunk)
                 await conn.send_json({"type": "chunk", "content": chunk})
 
-            msg_id = str(uuid.uuid4())
-            session.add(
-                ChatMessage(
-                    class_id=class_id,
-                    role=ChatRole.ASSISTANT,
-                    content="".join(chunks),
-                    command="ask",
-                )
+            citations = await _page_citations(session, class_id, consulted)
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content="".join(chunks),
+                command="ask",
+                metadata_json={"pages": citations} if citations else None,
             )
+            session.add(reply)
             await session.commit()
 
             await conn.send_json(
                 {
                     "type": "complete",
-                    "message_id": msg_id,
-                    "citations": [],
+                    "message_id": str(reply.id),
+                    "citations": citations,
                 }
             )
         except HypatiaError as e:
@@ -408,7 +449,7 @@ async def _handle_export(conn: ChatConnection, class_id: uuid.UUID) -> None:
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
-                        "content": f"Export complete: {result.page_count} pages",
+                        "content": (f"Exported {result.page_count} pages to {result.export_path}"),
                         "result": {
                             "command": "/export",
                             "export_path": result.export_path,

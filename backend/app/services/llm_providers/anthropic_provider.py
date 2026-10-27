@@ -143,5 +143,12 @@ class AnthropicProvider(LLMProvider):
             logger.warning("anthropic_stream_error", error=str(exc))
             raise _wrap_anthropic_error(exc) from exc
 
+    async def check(self) -> None:
+        # Validates the key and that the model exists, without a completion.
+        try:
+            await self._client.models.retrieve(self._model)
+        except anthropic.APIError as exc:
+            raise _wrap_anthropic_error(exc) from exc
+
     async def list_models(self) -> list[str]:
         return [self._model]

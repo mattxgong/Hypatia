@@ -116,6 +116,23 @@ class WikiPageRead(BaseModel):
     updated_at: datetime
 
 
+class WikiHistoryEntry(BaseModel):
+    sha: str
+    author: str
+    date: str
+    message: str
+
+
+class WikiRevertRequest(BaseModel):
+    # A hex commit hash only: it is passed to git, which would read a leading
+    # "-" as an option.
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{7,40}$")
+
+
+class WikiRevertResponse(BaseModel):
+    commit_sha: str
+
+
 class WikiPageSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

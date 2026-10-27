@@ -447,6 +447,37 @@ def _mapped_file_ids(
     return mapped or None
 
 
+async def _unused_class_name(session: AsyncSession, name: str) -> str:
+    """``name``, or ``name (imported)``, ``name (imported 2)``, ... if it is taken."""
+    taken = set(
+        (await session.execute(select(Class.name).where(Class.name.startswith(name)))).scalars()
+    )
+    if name not in taken:
+        return name
+    candidate = f"{name} (imported)"
+    n = 2
+    while candidate in taken:
+        candidate = f"{name} (imported {n})"
+        n += 1
+    return candidate[:255]
+
+
+def _rename_converted(
+    stage_root: Path, old_id: uuid.UUID, new_id: uuid.UUID, converted_path: str | None
+) -> str | None:
+    """Rename a file's staged ``converted/<old_id>*`` artifacts to the new ID.
+
+    Returns ``converted_path`` (manifest-relative) with the ID replaced.
+    """
+    converted_dir = stage_root / "converted"
+    if converted_dir.is_dir():
+        for artifact in converted_dir.glob(f"{old_id}*"):
+            artifact.rename(artifact.with_name(artifact.name.replace(str(old_id), str(new_id), 1)))
+    if not converted_path:
+        return None
+    return converted_path.replace(str(old_id), str(new_id))
+
+
 def _timestamps(**values: datetime | None) -> dict[str, datetime]:
     """Only pass timestamps the backup has, so missing ones fall back to column defaults."""
     return {key: value for key, value in values.items() if value is not None}
@@ -687,9 +718,17 @@ async def import_class(
             _unpack_backup, zip_path, tmp_dir
         )
 
-        new_class.name = manifest.class_info.name
+        # Importing next to the original (restoring a backup of a Class that
+        # still exists) makes a copy rather than failing on the name.
+        new_class.name = await _unused_class_name(session, manifest.class_info.name)
         new_class.description = manifest.class_info.description
+        if manifest.class_info.created_at is not None:
+            new_class.created_at = manifest.class_info.created_at
         session.add(new_class)
+
+        paths = [p.path for p in manifest.wiki_pages]
+        if len(paths) != len(set(paths)):
+            raise _invalid_backup("duplicate wiki page paths")
 
         file_id_map: dict[uuid.UUID, uuid.UUID] = {}
         imported_filenames: set[str] = set()
@@ -705,6 +744,11 @@ async def import_class(
             imported_filenames.add(filename)
             imported_file_id = uuid.uuid4()
             file_id_map[file_data.id] = imported_file_id
+            # Converted artifacts are named by file ID; follow the new one so
+            # later cleanup (by ID) finds them all.
+            converted_rel = _rename_converted(
+                stage_root, file_data.id, imported_file_id, file_data.converted_path
+            )
             raw_path = _restored_path(
                 stage_root,
                 class_root,
@@ -715,10 +759,10 @@ async def import_class(
                 _restored_path(
                     stage_root,
                     class_root,
-                    file_data.converted_path,
+                    converted_rel,
                     "converted",
                 )
-                if file_data.converted_path
+                if converted_rel
                 else None
             )
             session.add(
@@ -733,6 +777,7 @@ async def import_class(
                     status=file_data.status,
                     error_message=file_data.error_message,
                     metadata_json=file_data.metadata_json,
+                    **_timestamps(created_at=file_data.created_at, updated_at=file_data.updated_at),
                 )
             )
 
@@ -758,6 +803,7 @@ async def import_class(
                 content=page_data.content,
                 source_file_ids=source_file_ids or None,
                 user_edited=user_edited,
+                **_timestamps(created_at=page_data.created_at, updated_at=page_data.updated_at),
             )
             session.add(page)
             imported_pages.append(page)
@@ -770,6 +816,7 @@ async def import_class(
                     content=msg_data.content,
                     command=msg_data.command,
                     metadata_json=msg_data.metadata_json,
+                    **_timestamps(created_at=msg_data.created_at, updated_at=msg_data.updated_at),
                 )
             )
 
@@ -795,9 +842,10 @@ async def import_class(
         await session.rollback()
         if class_directory_created:
             storage_service.delete_class_directory(str(new_class_id))
+        logger.warning("class_import_conflict", error=str(exc.orig))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A class with this name already exists",
+            detail="The backup conflicts with existing data; try importing it again",
         ) from exc
     except zipfile.BadZipFile as exc:
         await session.rollback()

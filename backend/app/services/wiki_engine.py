@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 import tiktoken
 from sqlalchemy import select, update
@@ -128,6 +129,9 @@ _PAGE_MARKER_LINE = re.compile(r"^\*\*\[Page \d+\]\*\*$")
 
 #: `[[slug]]` or `[[slug|display text]]`.
 _WIKI_LINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+
+#: Wiki exports older than this are removed when a new one is made.
+_EXPORT_RETENTION_SECONDS = 24 * 60 * 60
 
 #: The file a citation link points at.
 _CITATION_FILE = re.compile(r"hypatia://cite\?file=([^&)\s\"]+)")
@@ -695,10 +699,10 @@ async def _delete_page(session: AsyncSession, row: WikiPage) -> None:
 
 
 async def _ask_context(
-    session: AsyncSession, class_id: uuid.UUID, query: str
+    session: AsyncSession, class_id: uuid.UUID, query: str, *, search_text: str | None = None
 ) -> tuple[list[str], list[str]]:
     """The context blocks for an /ask prompt, and the paths of pages included."""
-    search_results = await hybrid_search(session, class_id, query, limit=10)
+    search_results = await hybrid_search(session, class_id, search_text or query, limit=10)
     rows = await _pages_by_path(session, class_id, [sr.path for sr in search_results])
 
     pages_context: list[str] = []
@@ -759,6 +763,20 @@ async def handle_ask(
 
     await _save_chat_messages(session, class_id, query, answer, "ask")
     return AskResult(answer=answer, pages_consulted=pages_consulted)
+
+
+def _format_history(history: list[tuple[str, str]], budget: int) -> str:
+    """The latest turns that fit in ``budget`` tokens, oldest first."""
+    kept: list[str] = []
+    used = 0
+    for role, text in reversed(history):
+        line = f"{'Student' if role == 'user' else 'You'}: {text}"
+        tokens = _count_tokens(line)
+        if used + tokens > budget:
+            break
+        kept.append(line)
+        used += tokens
+    return "\n\n".join(reversed(kept))
 
 
 def _chunk_source(content: str, token_budget: int) -> list[str]:
@@ -1054,6 +1072,11 @@ async def handle_export(
 
     export_dir = settings.data_dir / "exports" / cid
     export_dir.mkdir(parents=True, exist_ok=True)
+    # Exports kept for the chat command's message; older ones just take space.
+    cutoff = datetime.now(UTC).timestamp() - _EXPORT_RETENTION_SECONDS
+    for old in export_dir.glob("wiki_*.zip"):
+        if old.stat().st_mtime < cutoff:
+            old.unlink(missing_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     zip_path = export_dir / f"wiki_{timestamp}.zip"
 
@@ -1295,13 +1318,15 @@ async def handle_lint(
     issues: list[LintIssue] = []
     all_slugs = {Path(p).stem for p in all_pages}
 
-    cite_pattern = re.compile(r"hypatia://cite\?file=([^&\"]+)")
     inbound_links: dict[str, int] = {slug: 0 for slug in all_slugs}
 
+    # Citations name a source by filename or by file ID (see the wiki schema).
     existing_files_q = await session.execute(
-        select(File.original_filename).where(File.class_id == class_id)
+        select(File.id, File.original_filename).where(File.class_id == class_id)
     )
-    existing_filenames = {row[0] for row in existing_files_q.fetchall()}
+    known_sources: set[str] = set()
+    for file_id, filename in existing_files_q.all():
+        known_sources.update({str(file_id), filename})
 
     for page_path, content in all_pages.items():
         for match in _WIKI_LINK.finditer(content):
@@ -1319,9 +1344,9 @@ async def handle_lint(
                     )
                 )
 
-        for match in cite_pattern.finditer(content):
-            cited_file = match.group(1)
-            if cited_file not in existing_filenames:
+        for match in _CITATION_FILE.finditer(content):
+            cited_file = unquote(match.group(1))
+            if cited_file not in known_sources:
                 issues.append(
                     LintIssue(
                         severity="warning",
@@ -1492,9 +1517,15 @@ async def _rebuild(
     for row in await load_pages(session, class_id):
         if _is_preserved(row):
             kept_paths.append(row.path)
-            continue
-        backups.append(_PageBackup.capture(row))
-        await _delete_page(session, row)
+        else:
+            backups.append(_PageBackup.capture(row))
+    # Saved before the pages go, so a crash mid-rebuild can't lose them: the
+    # next startup puts back any that the rebuild didn't regenerate.
+    _write_rebuild_backup(cid, backups)
+    for backup in backups:
+        stale = await session.get(WikiPage, backup.id)
+        if stale is not None:
+            await _delete_page(session, stale)
     # The LLM should see the wiki as it now stands, not the pages just removed.
     await session.commit()
 
@@ -1553,6 +1584,7 @@ async def _rebuild(
         else:
             removed.append(backup.path)
     await session.commit()
+    _rebuild_backup_path(cid).unlink(missing_ok=True)
 
     append_log(
         cid,
@@ -1602,6 +1634,80 @@ class _PageBackup:
             source_file_ids=[str(s) for s in row.source_file_ids or []],
             created_at=row.created_at,
         )
+
+
+def _rebuild_backup_path(cid: str) -> Path:
+    return storage_service.class_dir(cid) / ".rebuild-backup.json"
+
+
+def _write_rebuild_backup(cid: str, backups: list[_PageBackup]) -> None:
+    payload = [
+        {
+            "id": str(b.id),
+            "path": b.path,
+            "content": b.content,
+            "title": b.title,
+            "category": b.category.value,
+            "source_file_ids": b.source_file_ids,
+            "created_at": b.created_at.isoformat() if b.created_at else None,
+        }
+        for b in backups
+    ]
+    path = _rebuild_backup_path(cid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+async def recover_interrupted_rebuilds(session: AsyncSession) -> list[str]:
+    """Put back pages a crashed /rebuild deleted but never regenerated.
+
+    Runs at startup. Returns the ids of the Classes recovered.
+    """
+    recovered: list[str] = []
+    classes_root = storage_service.class_dir("x").parent
+    if not classes_root.exists():
+        return recovered
+    for backup_file in classes_root.glob("*/.rebuild-backup.json"):
+        cid = backup_file.parent.name
+        try:
+            class_id = uuid.UUID(cid)
+            entries = json.loads(backup_file.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            logger.warning("rebuild_backup_unreadable", path=str(backup_file))
+            continue
+        present = {p.path for p in await load_pages(session, class_id)}
+        restored = 0
+        for entry in entries:
+            if entry["path"] in present:
+                continue
+            await _restore_page(
+                session,
+                class_id,
+                _PageBackup(
+                    id=uuid.UUID(entry["id"]),
+                    path=entry["path"],
+                    content=entry["content"],
+                    title=entry["title"],
+                    category=WikiCategory(entry["category"]),
+                    source_file_ids=list(entry["source_file_ids"]),
+                    created_at=datetime.fromisoformat(entry["created_at"])
+                    if entry["created_at"]
+                    else None,
+                ),
+            )
+            restored += 1
+        await session.commit()
+        backup_file.unlink(missing_ok=True)
+        if restored:
+            append_log(
+                cid, "rebuild", "recovered after an interrupted rebuild", f"Restored: {restored}\n"
+            )
+            await mirror_to_disk(session, class_id, "rebuild: recover interrupted rebuild")
+        logger.info("rebuild_recovered", class_id=cid, restored=restored)
+        recovered.append(cid)
+    return recovered
 
 
 async def index_page_for_search(session: AsyncSession, row: WikiPage) -> None:
@@ -1680,14 +1786,36 @@ async def revert_wiki(session: AsyncSession, class_id: uuid.UUID, commit_sha: st
 # ---------------------------------------------------------------------------
 
 
+#: Share of the /ask budget earlier conversation turns may take.
+_ASK_HISTORY_RATIO = 0.1
+
+
 async def handle_ask_stream(
     session: AsyncSession,
     class_id: uuid.UUID,
     query: str,
+    *,
+    history: list[tuple[str, str]] | None = None,
+    consulted: list[str] | None = None,
 ) -> AsyncIterator[str]:
-    """Stream an /ask response token-by-token."""
+    """Stream an /ask response token-by-token.
+
+    ``history`` is the recent conversation as (role, text), oldest first, so a
+    follow-up like "what about the second one?" can be answered; the previous
+    question also steers the page search. ``consulted`` is filled with the
+    paths of the pages the answer was based on.
+    """
     cid = str(class_id)
-    pages_context, pages_consulted = await _ask_context(session, class_id, query)
+    history = history or []
+    previous_question = next((text for role, text in reversed(history) if role == "user"), "")
+    pages_context, pages_consulted = await _ask_context(
+        session,
+        class_id,
+        query,
+        search_text=f"{previous_question} {query}".strip() if previous_question else None,
+    )
+    if consulted is not None:
+        consulted.extend(pages_consulted)
 
     # The chat router records the question and the streamed answer in history.
     if not pages_consulted:
@@ -1695,7 +1823,14 @@ async def handle_ask_stream(
         return
 
     context_block = "---\n".join(pages_context)
-    user_prompt = f"## Context\n\n{context_block}\n\n---\n\n## Question\n\n{query}"
+    conversation = _format_history(
+        history, int(_prompt_budget(ASK_SYSTEM_PROMPT) * _ASK_HISTORY_RATIO)
+    )
+    user_prompt = (
+        f"## Context\n\n{context_block}\n\n---\n\n"
+        + (f"## Earlier in this conversation\n\n{conversation}\n\n---\n\n" if conversation else "")
+        + f"## Question\n\n{query}"
+    )
 
     try:
         async with _llm() as provider:

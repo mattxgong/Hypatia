@@ -10,6 +10,7 @@ rest of the app keeps working without version history.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,7 @@ from app.utils.logging import get_logger
 logger = get_logger()
 
 _GIT_AVAILABLE = shutil.which("git") is not None
+_COMMIT_SHA = re.compile(r"[0-9a-f]{7,40}")
 _warned_missing_git = False
 
 
@@ -165,7 +167,7 @@ def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[s
     separator = "\x1f"
     args = ["log", f"--pretty=format:%H{separator}%an{separator}%aI{separator}%s"]
     if page_path:
-        args.extend(["--", page_path])
+        args.extend(["--", page_path])  # after "--", git reads it as a path only
 
     result = _run_git(args, cwd=path)
     if result.returncode != 0 or not result.stdout.strip():
@@ -187,6 +189,8 @@ def read_pages_at(class_id: str, commit_sha: str) -> dict[str, str] | None:
     if not _GIT_AVAILABLE:
         _warn_git_missing()
         return None
+    if not _COMMIT_SHA.fullmatch(commit_sha):
+        return None  # never hand git something that could parse as an option
 
     path = wiki_dir(class_id)
     if not (path / ".git").exists():

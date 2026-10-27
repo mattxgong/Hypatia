@@ -44,6 +44,10 @@ class QueueItem:
     position: int = 0
 
 
+_MAX_FINISHED_ITEMS = 50
+_FINISHED = (QueueItemStatus.COMPLETE, QueueItemStatus.FAILED)
+
+
 @dataclass
 class ClassQueue:
     """Per-class queue state."""
@@ -124,6 +128,12 @@ class IngestionQueue:
         position = sum(1 for it in cq.items if it.status == QueueItemStatus.PENDING) + 1
         item = QueueItem(class_id=class_id, file_id=file_id, position=position)
         cq.items.append(item)
+        # Finished items only matter briefly (status of a recent upload); keep
+        # the newest few so a long session doesn't grow the list forever.
+        finished = [i for i in cq.items if i.status in _FINISHED]
+        if len(finished) > _MAX_FINISHED_ITEMS:
+            drop = {id(i) for i in finished[: len(finished) - _MAX_FINISHED_ITEMS]}
+            cq.items = [i for i in cq.items if id(i) not in drop]
 
         if not cq.processing:
             # Claim the class here, under the lock, rather than letting the

@@ -74,5 +74,13 @@ class LLMProvider(ABC):
     async def list_models(self) -> list[str]:
         """Return available model IDs from this provider."""
 
+    async def check(self) -> None:
+        """Raise if the provider can't be reached or its credentials are bad.
+
+        Used by the availability check, so it must not cost a completion: the
+        default lists models, which every provider serves for free.
+        """
+        await self.list_models()
+
     async def close(self) -> None:
         """Release any client resources held by this provider."""

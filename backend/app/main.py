@@ -16,7 +16,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from app import __version__
 from app.config import Settings, settings
-from app.database import engine, run_migrations
+from app.database import async_session_factory, engine, run_migrations
 from app.errors import HypatiaError
 from app.routers import backup as backup_router
 from app.routers import chat as chat_router
@@ -31,6 +31,7 @@ from app.services.credential_store import CredentialStore
 from app.services.ingestion_queue import get_ingestion_queue
 from app.services.ollama_manager import refresh_if_native_ollama, unload_if_ollama
 from app.services.settings_store import load_settings, reconcile_active_model
+from app.services.wiki_engine import recover_interrupted_rebuilds
 from app.services.wiki_search import ensure_fts_index
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
 
@@ -96,6 +97,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await refresh_if_native_ollama(
         settings.llm_provider, settings.llm_model, settings.ollama_base_url
     )
+    try:
+        async with async_session_factory() as session:
+            await recover_interrupted_rebuilds(session)
+    except Exception:
+        logger.exception("rebuild_recovery_failed")
     try:
         await get_ingestion_queue().recover_pending()
     except Exception:

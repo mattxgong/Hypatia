@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -442,10 +442,66 @@ async def list_quizzes(
     class_id: uuid.UUID, session: AsyncSession = Depends(get_session)
 ) -> list[QuizSummaryRead]:
     await service.get_class_or_404(session, class_id)
-    result = await session.execute(
-        select(Quiz).where(Quiz.class_id == class_id).order_by(Quiz.created_at.desc())
+    quizzes = list(
+        (
+            await session.execute(
+                select(Quiz).where(Quiz.class_id == class_id).order_by(Quiz.created_at.desc())
+            )
+        ).scalars()
     )
-    return [(await _quiz_summary(session, class_id, q))[0] for q in result.scalars().all()]
+    return await _quiz_summaries(session, class_id, quizzes)
+
+
+async def _quiz_summaries(
+    session: AsyncSession, class_id: uuid.UUID, quizzes: list[Quiz]
+) -> list[QuizSummaryRead]:
+    """Summaries of many quizzes in a fixed number of queries, not three per quiz."""
+    ids = [q.id for q in quizzes]
+    if not ids:
+        return []
+    questions: dict[uuid.UUID, list[QuizQuestion]] = {quiz_id: [] for quiz_id in ids}
+    for question in (
+        await session.execute(select(QuizQuestion).where(QuizQuestion.quiz_id.in_(ids)))
+    ).scalars():
+        questions[question.quiz_id].append(question)
+    count_rows = await session.execute(
+        select(QuizAttempt.quiz_id, func.count())
+        .where(QuizAttempt.quiz_id.in_(ids))
+        .group_by(QuizAttempt.quiz_id)
+    )
+    attempt_counts: dict[uuid.UUID, int] = {quiz_id: n for quiz_id, n in count_rows.all()}
+    latest: dict[uuid.UUID, QuizAttempt] = {}
+    for attempt in (
+        await session.execute(
+            select(QuizAttempt)
+            .where(QuizAttempt.quiz_id.in_(ids))
+            .order_by(QuizAttempt.created_at.desc())
+        )
+    ).scalars():
+        latest.setdefault(attempt.quiz_id, attempt)
+    current = await service.current_hashes(
+        session, class_id, service.referenced_paths([q for qs in questions.values() for q in qs])
+    )
+    return [
+        QuizSummaryRead(
+            id=quiz.id,
+            class_id=quiz.class_id,
+            name=quiz.name,
+            generation_method=quiz.generation_method,
+            scope_json=quiz.scope_json,
+            settings_json=quiz.settings_json,
+            question_count=len(questions[quiz.id]),
+            stale_count=sum(
+                1 for q in questions[quiz.id] if service.is_stale(q.page_hashes, current)
+            ),
+            attempt_count=attempt_counts.get(quiz.id, 0),
+            last_score=latest[quiz.id].score if quiz.id in latest else None,
+            last_max_score=latest[quiz.id].max_score if quiz.id in latest else None,
+            created_at=quiz.created_at,
+            updated_at=quiz.updated_at,
+        )
+        for quiz in quizzes
+    ]
 
 
 @router.post(
