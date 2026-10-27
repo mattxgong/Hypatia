@@ -43,12 +43,14 @@ from app.models.db_models import (
     File as FileRecord,
 )
 from app.services import storage_service
+from app.services.wiki_engine import index_page_for_search
 from app.services.wiki_git import (
     create_history_bundle,
     init_wiki_repo,
     restore_history_bundle,
 )
 from app.services.wiki_parser import is_git_path_part, normalize_page_path
+from app.services.wiki_store import mirror_to_disk
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -96,6 +98,8 @@ class _WikiPageManifest(_ManifestModel):
     category: WikiCategory
     content: str
     source_file_ids: list[uuid.UUID] | None = None
+    # Absent from backups made before the column existed.
+    user_edited: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -325,6 +329,7 @@ def _serialize_wiki_page(p: WikiPage) -> dict:
         "category": p.category.value,
         "content": p.content,
         "source_file_ids": p.source_file_ids,
+        "user_edited": p.user_edited,
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
     }
@@ -694,6 +699,7 @@ async def import_class(
                     )
                 )
 
+            imported_pages: list[WikiPage] = []
             for page_data in manifest.wiki_pages:
                 page_path = normalize_page_path(page_data.path, require_pages_dir=False)
                 if page_path is None:
@@ -704,16 +710,20 @@ async def import_class(
                     if imported_source_id is None:
                         raise _invalid_backup(f"unknown source file ID {source_id}")
                     source_file_ids.append(str(imported_source_id))
-                session.add(
-                    WikiPage(
-                        class_id=new_class_id,
-                        path=page_path,
-                        title=page_data.title,
-                        category=page_data.category,
-                        content=page_data.content,
-                        source_file_ids=source_file_ids or None,
-                    )
+                user_edited = page_data.user_edited
+                if user_edited is None:
+                    user_edited = "user_edited: true" in page_data.content[:500]
+                page = WikiPage(
+                    class_id=new_class_id,
+                    path=page_path,
+                    title=page_data.title,
+                    category=page_data.category,
+                    content=page_data.content,
+                    source_file_ids=source_file_ids or None,
+                    user_edited=user_edited,
                 )
+                session.add(page)
+                imported_pages.append(page)
 
             for msg_data in manifest.chat_messages:
                 session.add(
@@ -729,6 +739,9 @@ async def import_class(
             _restore_study(session, new_class_id, manifest, file_id_map)
 
             await session.flush()
+            # Search (and so /ask, /summarize, topic-scoped study) needs these.
+            for page in imported_pages:
+                await index_page_for_search(session, page)
             class_root.parent.mkdir(parents=True, exist_ok=True)
             stage_root.replace(class_root)
             class_directory_created = True
@@ -764,6 +777,8 @@ async def import_class(
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    # The database is the source of truth; make the wiki files match it.
+    await mirror_to_disk(session, new_class_id, "import: restore pages")
     logger.info("class_imported", class_id=str(new_class_id), name=new_class.name)
     return {
         "id": str(new_class_id),

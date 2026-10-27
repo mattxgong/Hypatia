@@ -45,7 +45,10 @@ backend/            FastAPI Python backend
     services/
       credential_store.py  Platform-native credential storage (keyring → file fallback)
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
-      wiki_git.py     Per-Class git repo for wiki version history (init/commit/history/revert)
+      wiki_store.py   DB-is-truth helpers: per-Class operation lock, index from rows,
+                      mirror_to_disk (rewrites wiki files + git commit), log.md
+      wiki_git.py     Per-Class git repo for wiki version history (init/commit/history,
+                      bundles for backups, pages at a commit for revert)
       wiki_search.py  FTS5 full-text search across wiki pages
       study/          Study tools: extractors.py (offline cards from wiki
                       markdown), quiz_builder.py, grading.py, scheduler.py
@@ -164,7 +167,14 @@ cd backend
     existing name return 409. Converted artifacts are named by file ID
     (`converted/<file_id>.md`, `.summary.md`, ...) so sources never collide.
   - `wiki_pages` — LLM-maintained wiki pages for a Class (`path`, `title`,
-    `category`, `content`, `source_file_ids`).
+    `category`, `content`, `source_file_ids`, `user_edited`). This table is
+    the single source of truth for page content. `wiki/pages/**` and
+    `index.md` on disk are a mirror that `wiki_store.mirror_to_disk` rewrites
+    after each committed change, then commits to the Class's git repo.
+    Nothing reads page files back. Ingest collects the LLM's pages in memory
+    and writes them in one transaction only once every chunk succeeds, so
+    a cancel or failure changes nothing. Ingest, `/rebuild`, `/remove` and
+    `/summarize` take `wiki_store.class_operation_lock(class_id)`.
   - `chat_messages` — chat history for a Class (`role`, `content`, `command`,
     `metadata_json`).
 - Study tables (Phase 9, DB-only, included in backups): `decks` →

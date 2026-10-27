@@ -22,6 +22,7 @@ from app.errors import ErrorCode, HypatiaError
 from app.models.db_models import File, FileStatus, WikiPage
 from app.services.task_manager import task_manager
 from app.services.wiki_engine import IngestResult, ingest_source
+from app.services.wiki_store import class_operation_lock
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -356,7 +357,11 @@ class IngestionQueue:
     ) -> IngestResult:
         for attempt in range(max_retries):
             try:
-                async with self._session_factory() as session:
+                # Waits out a /rebuild, /remove or /summarize of the same Class.
+                async with (
+                    class_operation_lock(item.class_id),
+                    self._session_factory() as session,
+                ):
                     result = await ingest_source(
                         session, item.class_id, item.file_id, task_id=task_id
                     )

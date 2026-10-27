@@ -89,6 +89,14 @@ class MemoryCredentialStore:
         self._values.pop(key, None)
 
 
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test's wiki repos, uploads and logs out of ~/.hypatia."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "hypatia-data")
+
+
 # Host names httpx's ASGITransport ("http://test") and Starlette's TestClient use.
 TEST_HOSTS = ["test", "testserver"]
 

@@ -41,6 +41,9 @@ def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         cwd=cwd,
         capture_output=True,
         text=True,
+        # Page content is UTF-8; the locale codepage (cp1252 on Windows) would garble it.
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -175,27 +178,33 @@ def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[s
     return history
 
 
-def revert_wiki_to(class_id: str, commit_sha: str) -> str | None:
-    """Restore the wiki's working tree to match an earlier commit and record
-    the revert as a new commit, preserving full history. Returns the new
-    commit sha, or ``None`` if git is unavailable or the revert failed."""
+def read_pages_at(class_id: str, commit_sha: str) -> dict[str, str] | None:
+    """The wiki's ``pages/**`` files as they were at ``commit_sha``, by path.
+
+    Returns None if git is unavailable or the commit can't be read. The
+    caller loads these into the database, which then mirrors them to disk.
+    """
     if not _GIT_AVAILABLE:
         _warn_git_missing()
         return None
 
     path = wiki_dir(class_id)
     if not (path / ".git").exists():
-        logger.warning("wiki_revert_failed", class_id=class_id, detail="no repo")
         return None
 
-    checkout = _run_git(["checkout", commit_sha, "--", "."], cwd=path)
-    if checkout.returncode != 0:
+    listing = _run_git(["ls-tree", "-r", "-z", "--name-only", commit_sha, "--", "pages"], cwd=path)
+    if listing.returncode != 0:
         logger.warning(
-            "wiki_revert_failed",
+            "wiki_read_commit_failed",
             class_id=class_id,
             commit_sha=commit_sha,
-            stderr=checkout.stderr.strip(),
+            stderr=listing.stderr.strip(),
         )
         return None
 
-    return commit_wiki_change(class_id, f"Revert to {commit_sha[:8]}")
+    pages: dict[str, str] = {}
+    for rel_path in filter(None, listing.stdout.split("\0")):
+        shown = _run_git(["show", f"{commit_sha}:{rel_path}"], cwd=path)
+        if shown.returncode == 0:
+            pages[rel_path] = shown.stdout
+    return pages

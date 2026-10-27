@@ -121,3 +121,52 @@ def test_unique_file_name_migration_renames_legacy_duplicates(isolated_data_dir:
                 )
     finally:
         engine.dispose()
+
+
+def test_user_edited_migration_backfills_from_page_text(isolated_data_dir: Path) -> None:
+    config = database._alembic_config()
+    isolated_data_dir.mkdir(parents=True)
+    command.upgrade(config, "f4b2c8d6e1a3")
+
+    engine = sa.create_engine(f"sqlite:///{isolated_data_dir / 'hypatia.db'}")
+    class_id = uuid.uuid4().hex
+    pages = {
+        "pages/a.md": "---\ntitle: A\nuser_edited: true\n---\nMine.",
+        "pages/b.md": "---\ntitle: B\nuser_edited: false\n---\nGenerated.",
+    }
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO classes (id, name, created_at, updated_at) "
+                    "VALUES (:id, 'Legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                ),
+                {"id": class_id},
+            )
+            for path, content in pages.items():
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO wiki_pages (id, class_id, path, title, category, content, "
+                        "created_at, updated_at) VALUES (:id, :class_id, :path, 'T', 'concept', "
+                        ":content, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                    ),
+                    {
+                        "id": uuid.uuid4().hex,
+                        "class_id": class_id,
+                        "path": path,
+                        "content": content,
+                    },
+                )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text("SELECT path, user_edited FROM wiki_pages ORDER BY path")
+            ).all()
+        assert [(path, bool(flag)) for path, flag in rows] == [
+            ("pages/a.md", True),
+            ("pages/b.md", False),
+        ]
+    finally:
+        engine.dispose()

@@ -98,6 +98,17 @@ def parse_llm_output(raw: str) -> list[ParsedWikiPage]:
     return pages
 
 
+def parse_page_document(path: str, document: str) -> ParsedWikiPage | None:
+    """Parse a stored page (frontmatter + body), e.g. one read back from git."""
+    return _parse_single_page(path, "update", document.strip())
+
+
+def page_body(document: str) -> str:
+    """A stored page's markdown without its frontmatter."""
+    match = _FRONTMATTER_PATTERN.match(document.lstrip())
+    return match.group(2).strip() if match else document.strip()
+
+
 def _parse_single_page(path: str, action: str, body: str) -> ParsedWikiPage | None:
     """Parse a single page body (frontmatter + content). Returns None on failure."""
     fm_match = _FRONTMATTER_PATTERN.match(body)

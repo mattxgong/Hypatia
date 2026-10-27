@@ -44,6 +44,30 @@ async def db_session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
     await engine.dispose()
 
 
+async def _add_page(
+    session: AsyncSession,
+    class_id: uuid.UUID,
+    path: str,
+    content: str,
+    *,
+    category: WikiCategory = WikiCategory.CONCEPT,
+    user_edited: bool = False,
+    sources: list[str] | None = None,
+) -> WikiPage:
+    page = WikiPage(
+        class_id=class_id,
+        path=path,
+        title=Path(path).stem,
+        category=category,
+        content=content,
+        source_file_ids=sources or [],
+        user_edited=user_edited,
+    )
+    session.add(page)
+    await session.flush()
+    return page
+
+
 def _setup_wiki_with_pages(tmp_path: Path) -> Path:
     """Create a wiki directory with pages and links for testing."""
     wiki_path = tmp_path / "wiki"
@@ -87,7 +111,7 @@ async def test_handle_summarize_no_pages(db_session: AsyncSession, tmp_path: Pat
     wiki_path = tmp_path / "wiki"
     wiki_path.mkdir()
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         result = await handle_summarize(db_session, class_id, "quantum physics")
 
     assert isinstance(result, SummarizeResult)
@@ -140,9 +164,9 @@ async def test_handle_summarize_success(db_session: AsyncSession, tmp_path: Path
     mock_provider.complete = AsyncMock(return_value=llm_output)
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await handle_summarize(db_session, class_id, "testing")
 
@@ -212,8 +236,9 @@ async def test_handle_remove_success(db_session: AsyncSession, tmp_path: Path):
     await db_session.flush()
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change"),
         patch("app.services.ingestion_queue.get_ingestion_queue") as mock_get_queue,
     ):
         mock_get_queue.return_value.cancel_file = AsyncMock(return_value=True)
@@ -235,33 +260,51 @@ async def test_handle_remove_success(db_session: AsyncSession, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_clean_dead_links(tmp_path: Path):
-    wiki_path = tmp_path / "wiki"
-    pages_dir = wiki_path / "pages"
-    pages_dir.mkdir(parents=True)
-
-    (pages_dir / "survivor.md").write_text(
+async def test_clean_dead_links(db_session: AsyncSession):
+    class_id = uuid.uuid4()
+    survivor = await _add_page(
+        db_session,
+        class_id,
+        "pages/concepts/survivor.md",
         "Some text referencing [[deleted-page]] and [[kept-page]].\n",
-        encoding="utf-8",
     )
 
-    cleaned = _clean_dead_links(wiki_path, ["pages/deleted-page.md"])
+    cleaned = await _clean_dead_links(
+        db_session, class_id, [survivor], ["pages/concepts/deleted-page.md"]
+    )
     assert cleaned == 1
-
-    content = (pages_dir / "survivor.md").read_text(encoding="utf-8")
-    assert "[[deleted-page]]" not in content
-    assert "deleted-page" in content
-    assert "[[kept-page]]" in content
+    assert "[[deleted-page]]" not in survivor.content
+    assert "deleted-page" in survivor.content
+    assert "[[kept-page]]" in survivor.content
 
 
-def test_clean_dead_links_keeps_display_text(tmp_path: Path):
-    wiki_path = tmp_path / "wiki"
-    pages_dir = wiki_path / "pages"
-    pages_dir.mkdir(parents=True)
-    (pages_dir / "survivor.md").write_text("See [[deleted-page|the old page]].\n", encoding="utf-8")
+async def test_clean_dead_links_keeps_display_text(db_session: AsyncSession):
+    class_id = uuid.uuid4()
+    survivor = await _add_page(
+        db_session, class_id, "pages/concepts/survivor.md", "See [[deleted-page|the old page]].\n"
+    )
 
-    assert _clean_dead_links(wiki_path, ["pages/deleted-page.md"]) == 1
-    assert (pages_dir / "survivor.md").read_text(encoding="utf-8") == "See the old page.\n"
+    assert (
+        await _clean_dead_links(
+            db_session, class_id, [survivor], ["pages/concepts/deleted-page.md"]
+        )
+        == 1
+    )
+    assert survivor.content == "See the old page.\n"
+
+
+async def test_clean_dead_links_keeps_slug_another_page_still_has(db_session: AsyncSession):
+    class_id = uuid.uuid4()
+    survivor = await _add_page(db_session, class_id, "pages/concepts/survivor.md", "See [[x]].\n")
+    same_slug = await _add_page(db_session, class_id, "pages/entities/x.md", "Entity X.\n")
+
+    assert (
+        await _clean_dead_links(
+            db_session, class_id, [survivor, same_slug], ["pages/concepts/x.md"]
+        )
+        == 0
+    )
+    assert survivor.content == "See [[x]].\n"
 
 
 def test_chunk_source_repeats_page_marker_for_mid_page_chunks() -> None:
@@ -273,10 +316,8 @@ def test_chunk_source_repeats_page_marker_for_mid_page_chunks() -> None:
     assert all(chunk.startswith("**[Page 1]**") for chunk in chunks)
 
 
-def test_clean_dead_links_no_deletions(tmp_path: Path):
-    wiki_path = tmp_path / "wiki"
-    wiki_path.mkdir()
-    assert _clean_dead_links(wiki_path, []) == 0
+async def test_clean_dead_links_no_deletions(db_session: AsyncSession):
+    assert await _clean_dead_links(db_session, uuid.uuid4(), [], []) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +330,7 @@ async def test_handle_lint_empty_wiki(db_session: AsyncSession, tmp_path: Path):
     wiki_path = tmp_path / "wiki"
     wiki_path.mkdir()
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         result = await handle_lint(db_session, class_id)
 
     assert isinstance(result, LintResult)
@@ -304,18 +345,18 @@ async def test_handle_lint_finds_broken_links(db_session: AsyncSession, tmp_path
     pages_dir.mkdir(parents=True)
     (wiki_path / "log.md").write_text("# Log\n", encoding="utf-8")
 
-    (pages_dir / "page-a.md").write_text(
-        "---\ntitle: A\n---\nSee [[nonexistent]].\n", encoding="utf-8"
+    await _add_page(
+        db_session, class_id, "pages/page-a.md", "---\ntitle: A\n---\nSee [[nonexistent]].\n"
     )
-    (pages_dir / "page-b.md").write_text(
-        "---\ntitle: B\n---\nLinks to [[page-a]].\n", encoding="utf-8"
+    await _add_page(
+        db_session, class_id, "pages/page-b.md", "---\ntitle: B\n---\nLinks to [[page-a]].\n"
     )
 
     mock_provider = AsyncMock()
     mock_provider.complete = AsyncMock(return_value="No issues found.")
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         result = await handle_lint(db_session, class_id)
@@ -333,16 +374,18 @@ async def test_handle_lint_finds_dead_citations(db_session: AsyncSession, tmp_pa
     pages_dir.mkdir(parents=True)
     (wiki_path / "log.md").write_text("# Log\n", encoding="utf-8")
 
-    (pages_dir / "page-c.md").write_text(
+    await _add_page(
+        db_session,
+        class_id,
+        "pages/page-c.md",
         "---\ntitle: C\n---\nCitation: hypatia://cite?file=deleted.pdf&page=1\n",
-        encoding="utf-8",
     )
 
     mock_provider = AsyncMock()
     mock_provider.complete = AsyncMock(return_value="")
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         result = await handle_lint(db_session, class_id)
@@ -365,11 +408,18 @@ async def test_handle_rebuild_preview(db_session: AsyncSession, tmp_path: Path):
     pages_dir.mkdir(parents=True)
     (wiki_path / "index.md").write_text("# Index\n", encoding="utf-8")
 
-    (pages_dir / "user-page.md").write_text(
-        "---\ntitle: User Page\nuser_edited: true\n---\nKept.\n", encoding="utf-8"
+    await _add_page(
+        db_session,
+        class_id,
+        "pages/concepts/user-page.md",
+        "---\ntitle: User Page\nuser_edited: true\n---\nKept.\n",
+        user_edited=True,
     )
-    (pages_dir / "auto-page.md").write_text(
-        "---\ntitle: Auto Page\nuser_edited: false\n---\nGenerated.\n", encoding="utf-8"
+    await _add_page(
+        db_session,
+        class_id,
+        "pages/concepts/auto-page.md",
+        "---\ntitle: Auto Page\nuser_edited: false\n---\nGenerated.\n",
     )
 
     converted_path = tmp_path / "converted" / "notes.md"
@@ -392,7 +442,7 @@ async def test_handle_rebuild_preview(db_session: AsyncSession, tmp_path: Path):
     db_session.add(file_record)
     await db_session.flush()
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         preview = await handle_rebuild_preview(db_session, class_id)
 
     assert isinstance(preview, RebuildPreview)
@@ -413,8 +463,12 @@ async def test_handle_rebuild_preserves_user_edited(db_session: AsyncSession, tm
     (wiki_path / "log.md").write_text("# Log\n", encoding="utf-8")
 
     user_page = pages_dir / "user-kept.md"
-    user_page.write_text(
-        "---\ntitle: User Kept\nuser_edited: true\n---\nMy notes.\n", encoding="utf-8"
+    await _add_page(
+        db_session,
+        class_id,
+        "pages/concepts/user-kept.md",
+        "---\ntitle: User Kept\nuser_edited: true\n---\nMy notes.\n",
+        user_edited=True,
     )
     auto_page = pages_dir / "auto-delete.md"
     auto_page.write_text(
@@ -433,9 +487,9 @@ async def test_handle_rebuild_preserves_user_edited(db_session: AsyncSession, tm
     await db_session.flush()
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await handle_rebuild(db_session, class_id)
 
@@ -480,9 +534,9 @@ async def test_handle_rebuild_includes_file_mid_ingestion(
     mock_provider.complete = AsyncMock(return_value=llm_output)
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change"),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         result = await handle_rebuild(db_session, class_id)
@@ -532,9 +586,12 @@ async def _rebuild_fixture(
             source_file_ids=[str(file_record.id)],
         )
     )
-    (wiki_path / "pages" / "synthesis" / "overview.md").write_text(
+    await _add_page(
+        db_session,
+        class_id,
+        "pages/synthesis/overview.md",
         '---\ntitle: "Overview"\ntype: synthesis\nuser_edited: false\n---\n\nSummary.\n',
-        encoding="utf-8",
+        category=WikiCategory.SYNTHESIS,
     )
     await db_session.commit()
     return class_id, wiki_path, file_record
@@ -543,9 +600,9 @@ async def _rebuild_fixture(
 @contextmanager
 def _rebuild_env(wiki_path: Path, provider: AsyncMock) -> Iterator[None]:
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change"),
         patch("app.services.wiki_engine.get_llm_provider", return_value=provider),
     ):
         yield
@@ -602,7 +659,7 @@ async def test_handle_rebuild_preview_lists_synthesis_as_preserved(
 ):
     class_id, wiki_path, _ = await _rebuild_fixture(db_session, tmp_path)
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         preview = await handle_rebuild_preview(db_session, class_id)
 
     assert preview.pages_preserved_synthesis == ["pages/synthesis/overview.md"]
@@ -620,7 +677,7 @@ async def test_handle_ask_stream_no_pages(db_session: AsyncSession, tmp_path: Pa
     wiki_path.mkdir()
     (wiki_path / "index.md").write_text("# Index\n", encoding="utf-8")
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         chunks: list[str] = []
         async for chunk in handle_ask_stream(db_session, class_id, "What is X?"):
             chunks.append(chunk)
@@ -673,7 +730,7 @@ async def test_handle_ask_stream_yields_chunks(db_session: AsyncSession, tmp_pat
     mock_provider.stream = mock_stream
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         chunks: list[str] = []

@@ -39,6 +39,7 @@ from app.models.db_models import (
 )
 from app.models.db_models import File as FileRecord
 from app.services import wiki_git
+from app.services.wiki_search import ensure_fts_index, hybrid_search
 
 
 def _empty_manifest(name: str = "Imported Class") -> dict[str, object]:
@@ -68,6 +69,7 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_fts_index(engine)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         yield factory
@@ -548,6 +550,15 @@ class TestWikiHistory:
         class_id = uuid.uuid4()
         async with session_factory() as session:
             session.add(Class(id=class_id, name="History Class"))
+            session.add(
+                WikiPage(
+                    class_id=class_id,
+                    path="pages/concepts/x.md",
+                    title="X",
+                    category=WikiCategory.CONCEPT,
+                    content="# X v2",
+                )
+            )
             await session.commit()
         page = wiki_git.init_wiki_repo(str(class_id)) / "pages" / "concepts" / "x.md"
         page.parent.mkdir(parents=True)
@@ -635,3 +646,47 @@ async def test_import_rejects_unsafe_wiki_page_path(client: AsyncClient) -> None
 
     assert resp.status_code == 400
     assert "unsafe wiki page path" in resp.json()["detail"]
+
+
+async def test_imported_pages_are_searchable_and_keep_user_edits(
+    client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    manifest = _empty_manifest()
+    manifest["wiki_pages"] = [
+        {
+            "id": str(uuid.uuid4()),
+            "path": "pages/concepts/photosynthesis.md",
+            "title": "Photosynthesis",
+            "category": "concept",
+            "content": "---\ntitle: Photosynthesis\n---\n\nPlants turn light into sugar.",
+            "user_edited": True,
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "path": "pages/concepts/legacy.md",
+            "title": "Legacy",
+            "category": "concept",
+            "content": "---\ntitle: Legacy\nuser_edited: true\n---\n\nFrom an older backup.",
+        },
+    ]
+    resp = await client.post(
+        "/api/classes/import",
+        files={"file": ("backup.zip", _backup_bytes(manifest), "application/zip")},
+    )
+    assert resp.status_code == 201
+    class_id = uuid.UUID(resp.json()["id"])
+
+    async with session_factory() as session:
+        hits = await hybrid_search(session, class_id, "photosynthesis")
+        pages = (
+            (await session.execute(select(WikiPage).where(WikiPage.class_id == class_id)))
+            .scalars()
+            .all()
+        )
+    assert [h.path for h in hits] == ["pages/concepts/photosynthesis.md"]
+    assert {p.path: p.user_edited for p in pages} == {
+        "pages/concepts/photosynthesis.md": True,
+        "pages/concepts/legacy.md": True,
+    }
+    wiki = wiki_git.wiki_dir(str(class_id))
+    assert (wiki / "pages/concepts/photosynthesis.md").is_file()

@@ -258,10 +258,11 @@ paths:
       - $ref: "#/components/parameters/ClassId"
     get:
       summary: Get the wiki index page content
+      description: Generated from the Class's pages, grouped by category.
       operationId: getWikiIndex
       responses:
         "200":
-          description: Index page content (empty string if no index exists)
+          description: Index page content
           content:
             application/json:
               schema:
@@ -1477,6 +1478,9 @@ components:
           items:
             type: string
           nullable: true
+        user_edited:
+          type: boolean
+          description: The user edited this page; ingest, /rebuild and /remove keep it.
         created_at:
           type: string
           format: date-time
@@ -1488,6 +1492,7 @@ components:
         - class_id
         - path
         - title
+        - user_edited
         - category
         - content
         - created_at

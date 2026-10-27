@@ -111,6 +111,7 @@ class WikiPageRead(BaseModel):
     category: WikiCategory
     content: str
     source_file_ids: list[str] | None
+    user_edited: bool
     created_at: datetime
     updated_at: datetime
 

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -166,6 +168,10 @@ class WikiPage(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_file_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # Set by user edits; ingest, /rebuild and /remove never overwrite such pages.
+    user_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false()
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
