@@ -63,8 +63,10 @@ backend/            FastAPI Python backend
       llm_service.py     LLM provider abstraction + factory
       llm_providers/     Concrete LLM implementations:
         base.py           Abstract LLMProvider base class
-        copilot_provider.py   Default: github-copilot-sdk (Copilot CLI + BYOK Ollama)
-        anthropic_provider.py Direct Anthropic SDK
+        copilot_provider.py   github-copilot-sdk (Copilot CLI + BYOK Ollama)
+        anthropic_provider.py Default: direct Anthropic SDK, claude-sonnet-5-5. Sends
+                              no temperature (current models reject it) and opts
+                              into server-side refusal fallback where supported
         openai_provider.py    Direct OpenAI SDK (also Ollama via base_url)
     utils/
       logging.py      structlog JSON logging setup (rotating file handler + stdout)

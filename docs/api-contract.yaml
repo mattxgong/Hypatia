@@ -854,6 +854,9 @@ paths:
           default: 20
     get:
       summary: Cards due for review, most overdue first
+      description: >-
+        Every due card already started, then unseen cards up to the deck's
+        daily allowance (study_new_cards_per_day, counted from local midnight).
       operationId: listDueCards
       responses:
         "200":
@@ -1211,6 +1214,9 @@ components:
           $ref: "#/components/schemas/WhisperModelSize"
         whisper_device:
           $ref: "#/components/schemas/WhisperDevice"
+        study_new_cards_per_day:
+          type: integer
+          description: New flashcards each deck introduces per day (default 20).
       required:
         - llm_provider
         - llm_model
@@ -1223,6 +1229,7 @@ components:
         - ollama_base_url
         - whisper_model_size
         - whisper_device
+        - study_new_cards_per_day
 
     SettingsUpdate:
       type: object
@@ -1270,6 +1277,10 @@ components:
           $ref: "#/components/schemas/WhisperModelSize"
         whisper_device:
           $ref: "#/components/schemas/WhisperDevice"
+        study_new_cards_per_day:
+          type: integer
+          minimum: 0
+          maximum: 9999
 
     ValidateKeyRequest:
       type: object
@@ -1981,6 +1992,12 @@ components:
           type: integer
         lapses:
           type: integer
+        learning_step:
+          type: integer
+          nullable: true
+          description: >-
+            Position in the learning steps (1m, 10m) or, after a lapse, the
+            relearning step (10m); null once the card has graduated.
         due_at:
           type: string
           format: date-time

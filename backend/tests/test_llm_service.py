@@ -102,7 +102,8 @@ async def test_anthropic_complete():
     provider = AnthropicProvider(api_key="sk-test", model="test-model")
 
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(text="Hello world")]
+    mock_response.content = [MagicMock(type="text", text="Hello world")]
+    mock_response.stop_reason = "end_turn"
 
     with patch.object(provider._client.messages, "create", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_response

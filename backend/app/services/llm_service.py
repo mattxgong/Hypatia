@@ -21,9 +21,9 @@ def get_llm_provider(cfg: Settings | None = None) -> LLMProvider:
     """Create an LLM provider based on the application settings.
 
     Dispatches on ``settings.llm_provider``:
-      - ``"copilot"`` (default): GitHub Copilot model catalog.
+      - ``"copilot"``: GitHub Copilot model catalog.
       - ``"copilot-ollama"``: Copilot SDK with BYOK Ollama backend.
-      - ``"anthropic"``: Direct Anthropic API.
+      - ``"anthropic"`` (default): Direct Anthropic API.
       - ``"openai"``: Direct OpenAI API.
       - ``"ollama"``: Ollama's native API (no Copilot CLI needed).
     """
@@ -59,13 +59,13 @@ def get_llm_provider(cfg: Settings | None = None) -> LLMProvider:
         )
 
     if provider_name == "anthropic":
-        from .llm_providers.anthropic_provider import AnthropicProvider
+        from .llm_providers.anthropic_provider import DEFAULT_ANTHROPIC_MODEL, AnthropicProvider
 
         if not cfg.anthropic_api_key:
             raise ValueError("HYPATIA_ANTHROPIC_API_KEY is required for the 'anthropic' provider")
         return AnthropicProvider(
             api_key=cfg.anthropic_api_key,
-            model=model or "claude-sonnet-4-20250514",
+            model=model or DEFAULT_ANTHROPIC_MODEL,
             temperature=temperature,
         )
 

@@ -115,9 +115,9 @@ Note: the Flutter app's `BackendLauncher` uses port 8000 by default. If you chan
 
 ---
 
-## Copilot CLI not installed (default provider)
+## Copilot CLI not installed
 
-**Symptom**: The default LLM provider (`copilot`) fails with errors about missing the GitHub Copilot CLI.
+**Symptom**: With the `copilot` provider selected, requests fail with errors about missing the GitHub Copilot CLI.
 
 **Solution**: Either install the Copilot CLI or switch to a different provider.
 

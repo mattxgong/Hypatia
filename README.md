@@ -195,7 +195,7 @@ reports version 3.11 or newer.
 Create `backend/.env` with your preferred provider:
 
 ```bash
-# Option A: Anthropic
+# Option A: Anthropic (default; Claude Sonnet 5.5 unless HYPATIA_LLM_MODEL is set)
 HYPATIA_LLM_PROVIDER=anthropic
 HYPATIA_ANTHROPIC_API_KEY=sk-ant-...
 
@@ -208,7 +208,8 @@ HYPATIA_LLM_PROVIDER=ollama
 HYPATIA_OLLAMA_BASE_URL=http://localhost:11434
 HYPATIA_LLM_MODEL=llama3.2
 
-# Option D: GitHub Copilot (default, no config needed if Copilot CLI is installed)
+# Option D: GitHub Copilot (no key needed if the Copilot CLI is installed)
+HYPATIA_LLM_PROVIDER=copilot
 ```
 
 For native Ollama, install and start Ollama separately, then download the model
