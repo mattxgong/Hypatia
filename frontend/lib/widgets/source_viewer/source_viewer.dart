@@ -155,6 +155,7 @@ class _SourceContent extends ConsumerWidget {
         final seekSeconds = _parseSeekSeconds(request.location);
         return _MediaViewer(
           url: rawUrl,
+          headers: apiClient.authHeaders,
           seekSeconds: seekSeconds,
           isAudio: file.fileType == FileType.audio,
         );
@@ -162,11 +163,15 @@ class _SourceContent extends ConsumerWidget {
       case FileType.pdf:
         final rawUrl = apiClient.getFileRawUrl(classId, file.id);
         final page = _parsePage(request.location);
-        return _PdfViewer(url: rawUrl, initialPage: page);
+        return _PdfViewer(
+          url: rawUrl,
+          headers: apiClient.authHeaders,
+          initialPage: page,
+        );
 
       case FileType.image:
         final rawUrl = apiClient.getFileRawUrl(classId, file.id);
-        return _ImageViewer(url: rawUrl);
+        return _ImageViewer(url: rawUrl, headers: apiClient.authHeaders);
 
       default:
         return _TextViewer(classId: classId, fileId: file.id);
@@ -187,11 +192,13 @@ class _SourceContent extends ConsumerWidget {
 class _MediaViewer extends StatefulWidget {
   const _MediaViewer({
     required this.url,
+    required this.headers,
     required this.seekSeconds,
     required this.isAudio,
   });
 
   final String url;
+  final Map<String, String> headers;
   final int seekSeconds;
   final bool isAudio;
 
@@ -209,7 +216,7 @@ class _MediaViewerState extends State<_MediaViewer> {
     super.initState();
     _player = Player();
     _controller = VideoController(_player);
-    _player.open(Media(widget.url));
+    _player.open(Media(widget.url, httpHeaders: widget.headers));
 
     if (widget.seekSeconds > 0) {
       _player.stream.playing.listen((playing) {
@@ -250,21 +257,31 @@ class _MediaViewerState extends State<_MediaViewer> {
 }
 
 class _PdfViewer extends StatelessWidget {
-  const _PdfViewer({required this.url, required this.initialPage});
+  const _PdfViewer({
+    required this.url,
+    required this.headers,
+    required this.initialPage,
+  });
 
   final String url;
+  final Map<String, String> headers;
   final int initialPage;
 
   @override
   Widget build(BuildContext context) {
-    return PdfViewer.uri(Uri.parse(url), initialPageNumber: initialPage);
+    return PdfViewer.uri(
+      Uri.parse(url),
+      headers: headers,
+      initialPageNumber: initialPage,
+    );
   }
 }
 
 class _ImageViewer extends StatelessWidget {
-  const _ImageViewer({required this.url});
+  const _ImageViewer({required this.url, required this.headers});
 
   final String url;
+  final Map<String, String> headers;
 
   @override
   Widget build(BuildContext context) {
@@ -274,6 +291,7 @@ class _ImageViewer extends StatelessWidget {
       child: Center(
         child: Image.network(
           url,
+          headers: headers,
           fit: BoxFit.contain,
           loadingBuilder: (context, child, progress) {
             if (progress == null) return child;

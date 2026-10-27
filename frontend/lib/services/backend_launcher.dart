@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,10 +17,31 @@ enum BackendStatus {
 }
 
 class BackendLauncher {
-  BackendLauncher({String? externalBaseUrl})
-    : externalBaseUrl = normalizeExternalBaseUrl(externalBaseUrl);
+  BackendLauncher({String? externalBaseUrl, String? externalApiToken})
+    : externalBaseUrl = normalizeExternalBaseUrl(externalBaseUrl),
+      apiToken = externalBaseUrl == null || externalBaseUrl.trim().isEmpty
+          ? generateApiToken()
+          : _emptyToNull(externalApiToken);
 
   final String? externalBaseUrl;
+
+  /// Secret the backend requires on every request (HYPATIA_API_TOKEN). Fresh
+  /// for each app launch; for an external backend it is whatever that backend
+  /// was started with, or null if it was started without one.
+  final String? apiToken;
+
+  static String generateApiToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  static String? _emptyToNull(String? value) =>
+      value == null || value.isEmpty ? null : value;
+
+  Map<String, String> get _authHeaders => {
+    if (apiToken != null) 'Authorization': 'Bearer $apiToken',
+  };
 
   static const _defaultPort = 8000;
   static const _maxPortAttempts = 11;
@@ -232,6 +254,7 @@ class BackendLauncher {
       BaseOptions(
         connectTimeout: const Duration(seconds: 2),
         receiveTimeout: const Duration(seconds: 10),
+        headers: _authHeaders,
       ),
     );
     try {
@@ -530,6 +553,7 @@ class BackendLauncher {
         workingDirectory: backendDir.path,
         // Writing __pycache__ into a signed macOS bundle would invalidate it.
         environment: {
+          'HYPATIA_API_TOKEN': ?apiToken,
           'PYTHONPYCACHEPREFIX':
               '${appSupportDir.path}${Platform.pathSeparator}pycache',
         },

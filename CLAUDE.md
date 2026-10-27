@@ -205,6 +205,28 @@ The backend uses a structured error catalog in `backend/app/errors.py`:
 - A global `@app.exception_handler(HypatiaError)` in `main.py` serializes these
   to `{"detail": ..., "code": ..., "user_action": ...}` JSON responses.
 
+## Local access security
+
+The backend binds `127.0.0.1`, but web pages in the user's browser can still
+reach loopback. `backend/app/security.py` (`LocalAccessMiddleware`, outermost)
+therefore checks every HTTP request and WebSocket handshake:
+- `Host` must be in `settings.allowed_hosts` (blocks DNS rebinding). Tests add
+  `test`/`testserver` in the conftest fixtures.
+- A browser `Origin`, if sent, must match `cors_origins` / `cors_origin_regex`.
+- When `settings.api_token` (`HYPATIA_API_TOKEN`) is set, everything except
+  `/health` needs `Authorization: Bearer <token>`. `BackendLauncher` generates a
+  fresh token per launch and passes it to the backend process. `ApiClient` sends
+  it, and exposes `authHeaders` for loaders that fetch backend URLs themselves
+  (WebSocket, media, PDF, image). `scripts/run_dev.sh` makes one per run and
+  passes it to Flutter as `--dart-define=HYPATIA_API_TOKEN`.
+
+Wiki page paths from LLM output, `PUT /wiki/pages/...` and backups go through
+`wiki_parser.normalize_page_path`. It accepts only `pages/**/*.md` with no `..`
+or `.git` segments (backups may also restore top-level `index.md`). Backups
+carry wiki git history as `wiki-history.bundle` and never a `.git` directory.
+Import ignores `.git` entries, so an untrusted backup can't plant git config or
+hooks.
+
 ## Credential storage
 
 API keys are stored via `backend/app/services/credential_store.py`:

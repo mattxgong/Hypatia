@@ -89,6 +89,10 @@ class MemoryCredentialStore:
         self._values.pop(key, None)
 
 
+# Host names httpx's ASGITransport ("http://test") and Starlette's TestClient use.
+TEST_HOSTS = ["test", "testserver"]
+
+
 @pytest.fixture(autouse=True)
 def isolate_global_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Restore every ``settings`` field after each test.
@@ -100,6 +104,7 @@ def isolate_global_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     monkeypatch.setattr("app.main.CredentialStore", MemoryCredentialStore)
     snapshot = {name: copy.deepcopy(getattr(settings, name)) for name in Settings.model_fields}
+    settings.allowed_hosts = [*settings.allowed_hosts, *TEST_HOSTS]
     yield
     for name, value in snapshot.items():
         setattr(settings, name, value)

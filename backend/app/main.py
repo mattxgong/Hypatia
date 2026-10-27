@@ -22,6 +22,7 @@ from app.routers import settings as settings_router
 from app.routers import study as study_router
 from app.routers import tasks as tasks_router
 from app.routers import wiki as wiki_router
+from app.security import LocalAccessMiddleware
 from app.services.credential_store import CredentialStore
 from app.services.ingestion_queue import get_ingestion_queue
 from app.services.ollama_manager import refresh_if_native_ollama, unload_if_ollama
@@ -86,6 +87,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it runs first, before CORS and the routers.
+app.add_middleware(LocalAccessMiddleware)
 
 app.include_router(backup_router.router)
 app.include_router(classes_router.router)

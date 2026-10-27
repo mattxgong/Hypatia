@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_client.dart';
@@ -94,7 +95,10 @@ class WebSocketService {
 
     try {
       final url = apiClient.getChatWebSocketUrl(classId);
-      _channel = WebSocketChannel.connect(Uri.parse(url));
+      _channel = IOWebSocketChannel.connect(
+        Uri.parse(url),
+        headers: apiClient.authHeaders,
+      );
       await _channel!.ready;
       _reconnectAttempts = 0;
       _setState(WsConnectionState.connected);

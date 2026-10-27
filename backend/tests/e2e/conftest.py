@@ -101,6 +101,7 @@ def _pin_baseline_settings(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> N
         if name != "logs_dir":
             monkeypatch.setattr(settings, name, field.get_default(call_default_factory=True))
     monkeypatch.setattr(settings, "data_dir", data_dir)
+    monkeypatch.setattr(settings, "allowed_hosts", [*settings.allowed_hosts, "test", "testserver"])
 
 
 @pytest.fixture

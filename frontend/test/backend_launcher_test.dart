@@ -50,6 +50,34 @@ void main() {
     });
   });
 
+  group('BackendLauncher API token', () {
+    test('an owned backend gets a fresh random token per launcher', () {
+      final first = BackendLauncher();
+      final second = BackendLauncher();
+      addTearDown(first.dispose);
+      addTearDown(second.dispose);
+
+      expect(first.apiToken, matches(RegExp(r'^[A-Za-z0-9_-]{43}$')));
+      expect(first.apiToken, isNot(second.apiToken));
+    });
+
+    test('an external backend uses the token it was started with', () {
+      final withToken = BackendLauncher(
+        externalBaseUrl: 'http://127.0.0.1:8123',
+        externalApiToken: 'dev-token',
+      );
+      final withoutToken = BackendLauncher(
+        externalBaseUrl: 'http://127.0.0.1:8123',
+        externalApiToken: '',
+      );
+      addTearDown(withToken.dispose);
+      addTearDown(withoutToken.dispose);
+
+      expect(withToken.apiToken, 'dev-token');
+      expect(withoutToken.apiToken, isNull);
+    });
+  });
+
   group('BackendLauncher.isSupportedPythonVersion', () {
     test('accepts Python 3.11 and newer', () {
       expect(BackendLauncher.isSupportedPythonVersion('Python 3.11.0'), isTrue);

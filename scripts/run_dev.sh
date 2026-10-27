@@ -18,8 +18,11 @@ if [ ! -f "$VENV_PY" ]; then
   exit 1
 fi
 
+# Per-run secret the backend requires on every request (backend/app/security.py).
+API_TOKEN="$("$VENV_PY" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
 echo "==> Starting backend (uvicorn) on $BACKEND_URL"
-(cd "$BACKEND_DIR" && "$VENV_PY" -m uvicorn app.main:app --reload --port 8000) &
+(cd "$BACKEND_DIR" && HYPATIA_API_TOKEN="$API_TOKEN" "$VENV_PY" -m uvicorn app.main:app --reload --port 8000) &
 BACKEND_PID=$!
 
 cleanup() {
@@ -30,4 +33,5 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "==> Starting frontend (flutter run) against $BACKEND_URL"
-(cd "$FRONTEND_DIR" && flutter run "--dart-define=HYPATIA_BACKEND_URL=$BACKEND_URL")
+(cd "$FRONTEND_DIR" && flutter run "--dart-define=HYPATIA_BACKEND_URL=$BACKEND_URL" \
+  "--dart-define=HYPATIA_API_TOKEN=$API_TOKEN")

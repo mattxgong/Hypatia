@@ -14,9 +14,14 @@ final backendBaseUrlProvider = StateProvider<String>(
   (ref) => 'http://127.0.0.1:8000',
 );
 
+/// Per-launch secret the backend requires on every request (see
+/// backend/app/security.py). Null when the backend was started without one.
+final backendApiTokenProvider = StateProvider<String?>((ref) => null);
+
 final apiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(backendBaseUrlProvider);
-  return ApiClient(baseUrl: baseUrl);
+  final apiToken = ref.watch(backendApiTokenProvider);
+  return ApiClient(baseUrl: baseUrl, apiToken: apiToken);
 });
 
 class ApiException implements Exception {
@@ -37,14 +42,24 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({required String baseUrl})
-    : _dio = Dio(
+  ApiClient({required String baseUrl, String? apiToken})
+    : authHeaders = Map.unmodifiable({
+        if (apiToken != null && apiToken.isNotEmpty)
+          'Authorization': 'Bearer $apiToken',
+      }),
+      _dio = Dio(
         BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
         ),
-      );
+      ) {
+    _dio.options.headers.addAll(authHeaders);
+  }
+
+  /// Headers for loaders that fetch backend URLs themselves (WebSocket,
+  /// video, PDF and image viewers).
+  final Map<String, String> authHeaders;
 
   final Dio _dio;
 

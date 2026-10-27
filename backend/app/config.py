@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = []
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Host headers the backend answers to ("*" allows any); blocks DNS rebinding.
+    allowed_hosts: list[str] = ["127.0.0.1", "localhost", "::1"]
+    # Bearer token every request except /health must carry (see app/security.py).
+    # The desktop app generates one per launch; unset disables the check.
+    api_token: str | None = None
 
 
 settings = Settings()

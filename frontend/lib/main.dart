@@ -16,6 +16,7 @@ import 'services/api_client.dart';
 import 'services/backend_launcher.dart';
 
 const _externalBackendUrl = String.fromEnvironment('HYPATIA_BACKEND_URL');
+const _externalApiToken = String.fromEnvironment('HYPATIA_API_TOKEN');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,7 +82,10 @@ class _BackendGateState extends ConsumerState<BackendGate> {
   @override
   void initState() {
     super.initState();
-    _launcher = BackendLauncher(externalBaseUrl: _externalBackendUrl);
+    _launcher = BackendLauncher(
+      externalBaseUrl: _externalBackendUrl,
+      externalApiToken: _externalApiToken,
+    );
 
     if (!_isDesktop) {
       _status = BackendStatus.ready;
@@ -92,6 +96,7 @@ class _BackendGateState extends ConsumerState<BackendGate> {
       if (mounted) {
         setState(() => _status = status);
         if (status == BackendStatus.ready) {
+          ref.read(backendApiTokenProvider.notifier).state = _launcher.apiToken;
           ref.read(backendBaseUrlProvider.notifier).state = _launcher.baseUrl;
         }
       }
