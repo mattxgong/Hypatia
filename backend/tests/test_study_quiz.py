@@ -120,6 +120,21 @@ class TestGrading:
         assert grade(QuestionType.FILL, answer, {"text": "the viterbi algorithms"}).correct
         assert not grade(QuestionType.FILL, answer, {"text": "forward algorithm"}).correct
 
+    def test_fill_keeps_non_latin_letters_signs_and_decimals(self) -> None:
+        def correct(accepted: str, text: str) -> bool | None:
+            return grade(QuestionType.FILL, {"accepted": [accepted]}, {"text": text}).correct
+
+        assert correct("光合作用", "光合作用")
+        assert not correct("光合作用", "细胞")
+        assert not correct("Δ", "Ω")
+        assert correct("Ελλάδα", "ελλαδα")
+        assert not correct("-273", "273")
+        assert correct("-273", "−273")
+        assert not correct("3.14", "3 14")
+        assert not correct("x^2", "x2")
+        assert not correct("+", "-")
+        assert correct("+", " + ")
+
     def test_matching_gives_partial_credit(self) -> None:
         result = grade(QuestionType.MATCHING, {"pairs": [0, 1, 2, 3]}, {"pairs": [0, 1, 3, 2]})
         assert result.score == 0.5

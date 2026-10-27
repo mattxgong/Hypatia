@@ -12,6 +12,8 @@ from app.models.db_models import QuestionType
 GradeStatus = Literal["graded", "unanswered", "needs_self_review"]
 
 _ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+")
+# A signed or decimal number stays one token, so "-273" != "273" and "3.14" != "3 14".
+_TOKEN_RE = re.compile(r"(?<!\w)-?\d+(?:\.\d+)*|\w+")
 
 
 @dataclass(frozen=True)
@@ -22,9 +24,16 @@ class GradeResult:
 
 
 def normalize_answer(text: str) -> str:
-    """Case, accent, punctuation, article, and plural-insensitive form of a typed answer."""
-    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    words = re.sub(r"[^\w]+", " ", folded.lower()).split()
+    """Case, accent, punctuation, article, and plural-insensitive form of a typed answer.
+
+    Only combining accents are dropped, so non-Latin letters survive. An answer
+    with no letters or digits at all (e.g. a lone symbol) is compared as typed.
+    """
+    decomposed = unicodedata.normalize("NFKD", text.replace("−", "-"))
+    folded = "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+    words = _TOKEN_RE.findall(folded)
+    if not words:
+        return folded.strip()
     normalized = _ARTICLE_RE.sub("", " ".join(words))
     if normalized.endswith("s") and not normalized.endswith("ss"):
         normalized = normalized[:-1]
