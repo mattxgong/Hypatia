@@ -183,6 +183,27 @@ source backend/.venv/bin/activate
 
 ---
 
+## Windows build fails with `Cannot open include file: 'atlstr.h'`
+
+**Symptom**: `flutter run` or `scripts/run_dev.sh` fails compiling
+`flutter_secure_storage_windows_plugin.cpp` with error C1083 for `atlstr.h`.
+
+**Cause**: The `flutter_secure_storage` Windows plugin uses ATL, which
+Visual Studio's "Desktop development with C++" workload doesn't install by
+default.
+
+**Solution**: Open Visual Studio Installer, choose **Modify**, and on the
+**Individual components** tab add **C++ ATL for latest v14x build tools
+(x86 & x64)**. Then clear the stale build and run again:
+
+```bash
+cd frontend
+flutter clean
+flutter run -d windows
+```
+
+---
+
 ## Wiki pages are empty after upload
 
 **Symptom**: Files upload successfully but no wiki pages are generated.
