@@ -110,7 +110,8 @@ class OllamaProvider(LLMProvider):
             usage_totals.record(self._model, prompt_tokens, output_tokens)
 
     def _check_truncated(self, data: dict[str, Any], max_tokens: int) -> None:
-        if data.get("done_reason") == "length":
+        self.last_truncated = data.get("done_reason") == "length"
+        if self.last_truncated:
             logger.warning(
                 "ollama_output_truncated",
                 model=self._model,

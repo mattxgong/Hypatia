@@ -66,8 +66,8 @@ class SourceFile {
       status: FileStatus.fromString(json['status'] as String),
       errorMessage: json['error_message'] as String?,
       metadataJson: json['metadata_json'] as Map<String, dynamic>?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+      updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
       ingesting: json['ingesting'] as bool? ?? false,
     );
   }

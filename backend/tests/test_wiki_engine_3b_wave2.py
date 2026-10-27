@@ -728,6 +728,7 @@ async def test_handle_ask_stream_yields_chunks(db_session: AsyncSession, tmp_pat
 
     mock_provider = MagicMock()
     mock_provider.stream = mock_stream
+    mock_provider.close = AsyncMock()
 
     with (
         patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),

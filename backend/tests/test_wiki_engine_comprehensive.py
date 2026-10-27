@@ -231,6 +231,7 @@ async def test_ask_stream_llm_error_yields_error_message(db_session: AsyncSessio
 
     mock_provider = MagicMock()
     mock_provider.stream = failing_stream
+    mock_provider.close = AsyncMock()
 
     with (
         patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),

@@ -183,6 +183,9 @@ cd backend
   questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
   the current page body marks them out of date (computed on read, frontmatter
   ignored).
+- Timestamp columns use `UTCDateTime` (`db_models.py`): SQLite drops
+  tzinfo, so values are stored as UTC and always come back timezone-aware,
+  and the API sends them with an offset. The Flutter models call `.toLocal()`.
 - Enums (`FileType`, `FileStatus`, `WikiCategory`, `ChatRole`, and the study
   enums) are Python
   `str` enums stored by their string `.value` (via a `values_callable` helper),
@@ -200,6 +203,24 @@ cd backend
 backend (health check, Classes CRUD, file upload/list, wiki tree/page
 retrieval, and the chat WebSocket message protocol). Keep it in sync with
 `backend/app/models/schemas.py` and the actual routes as endpoints are added.
+
+## LLM calls and long-running work
+
+- Size prompts with `wiki_engine._prompt_budget(system_prompt)`. It reserves
+  the output budget, the system prompt and 5% headroom against the
+  configured context window.
+- Close providers after use (`async with _llm() as provider:` in the
+  engine). Copilot's provider holds a CLI process.
+- Providers set `last_truncated` when output stopped at `max_tokens`. Ingest
+  then re-runs that chunk split in half.
+- A rate-limited ingest re-raises `LLM_RATE_LIMITED` with the file reset to
+  READY, so `IngestionQueue._ingest_with_retry` retries it.
+- Synchronous heavy work (document conversion, backup zip/unzip, git) runs
+  in `asyncio.to_thread`.
+- Chat commands run in a per-connection worker (`routers/chat.py`) and
+  outlive the socket. They write their results to chat history, and the
+  frontend reloads history when it reconnects. The router owns chat history;
+  the engine's streaming `/ask` and `/summarize` don't save messages.
 
 ## Logging
 

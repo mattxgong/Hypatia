@@ -34,8 +34,8 @@ class ChatMessage {
       content: json['content'] as String,
       command: json['command'] as String?,
       metadataJson: json['metadata_json'] as Map<String, dynamic>?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+      updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     );
   }
 

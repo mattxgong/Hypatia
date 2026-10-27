@@ -51,6 +51,11 @@ usage_totals = UsageTotals()
 class LLMProvider(ABC):
     """Interface that all LLM providers must implement."""
 
+    #: Whether the last ``complete`` stopped at ``max_tokens`` rather than
+    #: finishing. Callers that need the whole answer (ingest) check it; a
+    #: provider that can't tell (Copilot) leaves it False.
+    last_truncated: bool = False
+
     @abstractmethod
     async def complete(
         self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192

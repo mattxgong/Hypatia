@@ -395,10 +395,10 @@ class IngestionQueue:
 
     @staticmethod
     def _is_rate_limit(exc: Exception) -> bool:
-        if isinstance(exc, HypatiaError) and exc.code == ErrorCode.LLM_RATE_LIMITED:
-            return True
+        if isinstance(exc, HypatiaError):
+            return exc.code == ErrorCode.LLM_RATE_LIMITED
         error_str = str(exc).lower()
-        return "rate" in error_str or "429" in error_str
+        return "rate limit" in error_str or "too many requests" in error_str
 
     @staticmethod
     async def _mark_error(session: AsyncSession, file_id: uuid.UUID, message: str | None) -> None:

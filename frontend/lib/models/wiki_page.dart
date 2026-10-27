@@ -34,7 +34,7 @@ class WikiPageSummary {
       title: json['title'] as String,
       category: WikiCategory.fromString(json['category'] as String),
       updatedAt: json['updated_at'] != null
-          ? DateTime.parse(json['updated_at'] as String)
+          ? DateTime.parse(json['updated_at'] as String).toLocal()
           : null,
     );
   }
@@ -78,8 +78,8 @@ class WikiPage {
       sourceFileIds: (json['source_file_ids'] as List<dynamic>?)
           ?.map((e) => e as String)
           .toList(),
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+      updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     );
   }
 

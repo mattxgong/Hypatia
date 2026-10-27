@@ -24,6 +24,7 @@ from app.services.task_manager import task_manager
 def _configure_mock_session(mock_factory: MagicMock) -> MagicMock:
     mock_session = MagicMock(spec=AsyncSession)
     mock_session.commit = AsyncMock()
+    mock_session.add = MagicMock()
     mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
     return mock_session

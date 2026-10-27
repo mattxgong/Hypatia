@@ -16,8 +16,8 @@ class HypatiaClass {
       description: json['description'] as String?,
       fileCount: (json['file_count'] as int?) ?? 0,
       pageCount: (json['page_count'] as int?) ?? 0,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+      updatedAt: DateTime.parse(json['updated_at'] as String).toLocal(),
     );
   }
 

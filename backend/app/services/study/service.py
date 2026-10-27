@@ -55,6 +55,11 @@ from app.services.study.scheduler import Rating, ReviewState, review
 from app.services.task_manager import task_manager
 from app.services.wiki_search import hybrid_search
 
+#: Short answers sent to the LLM for grading at the same time, and how long
+#: each may take before it is left for the student to self-grade.
+_AI_GRADING_CONCURRENCY = 3
+_AI_GRADING_TIMEOUT_SECONDS = 60.0
+
 _STUDY_CATEGORIES = (
     WikiCategory.CONCEPT,
     WikiCategory.ENTITY,
@@ -526,17 +531,26 @@ async def grade_attempt(
         if result.status == "needs_self_review" and ai_enabled:
             to_ai.append(question)
 
-    ai_grades = await asyncio.gather(
-        *(
-            llm_generator.grade_short_answer(
-                q.prompt,
-                str(q.answer_json.get("reference", "")),
-                q.answer_json.get("rubric"),
-                str((answers.get(q.id) or {}).get("text", "")),
-            )
-            for q in to_ai
-        )
-    )
+    # A few at a time, each with a deadline: one provider (and, for Copilot, one
+    # CLI session) per answer, and the student is waiting on the submit.
+    limit = asyncio.Semaphore(_AI_GRADING_CONCURRENCY)
+
+    async def grade_with_ai(q: QuizQuestion) -> llm_generator.AIGrade | None:
+        async with limit:
+            try:
+                return await asyncio.wait_for(
+                    llm_generator.grade_short_answer(
+                        q.prompt,
+                        str(q.answer_json.get("reference", "")),
+                        q.answer_json.get("rubric"),
+                        str((answers.get(q.id) or {}).get("text", "")),
+                    ),
+                    timeout=_AI_GRADING_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                return None
+
+    ai_grades = await asyncio.gather(*(grade_with_ai(q) for q in to_ai))
     for question, ai_grade in zip(to_ai, ai_grades, strict=True):
         if ai_grade is not None:
             grading[str(question.id)] = {

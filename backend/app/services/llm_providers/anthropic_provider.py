@@ -56,6 +56,9 @@ class AnthropicProvider(LLMProvider):
             getattr(response.usage, "input_tokens", 0),
             getattr(response.usage, "output_tokens", 0),
         )
+        self.last_truncated = response.stop_reason == "max_tokens"
+        if self.last_truncated:
+            logger.warning("anthropic_output_truncated", model=self._model, max_tokens=max_tokens)
         if not response.content:
             return ""
         block = response.content[0]

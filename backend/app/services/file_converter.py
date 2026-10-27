@@ -10,6 +10,7 @@ the ``File`` row instead of crashing the pipeline.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from io import StringIO
@@ -210,13 +211,23 @@ def classify_file_type(filename: str) -> FileType:
     return FileType.OTHER
 
 
+def _decode_text(raw: bytes) -> str:
+    """Text files are usually UTF-8, but notes saved on Windows are often cp1252."""
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def _passthrough_markdown(file_path: Path, output_path: Path) -> ConversionResult:
     """Copy a markdown/text file to converted/ with a small frontmatter header.
 
     Markdown/text files need no MarkItDown conversion -- passthrough avoids
     MarkItDown reformatting content that is already the target format.
     """
-    text = file_path.read_text(encoding="utf-8")
+    text = _decode_text(file_path.read_bytes())
     frontmatter = f"---\nsource: {file_path.name}\ntype: passthrough\n---\n\n"
     markdown_text = frontmatter + text
 
@@ -256,20 +267,25 @@ async def process_file(
             session, file_id, file_path, output_path, on_progress=on_progress
         )
 
+    convert = _passthrough_markdown if file_type == FileType.MARKDOWN else convert_document
     try:
-        if file_type == FileType.MARKDOWN:
-            result = _passthrough_markdown(file_path, output_path)
-        else:
-            result = convert_document(file_path, output_path)
-    except OSError as exc:
-        result = ConversionResult(success=False, error=str(exc))
+        # In a thread: MarkItDown and pdfminer are synchronous and can take
+        # minutes on a large PDF, which would stall every request meanwhile.
+        result = await asyncio.to_thread(convert, file_path, output_path)
+        if result.success:
+            summary_text = generate_document_summary(
+                result.markdown_text, result.metadata, file_path.name
+            )
+            await asyncio.to_thread(
+                summary_path_for(output_path).write_text, summary_text, encoding="utf-8"
+            )
+    except Exception as exc:
+        logger.exception("file_conversion_failed", file_id=str(file_id))
+        result = ConversionResult(success=False, error=str(exc) or type(exc).__name__)
 
     if not result.success:
         await update_file_status(session, file_id, FileStatus.ERROR, error_message=result.error)
         return ProcessingResult(success=False, error=result.error)
-
-    summary_text = generate_document_summary(result.markdown_text, result.metadata, file_path.name)
-    summary_path_for(output_path).write_text(summary_text, encoding="utf-8")
 
     await update_file_status(session, file_id, FileStatus.READY, converted_path=str(output_path))
     return ProcessingResult(success=True, converted_path=output_path, metadata=result.metadata)

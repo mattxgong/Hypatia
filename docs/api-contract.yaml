@@ -13,6 +13,9 @@ servers:
       Local dev backend. Port may vary 8000-8010 if 8000 is taken
       (see Task 1.9 auto-launch/port management).
 
+# Timestamps are ISO 8601 in UTC with an explicit offset
+# (e.g. 2026-10-27T18:00:00+00:00); clients convert them to local time.
+#
 # Every request except /health, including the chat WebSocket handshake, must
 # carry the launch token when the backend has one (HYPATIA_API_TOKEN). The
 # backend also rejects a Host header outside HYPATIA_ALLOWED_HOSTS (400) and a
@@ -402,6 +405,13 @@ paths:
       summary: >-
         WebSocket chat connection (OpenAPI 3.0 has no native WebSocket
         support). See ChatWs* schemas for message formats.
+      description: >-
+        Commands from one connection run one at a time, in order; the socket
+        keeps reading while one runs, so a ChatWsCancel reaches it. A command
+        that is running when the socket closes finishes anyway and records its
+        result in chat history (commands still queued are dropped), so a client
+        reconnecting should reload /chat/history. A frame that isn't a JSON
+        object gets an INVALID_COMMAND error and the connection stays open.
       operationId: chatWebSocket
       responses:
         "101":
