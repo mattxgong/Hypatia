@@ -110,6 +110,17 @@ class _FakeApi extends ApiClient {
     int limit = 20,
   }) async => due;
 
+  final deletedCards = <String>[];
+
+  @override
+  Future<List<Flashcard>> listCards(String classId, String deckId) async =>
+      due.where((c) => !deletedCards.contains(c.id)).toList();
+
+  @override
+  Future<void> deleteCard(String classId, String deckId, String cardId) async {
+    deletedCards.add(cardId);
+  }
+
   @override
   Future<Flashcard> reviewCard(
     String classId,
@@ -319,6 +330,32 @@ void main() {
     expect(find.text('NLP quiz'), findsOneWidget);
     expect(find.textContaining('not taken'), findsOneWidget);
     expect(find.byIcon(Icons.update), findsOneWidget);
+  });
+
+  testWidgets('a deleted card can be brought back with Undo', (tester) async {
+    largeSurface(tester);
+    await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Browse cards').first);
+    await tester.pumpAndSettle();
+    expect(find.text('What is entropy?'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Delete card').first);
+    await tester.pumpAndSettle();
+    expect(find.text('What is entropy?'), findsNothing);
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(find.text('What is entropy?'), findsOneWidget);
+    expect(api.deletedCards, isEmpty);
+
+    // Without Undo, the card is deleted once the notice goes away.
+    await tester.tap(find.byTooltip('Delete card').first);
+    await tester
+        .pumpAndSettle(); // the notice's countdown starts once it's shown
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+    expect(api.deletedCards, ['c1']);
+    expect(find.text('What is entropy?'), findsNothing);
   });
 
   testWidgets('review flips a card and records ratings', (tester) async {

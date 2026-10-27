@@ -211,8 +211,9 @@ class SearchResults extends ConsumerWidget {
                 ],
               ),
               subtitle: result.snippet.isNotEmpty
-                  ? RichText(
-                      text: _buildHighlightedSnippet(result.snippet, theme),
+                  // Text.rich, unlike RichText, follows the text-scale setting.
+                  ? Text.rich(
+                      _buildHighlightedSnippet(result.snippet, theme),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     )

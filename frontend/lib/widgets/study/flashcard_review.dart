@@ -533,14 +533,17 @@ class _StaleCardBannerState extends ConsumerState<_StaleCardBanner> {
             TextButton(
               onPressed: _busy
                   ? null
-                  : () => _run('delete', () async {
-                      await api.deleteCard(
-                        widget.classId,
-                        widget.deckId,
-                        card.id,
+                  : () {
+                      // Leaves the review now; Undo keeps it in the deck.
+                      deleteCardWithUndo(
+                        context,
+                        ref,
+                        classId: widget.classId,
+                        deckId: widget.deckId,
+                        card: card,
                       );
-                      return null;
-                    }),
+                      widget.onChanged(null);
+                    },
               child: const Text('Delete'),
             ),
           ],
@@ -548,6 +551,54 @@ class _StaleCardBannerState extends ConsumerState<_StaleCardBanner> {
       ),
     );
   }
+}
+
+/// Deletes [card] once its "Card deleted" notice closes, unless the user taps
+/// Undo first, so a mis-click costs nothing (deleting loses review history).
+/// [onUndo] runs if they undo, or if the delete fails; [onDeleted] once it's gone.
+void deleteCardWithUndo(
+  BuildContext context,
+  WidgetRef ref, {
+  required String classId,
+  required String deckId,
+  required Flashcard card,
+  VoidCallback? onUndo,
+  VoidCallback? onDeleted,
+}) {
+  final messenger = ScaffoldMessenger.of(context);
+  final api = ref.read(apiClientProvider);
+  var undone = false;
+  messenger.hideCurrentSnackBar();
+  messenger
+      .showSnackBar(
+        SnackBar(
+          content: const Text('Card deleted'),
+          // Must time out: the delete happens when the notice closes, and a
+          // SnackBar with an action otherwise stays until dismissed.
+          persist: false,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              undone = true;
+              onUndo?.call();
+            },
+          ),
+        ),
+      )
+      .closed
+      .then((_) async {
+        if (undone) return;
+        try {
+          await api.deleteCard(classId, deckId, card.id);
+          onDeleted?.call();
+        } on ApiException catch (e) {
+          messenger.showSnackBar(
+            SnackBar(content: Text('Delete failed: ${e.detail}')),
+          );
+          onUndo?.call();
+        }
+      });
 }
 
 /// Edits a card's text; saving also accepts the current wiki pages as its baseline.
@@ -645,11 +696,17 @@ class _CardBrowser extends ConsumerStatefulWidget {
 class _CardBrowserState extends ConsumerState<_CardBrowser> {
   late Future<List<Flashcard>> _cards = _fetch();
 
+  /// Hidden while their "Card deleted" notice is up, in case of Undo.
+  final _pendingDelete = <String>{};
+
   Future<List<Flashcard>> _fetch() =>
       ref.read(apiClientProvider).listCards(widget.classId, widget.deckId);
 
   void _reload() {
-    setState(() => _cards = _fetch());
+    // A block, not an arrow: setState must not be handed the Future.
+    setState(() {
+      _cards = _fetch();
+    });
     widget.onChanged();
   }
 
@@ -664,7 +721,9 @@ class _CardBrowserState extends ConsumerState<_CardBrowser> {
             child: ErrorCard(error: snapshot.error!, onRetry: _reload),
           );
         }
-        final cards = snapshot.data;
+        final cards = snapshot.data
+            ?.where((c) => !_pendingDelete.contains(c.id))
+            .toList();
         if (cards == null) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -718,21 +777,23 @@ class _CardBrowserState extends ConsumerState<_CardBrowser> {
                   IconButton(
                     icon: const Icon(Icons.delete_outline, size: 18),
                     tooltip: 'Delete card',
-                    onPressed: () async {
-                      try {
-                        await ref
-                            .read(apiClientProvider)
-                            .deleteCard(widget.classId, widget.deckId, card.id);
-                        _reload();
-                      } on ApiException catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Delete failed: ${e.detail}'),
-                            ),
-                          );
-                        }
-                      }
+                    onPressed: () {
+                      setState(() => _pendingDelete.add(card.id));
+                      deleteCardWithUndo(
+                        context,
+                        ref,
+                        classId: widget.classId,
+                        deckId: widget.deckId,
+                        card: card,
+                        onUndo: () {
+                          if (mounted) {
+                            setState(() => _pendingDelete.remove(card.id));
+                          }
+                        },
+                        onDeleted: () {
+                          if (mounted) _reload();
+                        },
+                      );
                     },
                   ),
                 ],

@@ -78,6 +78,7 @@ class SourceViewerDialog extends ConsumerWidget {
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close',
                   ),
                 ],
               ),
@@ -405,6 +406,7 @@ class _ConvertedSourceDialog extends ConsumerWidget {
                   IconButton(
                     icon: const Icon(Icons.close, size: 18),
                     onPressed: () => Navigator.pop(context),
+                    tooltip: 'Close',
                   ),
                 ],
               ),
