@@ -23,6 +23,7 @@ _PERSISTED_KEYS = frozenset(
         "ollama_base_url",
         "whisper_model_size",
         "whisper_device",
+        "study_new_cards_per_day",
     }
 )
 

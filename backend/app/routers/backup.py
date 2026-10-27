@@ -128,6 +128,9 @@ class _FlashcardManifest(_ManifestModel):
     lapses: int = Field(default=0, ge=0)
     due_at: datetime | None = None
     last_reviewed_at: datetime | None = None
+    # Absent from backups made before learning steps existed.
+    learning_step: int | None = Field(default=None, ge=0)
+    first_reviewed_at: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -373,6 +376,8 @@ def _serialize_deck(deck: Deck, cards: list[Flashcard]) -> dict:
                 "lapses": c.lapses,
                 "due_at": _iso(c.due_at),
                 "last_reviewed_at": _iso(c.last_reviewed_at),
+                "learning_step": c.learning_step,
+                "first_reviewed_at": _iso(c.first_reviewed_at),
                 "created_at": _iso(c.created_at),
             }
             for c in cards
@@ -479,6 +484,11 @@ def _restore_study(
                     repetitions=card.repetitions,
                     lapses=card.lapses,
                     last_reviewed_at=card.last_reviewed_at,
+                    # Older backups: unstarted cards learn, the rest have graduated.
+                    learning_step=card.learning_step
+                    if "learning_step" in card.model_fields_set
+                    else (0 if card.repetitions == 0 else None),
+                    first_reviewed_at=card.first_reviewed_at or card.last_reviewed_at,
                     **_timestamps(due_at=card.due_at, created_at=card.created_at),
                 )
             )

@@ -275,8 +275,12 @@ class Flashcard(Base):
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     repetitions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lapses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Position in the (re)learning steps; None once the card has graduated.
+    learning_step: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
     due_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
     last_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # When the card was first studied; counts it against the daily new-card limit.
+    first_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 

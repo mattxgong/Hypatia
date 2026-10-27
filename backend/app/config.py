@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: Path.home() / ".hypatia" / "logs")
     log_level: str = "INFO"
 
-    llm_provider: str = "copilot"
+    llm_provider: str = "anthropic"
     llm_model: str | None = None
     # Last model chosen for each provider (see settings_store.model_slot); llm_model
     # is always the entry for llm_provider.
@@ -46,6 +46,10 @@ class Settings(BaseSettings):
 
     whisper_model_size: str = "base"
     whisper_device: str = "cpu"
+
+    # New flashcards a deck introduces per day (Anki's default); reviews of
+    # cards already started are never limited.
+    study_new_cards_per_day: int = 20
 
     max_upload_size_bytes: int = 3 * 1024 * 1024 * 1024  # 3GB, per Task 2.9
 

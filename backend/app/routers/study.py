@@ -94,6 +94,7 @@ def _card_read(card: Flashcard, stale: bool) -> FlashcardRead:
         interval_days=card.interval_days,
         repetitions=card.repetitions,
         lapses=card.lapses,
+        learning_step=card.learning_step,
         due_at=card.due_at,
         last_reviewed_at=card.last_reviewed_at,
         created_at=card.created_at,
@@ -350,13 +351,8 @@ async def list_due_cards(
     session: AsyncSession = Depends(get_session),
 ) -> list[FlashcardRead]:
     deck = await _get_deck(session, class_id, deck_id)
-    result = await session.execute(
-        select(Flashcard)
-        .where(Flashcard.deck_id == deck.id, Flashcard.due_at <= _now())
-        .order_by(Flashcard.due_at, Flashcard.created_at)
-        .limit(limit)
-    )
-    return await _card_reads(session, class_id, list(result.scalars().all()))
+    cards = await service.due_cards(session, deck.id, _now(), limit)
+    return await _card_reads(session, class_id, cards)
 
 
 @router.post(
@@ -392,10 +388,16 @@ async def update_card(
 ) -> FlashcardRead:
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
+    edited = (body.front is not None and body.front != card.front) or (
+        body.back is not None and body.back != card.back
+    )
     if body.front is not None:
         card.front = body.front
     if body.back is not None:
         card.back = body.back
+    if edited:
+        # The user's wording now; Refresh must never rewrite or delete it.
+        card.origin = CardOrigin.USER
     if body.acknowledge_changes:
         card.page_hashes = await service.snapshot_pages(session, class_id, card)
     await session.commit()

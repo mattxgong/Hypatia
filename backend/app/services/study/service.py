@@ -10,12 +10,13 @@ import re
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.errors import ErrorCode, HypatiaError, ResourceNotFoundError
 from app.models.db_models import (
     CardOrigin,
@@ -362,6 +363,7 @@ def apply_review(card: Flashcard, rating: Rating, now: datetime) -> None:
             interval_days=card.interval_days,
             repetitions=card.repetitions,
             lapses=card.lapses,
+            learning_step=card.learning_step,
         ),
         rating,
         now,
@@ -370,8 +372,66 @@ def apply_review(card: Flashcard, rating: Rating, now: datetime) -> None:
     card.interval_days = outcome.state.interval_days
     card.repetitions = outcome.state.repetitions
     card.lapses = outcome.state.lapses
+    card.learning_step = outcome.state.learning_step
     card.due_at = outcome.due_at
     card.last_reviewed_at = now
+    if card.first_reviewed_at is None:
+        card.first_reviewed_at = now
+
+
+def start_of_today(now: datetime) -> datetime:
+    """Midnight of ``now``'s local day, in UTC. The backend runs on the
+    student's own machine, so its local time zone is theirs."""
+    return now.astimezone().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+
+
+async def new_cards_left_today(
+    session: AsyncSession, deck_ids: Sequence[uuid.UUID], now: datetime
+) -> dict[uuid.UUID, int]:
+    """How many unseen cards each deck may still introduce today."""
+    rows = await session.execute(
+        select(Flashcard.deck_id, func.count())
+        .where(
+            Flashcard.deck_id.in_(deck_ids),
+            Flashcard.first_reviewed_at >= start_of_today(now),
+        )
+        .group_by(Flashcard.deck_id)
+    )
+    started = {deck_id: n for deck_id, n in rows.all()}
+    limit = settings.study_new_cards_per_day
+    return {deck_id: max(limit - started.get(deck_id, 0), 0) for deck_id in deck_ids}
+
+
+async def due_cards(
+    session: AsyncSession, deck_id: uuid.UUID, now: datetime, limit: int
+) -> list[Flashcard]:
+    """Cards to study now: every due card already started, then unseen cards
+    up to the deck's daily new-card allowance."""
+    started = (
+        await session.execute(
+            select(Flashcard)
+            .where(
+                Flashcard.deck_id == deck_id,
+                Flashcard.first_reviewed_at.is_not(None),
+                Flashcard.due_at <= now,
+            )
+            .order_by(Flashcard.due_at, Flashcard.created_at)
+            .limit(limit)
+        )
+    ).scalars()
+    cards = list(started)
+    allowance = min(
+        (await new_cards_left_today(session, [deck_id], now))[deck_id], limit - len(cards)
+    )
+    if allowance > 0:
+        unseen = await session.execute(
+            select(Flashcard)
+            .where(Flashcard.deck_id == deck_id, Flashcard.first_reviewed_at.is_(None))
+            .order_by(Flashcard.created_at)
+            .limit(allowance)
+        )
+        cards.extend(unseen.scalars())
+    return cards
 
 
 async def deck_cards(session: AsyncSession, deck_id: uuid.UUID) -> list[Flashcard]:
@@ -393,12 +453,25 @@ async def deck_counts(
         .group_by(Flashcard.deck_id)
     )
     totals: dict[uuid.UUID, int] = {deck_id: n for deck_id, n in total_rows.all()}
-    due_rows = await session.execute(
+    started_due_rows = await session.execute(
         select(Flashcard.deck_id, func.count())
-        .where(Flashcard.deck_id.in_(deck_ids), Flashcard.due_at <= now)
+        .where(
+            Flashcard.deck_id.in_(deck_ids),
+            Flashcard.first_reviewed_at.is_not(None),
+            Flashcard.due_at <= now,
+        )
         .group_by(Flashcard.deck_id)
     )
-    due: dict[uuid.UUID, int] = {deck_id: n for deck_id, n in due_rows.all()}
+    unseen_rows = await session.execute(
+        select(Flashcard.deck_id, func.count())
+        .where(Flashcard.deck_id.in_(deck_ids), Flashcard.first_reviewed_at.is_(None))
+        .group_by(Flashcard.deck_id)
+    )
+    unseen = {deck_id: n for deck_id, n in unseen_rows.all()}
+    allowance = await new_cards_left_today(session, deck_ids, now)
+    due: dict[uuid.UUID, int] = {deck_id: n for deck_id, n in started_due_rows.all()}
+    for deck_id in deck_ids:
+        due[deck_id] = due.get(deck_id, 0) + min(unseen.get(deck_id, 0), allowance[deck_id])
     hash_rows = (
         await session.execute(
             select(Flashcard.deck_id, Flashcard.page_hashes).where(Flashcard.deck_id.in_(deck_ids))
