@@ -9,18 +9,24 @@ import 'api_client.dart';
 
 enum WsConnectionState { disconnected, connecting, connected, reconnecting }
 
+// Every event carries the Class whose socket it arrived on. The one socket
+// follows the active Class, so listeners must ignore other Classes' events.
+
 class ChatWsChunk {
-  const ChatWsChunk({required this.content});
+  const ChatWsChunk({required this.classId, required this.content});
+  final String classId;
   final String content;
 }
 
 class ChatWsComplete {
   const ChatWsComplete({
+    required this.classId,
     required this.messageId,
     this.content,
     this.citations,
     this.result,
   });
+  final String classId;
   final String messageId;
   final String? content;
   final List<dynamic>? citations;
@@ -29,11 +35,13 @@ class ChatWsComplete {
 
 class ChatWsProgress {
   const ChatWsProgress({
+    required this.classId,
     required this.operation,
     required this.operationId,
     required this.percent,
     required this.message,
   });
+  final String classId;
   final String operation;
   final String operationId;
   final int? percent;
@@ -41,7 +49,8 @@ class ChatWsProgress {
 }
 
 class ChatWsError {
-  const ChatWsError({required this.message, this.code});
+  const ChatWsError({required this.classId, required this.message, this.code});
+  final String classId;
   final String message;
   final String? code;
 }
@@ -64,7 +73,11 @@ class WebSocketService {
   int _reconnectAttempts = 0;
   Timer? _reconnectTimer;
 
-  final _stateController = StreamController<WsConnectionState>.broadcast();
+  // Synchronous, so a listener checking isConnectedTo() sees the state as of
+  // this event, not after a quick disconnect-reconnect has already happened.
+  final _stateController = StreamController<WsConnectionState>.broadcast(
+    sync: true,
+  );
   final _chunkController = StreamController<ChatWsChunk>.broadcast();
   final _completeController = StreamController<ChatWsComplete>.broadcast();
   final _progressController = StreamController<ChatWsProgress>.broadcast();
@@ -73,18 +86,30 @@ class WebSocketService {
   WsConnectionState _state = WsConnectionState.disconnected;
 
   WsConnectionState get state => _state;
+
+  /// The Class the socket is connected (or reconnecting) to, if any.
+  String? get currentClassId => _currentClassId;
+
+  bool isConnectedTo(String classId) =>
+      _state == WsConnectionState.connected && _currentClassId == classId;
   Stream<WsConnectionState> get onStateChange => _stateController.stream;
   Stream<ChatWsChunk> get onChunk => _chunkController.stream;
   Stream<ChatWsComplete> get onComplete => _completeController.stream;
   Stream<ChatWsProgress> get onProgress => _progressController.stream;
   Stream<ChatWsError> get onError => _errorController.stream;
 
+  // Set by dispose(); the async tail of disconnect() and any pending
+  // reconnect must not touch the closed streams afterwards.
+  bool _disposed = false;
+
   void _setState(WsConnectionState newState) {
+    if (_disposed) return;
     _state = newState;
     _stateController.add(newState);
   }
 
   Future<void> connect(String classId) async {
+    if (_disposed) return;
     if (_currentClassId == classId && _state == WsConnectionState.connected) {
       return;
     }
@@ -95,26 +120,33 @@ class WebSocketService {
 
     try {
       final url = apiClient.getChatWebSocketUrl(classId);
-      _channel = IOWebSocketChannel.connect(
+      final channel = IOWebSocketChannel.connect(
         Uri.parse(url),
         headers: apiClient.authHeaders,
       );
-      await _channel!.ready;
+      _channel = channel;
+      await channel.ready;
+      // A newer connect() (the user switched Class) replaced this channel
+      // while it was opening.
+      if (_channel != channel) return;
       _reconnectAttempts = 0;
       _setState(WsConnectionState.connected);
-      _subscription = _channel!.stream.listen(
+      _subscription = channel.stream.listen(
         _handleMessage,
         onDone: _handleDisconnect,
         onError: (_) => _handleDisconnect(),
       );
     } catch (_) {
-      _scheduleReconnect();
+      if (_currentClassId == classId) _scheduleReconnect();
     }
   }
 
-  void sendMessage(String content) {
-    if (_state != WsConnectionState.connected || _channel == null) return;
+  /// Sends [content] to [classId]'s chat. Returns false (sending nothing)
+  /// unless the socket is currently connected to that Class.
+  bool sendMessage(String classId, String content) {
+    if (!isConnectedTo(classId) || _channel == null) return false;
     _channel!.sink.add(jsonEncode({'type': 'message', 'content': content}));
+    return true;
   }
 
   void cancelOperation(String operationId) {
@@ -136,6 +168,8 @@ class WebSocketService {
   }
 
   void _handleMessage(dynamic raw) {
+    final classId = _currentClassId;
+    if (classId == null) return;
     final Map<String, dynamic> data;
     try {
       data = jsonDecode(raw as String) as Map<String, dynamic>;
@@ -146,11 +180,15 @@ class WebSocketService {
     switch (data['type']) {
       case 'chunk':
         _chunkController.add(
-          ChatWsChunk(content: data['content'] as String? ?? ''),
+          ChatWsChunk(
+            classId: classId,
+            content: data['content'] as String? ?? '',
+          ),
         );
       case 'complete':
         _completeController.add(
           ChatWsComplete(
+            classId: classId,
             messageId: data['message_id'] as String? ?? '',
             content: data['content'] as String?,
             citations: data['citations'] as List<dynamic>?,
@@ -160,6 +198,7 @@ class WebSocketService {
       case 'progress':
         _progressController.add(
           ChatWsProgress(
+            classId: classId,
             operation: data['operation'] as String? ?? 'operation',
             operationId: data['operation_id'] as String? ?? '',
             percent: (data['percent'] as num?)?.toInt(),
@@ -169,6 +208,7 @@ class WebSocketService {
       case 'error':
         _errorController.add(
           ChatWsError(
+            classId: classId,
             message: data['message'] as String? ?? 'Unknown error',
             code: data['code'] as String?,
           ),
@@ -185,6 +225,7 @@ class WebSocketService {
   }
 
   void _scheduleReconnect() {
+    if (_disposed) return;
     _setState(WsConnectionState.reconnecting);
     _reconnectAttempts++;
     final delay = Duration(
@@ -198,7 +239,8 @@ class WebSocketService {
   }
 
   void dispose() {
-    disconnect();
+    _disposed = true;
+    unawaited(disconnect());
     _stateController.close();
     _chunkController.close();
     _completeController.close();

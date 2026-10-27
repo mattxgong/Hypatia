@@ -42,7 +42,10 @@ class _RecordingChatNotifier extends ChatMessagesNotifier {
   Future<List<ChatMessage>> build(String arg) async => [];
 
   @override
-  void sendMessage(String content) => sent.add(content);
+  bool sendMessage(String content) {
+    sent.add(content);
+    return true;
+  }
 }
 
 void main() {

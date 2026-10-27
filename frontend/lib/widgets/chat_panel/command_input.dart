@@ -56,7 +56,11 @@ class _CommandInputState extends ConsumerState<CommandInput> {
     }
     if (!mounted) return;
 
-    ref.read(chatMessagesProvider(classId).notifier).sendMessage(text);
+    final sent = ref
+        .read(chatMessagesProvider(classId).notifier)
+        .sendMessage(text);
+    // Keep the draft when it couldn't be sent so the user can retry.
+    if (!sent) return;
 
     _controller.clear();
     _focusNode.requestFocus();

@@ -15,6 +15,7 @@ class ChatPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final classId = ref.watch(currentClassIdProvider);
+    ref.watch(chatConnectionProvider);
     final theme = Theme.of(context);
 
     return Material(
@@ -46,7 +47,7 @@ class _ChatBody extends ConsumerWidget {
     if (classId == null) return _buildStarterCards(context, ref);
 
     final messagesAsync = ref.watch(chatMessagesProvider(classId!));
-    final streamingContent = ref.watch(chatStreamingContentProvider);
+    final streamingContent = ref.watch(chatStreamingContentProvider(classId!));
 
     return messagesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
