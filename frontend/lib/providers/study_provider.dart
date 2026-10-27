@@ -124,7 +124,21 @@ class StudyJobsNotifier extends Notifier<List<StudyJob>> {
     dismiss(taskId);
   }
 
+  bool _polling = false;
+
   Future<void> poll() async {
+    // Timer.periodic doesn't wait for the previous tick: a slow backend would
+    // otherwise have several polls racing to update the same jobs.
+    if (_polling) return;
+    _polling = true;
+    try {
+      await _poll();
+    } finally {
+      _polling = false;
+    }
+  }
+
+  Future<void> _poll() async {
     final api = ref.read(apiClientProvider);
     final updates = <String, StudyJob?>{};
     for (final job in state.where((j) => j.error == null)) {

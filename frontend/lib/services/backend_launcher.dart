@@ -53,6 +53,14 @@ class BackendLauncher {
   String? _pythonPath;
   bool _stopRequested = false;
   bool _restartedAfterCrash = false;
+
+  /// When the backend last became healthy; a crash after a long healthy run
+  /// gets a fresh automatic restart rather than counting as a repeat.
+  DateTime? _healthySince;
+  static const _healthyRunResetsRestart = Duration(minutes: 1);
+
+  /// About five minutes of one-second health checks while the process runs.
+  static const _startupHealthAttempts = 300;
   BackendStatus _status = BackendStatus.stopped;
 
   final _statusController = StreamController<BackendStatus>.broadcast();
@@ -182,7 +190,6 @@ class BackendLauncher {
     }
 
     _port = await _selectPort();
-    await _writePortFile(_port);
 
     _setStatus(BackendStatus.starting);
     final started = await _spawnProcess(venvPython, backendDir, appSupportDir);
@@ -191,7 +198,13 @@ class BackendLauncher {
       return;
     }
 
-    final ready = await _pollHealth(maxAttempts: 30);
+    // A first start (migrations, model imports) can take a while: keep
+    // waiting as long as the process is alive, up to a generous limit.
+    final ready = await _pollHealth(
+      maxAttempts: _startupHealthAttempts,
+      whileProcessAlive: true,
+    );
+    if (ready) _healthySince = DateTime.now();
     _setStatus(ready ? BackendStatus.ready : BackendStatus.error);
   }
 
@@ -267,7 +280,10 @@ class BackendLauncher {
     }
   }
 
-  Future<bool> _pollHealth({required int maxAttempts}) async {
+  Future<bool> _pollHealth({
+    required int maxAttempts,
+    bool whileProcessAlive = false,
+  }) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 2),
@@ -277,6 +293,10 @@ class BackendLauncher {
     try {
       for (var attempt = 0; attempt < maxAttempts; attempt++) {
         if (_stopRequested) return false;
+        if (whileProcessAlive && _process == null) {
+          _log('Backend exited before it became healthy.');
+          return false;
+        }
         try {
           final response = await dio.get<Map<String, dynamic>>(
             '$baseUrl/health',
@@ -524,15 +544,6 @@ class BackendLauncher {
     return _defaultPort;
   }
 
-  Future<void> _writePortFile(int port) async {
-    try {
-      final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}hypatia_backend_port.txt',
-      );
-      await file.writeAsString('$port');
-    } catch (_) {}
-  }
-
   Future<bool> _spawnProcess(
     String venvPython,
     Directory backendDir,
@@ -568,16 +579,20 @@ class BackendLauncher {
     }
 
     _log('Backend process started (PID: ${_process!.pid}).');
-    _process!.stdout.transform(utf8.decoder).listen((data) {
-      for (final line in data.trim().split('\n')) {
-        if (line.isNotEmpty) _log('[backend] $line');
-      }
-    });
-    _process!.stderr.transform(utf8.decoder).listen((data) {
-      for (final line in data.trim().split('\n')) {
-        if (line.isNotEmpty) _log('[backend] $line');
-      }
-    });
+    // Split into lines across chunks (a chunk can end mid-line), and drop the
+    // \r Windows line endings leave behind.
+    void logLines(Stream<List<int>> output) {
+      output
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter())
+          .listen((line) {
+            final trimmed = line.trimRight();
+            if (trimmed.isNotEmpty) _log('[backend] $trimmed');
+          });
+    }
+
+    logLines(_process!.stdout);
+    logLines(_process!.stderr);
 
     unawaited(
       _process!.exitCode.then((code) async {
@@ -586,6 +601,13 @@ class BackendLauncher {
         if (wasRequested) return;
 
         _log('Backend exited unexpectedly (code $code).');
+        final healthySince = _healthySince;
+        _healthySince = null;
+        if (healthySince != null &&
+            DateTime.now().difference(healthySince) >=
+                _healthyRunResetsRestart) {
+          _restartedAfterCrash = false;
+        }
         if (!_restartedAfterCrash) {
           _restartedAfterCrash = true;
           _log('Attempting a single automatic restart...');

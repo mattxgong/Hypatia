@@ -78,7 +78,19 @@ class _QuizViewState extends ConsumerState<QuizView> {
 
   void _answer(String questionId, Map<String, dynamic> response) {
     if (_attempt != null) return;
-    setState(() => _answers[questionId] = response);
+    final wasAnswered = _isAnswered(_answers[questionId]);
+    _answers[questionId] = response;
+    // Typing only matters to the rest of the quiz when a question goes from
+    // blank to answered or back; rebuilding every card per keystroke is waste.
+    if (!response.containsKey('text') || wasAnswered != _isAnswered(response)) {
+      setState(() {});
+    }
+  }
+
+  static bool _isAnswered(Map<String, dynamic>? response) {
+    if (response == null) return false;
+    final text = response['text'];
+    return text is! String || text.trim().isNotEmpty;
   }
 
   @override

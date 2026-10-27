@@ -50,116 +50,116 @@ class WikiTree extends ConsumerWidget {
           (p) => p.category == WikiCategory.wikiIndex,
         );
 
-        return ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          children: [
-            if (indexPage.isNotEmpty)
-              _PageTile(
-                page: indexPage.first,
-                isSelected: currentPath == indexPage.first.path,
-                onTap: () =>
-                    ref.read(currentWikiPagePathProvider.notifier).state =
-                        indexPage.first.path,
-              ),
-            _CategorySection(
-              title: 'Concepts',
-              icon: Icons.lightbulb_outline,
-              children: concepts
-                  .map(
-                    (p) => _PageTile(
-                      page: p,
-                      isSelected: currentPath == p.path,
-                      onTap: () =>
-                          ref.read(currentWikiPagePathProvider.notifier).state =
-                              p.path,
-                    ),
-                  )
-                  .toList(),
+        void open(String path) =>
+            ref.read(currentWikiPagePathProvider.notifier).state = path;
+        final collapsed = ref.watch(_collapsedSectionsProvider);
+        // One flat, lazily built list: a ListView of ExpansionTiles built
+        // every row of every section up front, which doesn't scale to a large
+        // wiki.
+        final rows = <Widget Function()>[
+          if (indexPage.isNotEmpty)
+            () => _PageTile(
+              page: indexPage.first,
+              isSelected: currentPath == indexPage.first.path,
+              onTap: () => open(indexPage.first.path),
             ),
-            _CategorySection(
-              title: 'Source Summaries',
-              icon: Icons.description_outlined,
-              children: summaries
-                  .map(
-                    (p) => _PageTile(
-                      page: p,
-                      isSelected: currentPath == p.path,
-                      onTap: () =>
-                          ref.read(currentWikiPagePathProvider.notifier).state =
-                              p.path,
-                    ),
-                  )
-                  .toList(),
+          for (final (title, icon, items) in [
+            ('Concepts', Icons.lightbulb_outline, concepts),
+            ('Source Summaries', Icons.description_outlined, summaries),
+            ('Entities', Icons.person_outline, entities),
+          ]) ...[
+            () => _CategoryHeader(
+              title: title,
+              icon: icon,
+              count: items.length,
+              expanded: !collapsed.contains(title),
+              onToggle: () => _toggleSection(ref, title),
             ),
-            _CategorySection(
-              title: 'Entities',
-              icon: Icons.person_outline,
-              children: entities
-                  .map(
-                    (p) => _PageTile(
-                      page: p,
-                      isSelected: currentPath == p.path,
-                      onTap: () =>
-                          ref.read(currentWikiPagePathProvider.notifier).state =
-                              p.path,
-                    ),
-                  )
-                  .toList(),
-            ),
-            _CategorySection(
-              title: 'Source Files',
-              icon: Icons.folder_outlined,
-              children: files
-                  .map(
-                    (f) => _FileTile(
-                      file: f,
-                      onTap: f.convertedPath == null
-                          ? null
-                          : () =>
-                                showConvertedSourceViewer(context, classId, f),
-                      onMenu: (position) => showSourceFileMenu(
-                        context,
-                        ref,
-                        classId,
-                        f,
-                        position,
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
+            if (!collapsed.contains(title))
+              for (final p in items)
+                () => Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: _PageTile(
+                    page: p,
+                    isSelected: currentPath == p.path,
+                    onTap: () => open(p.path),
+                  ),
+                ),
           ],
+          () => _CategoryHeader(
+            title: 'Source Files',
+            icon: Icons.folder_outlined,
+            count: files.length,
+            expanded: !collapsed.contains('Source Files'),
+            onToggle: () => _toggleSection(ref, 'Source Files'),
+          ),
+          if (!collapsed.contains('Source Files'))
+            for (final f in files)
+              () => Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: _FileTile(
+                  file: f,
+                  onTap: f.convertedPath == null
+                      ? null
+                      : () => showConvertedSourceViewer(context, classId, f),
+                  onMenu: (position) =>
+                      showSourceFileMenu(context, ref, classId, f, position),
+                ),
+              ),
+        ];
+
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          itemCount: rows.length,
+          itemBuilder: (context, index) => rows[index](),
         );
       },
     );
   }
+
+  void _toggleSection(WidgetRef ref, String title) {
+    final notifier = ref.read(_collapsedSectionsProvider.notifier);
+    notifier.state = notifier.state.contains(title)
+        ? ({...notifier.state}..remove(title))
+        : {...notifier.state, title};
+  }
 }
 
-class _CategorySection extends StatelessWidget {
-  const _CategorySection({
+/// Sidebar sections the user has collapsed.
+final _collapsedSectionsProvider = StateProvider<Set<String>>((ref) => {});
+
+class _CategoryHeader extends StatelessWidget {
+  const _CategoryHeader({
     required this.title,
     required this.icon,
-    required this.children,
+    required this.count,
+    required this.expanded,
+    required this.onToggle,
   });
 
   final String title;
   final IconData icon;
-  final List<Widget> children;
+  final int count;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ExpansionTile(
+    return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
       leading: Icon(icon, size: 18),
       title: Text(
-        '$title (${children.length})',
+        '$title ($count)',
         style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
       ),
-      dense: true,
-      tilePadding: const EdgeInsets.symmetric(horizontal: 8),
-      childrenPadding: const EdgeInsets.only(left: 16),
-      initiallyExpanded: true,
-      children: children,
+      trailing: Icon(
+        expanded ? Icons.expand_less : Icons.expand_more,
+        size: 18,
+      ),
+      onTap: onToggle,
     );
   }
 }
