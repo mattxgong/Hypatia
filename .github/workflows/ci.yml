@@ -74,3 +74,45 @@ jobs:
 
       - name: flutter test
         run: flutter test
+
+  # Phase 10: catch mobile build breakage on every PR. Unsigned only; signed
+  # builds happen in release workflows, which have the secrets.
+  android:
+    name: Android (debug APK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: flutter build apk --debug
+        run: flutter build apk --debug
+
+  ios:
+    name: iOS (unsigned build)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: flutter build ios --no-codesign
+        run: flutter build ios --release --no-codesign
