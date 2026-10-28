@@ -51,6 +51,11 @@ usage_totals = UsageTotals()
 class LLMProvider(ABC):
     """Interface that all LLM providers must implement."""
 
+    #: Whether the last ``complete`` stopped at ``max_tokens`` rather than
+    #: finishing. Callers that need the whole answer (ingest) check it; a
+    #: provider that can't tell (Copilot) leaves it False.
+    last_truncated: bool = False
+
     @abstractmethod
     async def complete(
         self, system_prompt: str, user_prompt: str, *, max_tokens: int = 8192
@@ -68,6 +73,14 @@ class LLMProvider(ABC):
     @abstractmethod
     async def list_models(self) -> list[str]:
         """Return available model IDs from this provider."""
+
+    async def check(self) -> None:
+        """Raise if the provider can't be reached or its credentials are bad.
+
+        Used by the availability check, so it must not cost a completion: the
+        default lists models, which every provider serves for free.
+        """
+        await self.list_models()
 
     async def close(self) -> None:
         """Release any client resources held by this provider."""

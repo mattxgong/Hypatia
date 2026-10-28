@@ -57,8 +57,10 @@ The core innovation is the **LLM Wiki pattern**: instead of re-deriving answers 
 | 7 | [Search & Retrieval](./07-search.md) | Hybrid search (FTS5 + embeddings), search UI, upload progress, drag-drop, source viewer | 8 |
 | 8 | [Integration & Polish](./08-integration.md) | Complete deferred work, E2E testing, error handling, cross-platform, backend bundling | 10 |
 | 9 | [Study Tools](./09-study-tools.md) | Flashcards (spaced repetition) and practice tests, heuristic and LLM generation, AI grading | 10 |
+| 10 | [Mobile App (proposed)](./10-mobile.md) | Android-first companion app paired to the desktop backend (LAN/Tailscale), responsive phone/tablet layout, offline study, capture with local OCR | 15 |
+| 11 | [Study Feedback, Chat, and Visual Polish (proposed)](./11-study-and-ux.md) | Quiz mistake review, suggested replies, `@` references, theme tokens and pane rules, crash-safe jobs, answer-quality evals. Wave A runs before Phase 10, wave B inside it | 16 |
 
-**Total estimated tasks: ~109**
+**Total estimated tasks: ~125**
 
 ---
 
@@ -306,6 +308,7 @@ data/classes/{class_id}/
 ### 14. Desktop-first
 **Decision**: Target desktop platforms (Windows, macOS, Linux) first. Mobile layout is a future phase.
 **Rationale**: The 3-panel layout is designed for desktop. Mobile would need a significantly different layout (tabbed/drawer-based) and is deferred.
+**Update (2026-10-19)**: Mobile is planned as Phase 10, a companion app to the desktop backend. See [10-mobile.md](./10-mobile.md).
 
 ### 15. Wiki versioning via git
 **Decision**: Each Class's `wiki/` directory is a local git repository. Every wiki-modifying operation (ingest, rebuild, remove, user edit) auto-commits with a descriptive message.

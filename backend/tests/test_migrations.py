@@ -121,3 +121,110 @@ def test_unique_file_name_migration_renames_legacy_duplicates(isolated_data_dir:
                 )
     finally:
         engine.dispose()
+
+
+def test_user_edited_migration_backfills_from_page_text(isolated_data_dir: Path) -> None:
+    config = database._alembic_config()
+    isolated_data_dir.mkdir(parents=True)
+    command.upgrade(config, "f4b2c8d6e1a3")
+
+    engine = sa.create_engine(f"sqlite:///{isolated_data_dir / 'hypatia.db'}")
+    class_id = uuid.uuid4().hex
+    pages = {
+        "pages/a.md": "---\ntitle: A\nuser_edited: true\n---\nMine.",
+        "pages/b.md": "---\ntitle: B\nuser_edited: false\n---\nGenerated.",
+    }
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO classes (id, name, created_at, updated_at) "
+                    "VALUES (:id, 'Legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                ),
+                {"id": class_id},
+            )
+            for path, content in pages.items():
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO wiki_pages (id, class_id, path, title, category, content, "
+                        "created_at, updated_at) VALUES (:id, :class_id, :path, 'T', 'concept', "
+                        ":content, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                    ),
+                    {
+                        "id": uuid.uuid4().hex,
+                        "class_id": class_id,
+                        "path": path,
+                        "content": content,
+                    },
+                )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text("SELECT path, user_edited FROM wiki_pages ORDER BY path")
+            ).all()
+        assert [(path, bool(flag)) for path, flag in rows] == [
+            ("pages/a.md", True),
+            ("pages/b.md", False),
+        ]
+    finally:
+        engine.dispose()
+
+
+def test_flashcard_learning_steps_migration_backfills(isolated_data_dir: Path) -> None:
+    config = database._alembic_config()
+    isolated_data_dir.mkdir(parents=True)
+    command.upgrade(config, "a7c4e9b2d5f1")
+
+    engine = sa.create_engine(f"sqlite:///{isolated_data_dir / 'hypatia.db'}")
+    class_id, deck_id = uuid.uuid4().hex, uuid.uuid4().hex
+    stamp = "2026-01-01 00:00:00"
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO classes (id, name, created_at, updated_at) "
+                    "VALUES (:id, 'Legacy', :t, :t)"
+                ),
+                {"id": class_id, "t": stamp},
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO decks (id, class_id, name, generation_method, created_at, "
+                    "updated_at) VALUES (:id, :class_id, 'Deck', 'heuristic', :t, :t)"
+                ),
+                {"id": deck_id, "class_id": class_id, "t": stamp},
+            )
+            for front, repetitions, reviewed in (("new", 0, None), ("learned", 3, stamp)):
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO flashcards (id, deck_id, card_type, front, back, origin, "
+                        "ease, interval_days, repetitions, lapses, due_at, last_reviewed_at, "
+                        "created_at, updated_at) VALUES (:id, :deck_id, 'basic', :front, '', "
+                        "'heuristic', 2.5, 0, :reps, 0, :t, :reviewed, :t, :t)"
+                    ),
+                    {
+                        "id": uuid.uuid4().hex,
+                        "deck_id": deck_id,
+                        "front": front,
+                        "reps": repetitions,
+                        "reviewed": reviewed,
+                        "t": stamp,
+                    },
+                )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT front, learning_step, first_reviewed_at FROM flashcards ORDER BY front"
+                )
+            ).all()
+        assert [(front, step, first is not None) for front, step, first in rows] == [
+            ("learned", None, True),
+            ("new", 0, False),
+        ]
+    finally:
+        engine.dispose()

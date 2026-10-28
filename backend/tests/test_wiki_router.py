@@ -68,7 +68,7 @@ async def class_with_pages(
             ),
             WikiPage(
                 class_id=class_id,
-                path="concepts/gravity.md",
+                path="pages/concepts/gravity.md",
                 title="Gravity",
                 category=WikiCategory.CONCEPT,
                 content="# Gravity\n\nForce of attraction.",
@@ -94,7 +94,7 @@ class TestWikiTree:
         by_path = {node["path"]: node for node in body}
         assert by_path["index.md"]["id"] == str(pages[0].id)
         assert by_path["index.md"]["updated_at"]
-        assert by_path["concepts/gravity.md"]["category"] == "concept"
+        assert by_path["pages/concepts/gravity.md"]["category"] == "concept"
 
 
 class TestWikiIndex:
@@ -122,7 +122,7 @@ class TestGetWikiPage:
         self, client: AsyncClient, class_with_pages: tuple[uuid.UUID, list[WikiPage]]
     ) -> None:
         class_id, _pages = class_with_pages
-        resp = await client.get(f"/api/classes/{class_id}/wiki/pages/concepts/gravity.md")
+        resp = await client.get(f"/api/classes/{class_id}/wiki/pages/pages/concepts/gravity.md")
         assert resp.status_code == 200
         body = resp.json()
         assert body["title"] == "Gravity"
@@ -144,11 +144,23 @@ class TestUpdateWikiPage:
         ) as mock_update:
             mock_update.return_value = None
             resp = await client.put(
-                f"/api/classes/{class_id}/wiki/pages/concepts/gravity.md",
+                f"/api/classes/{class_id}/wiki/pages/pages/concepts/gravity.md",
                 json={"content": "# Gravity\n\nUpdated content."},
             )
             assert resp.status_code == 200
             mock_update.assert_called_once()
+
+    async def test_rejects_path_outside_wiki_pages(self, client: AsyncClient) -> None:
+        class_id = uuid.uuid4()
+        with patch(
+            "app.routers.wiki.wiki_engine.update_wiki_page", new_callable=AsyncMock
+        ) as mock_update:
+            resp = await client.put(
+                f"/api/classes/{class_id}/wiki/pages/..%2F..%2F.credentials",
+                json={"content": "x"},
+            )
+            assert resp.status_code in (400, 404)
+            mock_update.assert_not_called()
 
 
 class TestWikiSearch:
@@ -167,7 +179,7 @@ class TestWikiSearch:
             class FakeResult:
                 page_id: str = "fake-page-id"
                 class_id: str = "fake-class-id"
-                path: str = "concepts/gravity.md"
+                path: str = "pages/concepts/gravity.md"
                 title: str = "Gravity"
                 snippet: str = "Force of attraction"
                 rank: float = 1.0

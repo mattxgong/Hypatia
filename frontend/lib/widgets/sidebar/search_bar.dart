@@ -41,6 +41,14 @@ class _SidebarSearchBarState extends ConsumerState<SidebarSearchBar> {
   Widget build(BuildContext context) {
     final query = ref.watch(searchQueryProvider);
     final focusNode = ref.watch(searchBarFocusNodeProvider);
+    // Picking a result, Escape and switching Class clear the query; the box
+    // must not keep showing text with no results under it.
+    ref.listen(searchQueryProvider, (_, next) {
+      if (next.isEmpty && _controller.text.isNotEmpty) {
+        _debounce?.cancel();
+        _controller.clear();
+      }
+    });
 
     return TextField(
       controller: _controller,
@@ -53,6 +61,7 @@ class _SidebarSearchBarState extends ConsumerState<SidebarSearchBar> {
             ? IconButton(
                 icon: const Icon(Icons.clear, size: 16),
                 onPressed: _clear,
+                tooltip: 'Clear search',
               )
             : null,
         isDense: true,
@@ -211,8 +220,9 @@ class SearchResults extends ConsumerWidget {
                 ],
               ),
               subtitle: result.snippet.isNotEmpty
-                  ? RichText(
-                      text: _buildHighlightedSnippet(result.snippet, theme),
+                  // Text.rich, unlike RichText, follows the text-scale setting.
+                  ? Text.rich(
+                      _buildHighlightedSnippet(result.snippet, theme),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     )

@@ -233,8 +233,9 @@ class TestReview:
         resp = await client.post(f"{base}/cards/{due[0]['id']}/review", json={"rating": "good"})
         assert resp.status_code == 200
         reviewed = resp.json()
-        assert reviewed["repetitions"] == 1
-        assert reviewed["interval_days"] == 1
+        # Good on a new card moves it to the next learning step, due in 10 minutes.
+        assert reviewed["learning_step"] == 1
+        assert reviewed["repetitions"] == 0
         assert reviewed["last_reviewed_at"] is not None
 
         remaining = (await client.get(f"{base}/due", params={"limit": 500})).json()
@@ -602,3 +603,72 @@ async def test_deleting_a_class_removes_study_data(
         await session.commit()
         assert await session.scalar(select(func.count()).select_from(Deck)) == 0
         assert await session.scalar(select(func.count()).select_from(Flashcard)) == 0
+
+
+async def test_edited_card_survives_refresh(
+    client: AsyncClient,
+    class_id: uuid.UUID,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    deck = await _generate_deck(client, class_id)
+    base = f"/api/classes/{class_id}/decks/{deck['id']}"
+    card = next(
+        c for c in (await client.get(f"{base}/cards")).json() if VITERBI_PATH in c["page_paths"]
+    )
+    edited = await client.patch(f"{base}/cards/{card['id']}", json={"back": "My own words."})
+    assert edited.json()["origin"] == "user"
+
+    async with session_factory() as session:
+        await session.execute(
+            update(WikiPage)
+            .where(WikiPage.path == VITERBI_PATH)
+            .values(content=PAGES[VITERBI_PATH][1] + "\nA brand new paragraph.\n")
+        )
+        await session.commit()
+    await client.post(f"{base}/refresh")
+
+    after = {c["id"]: c for c in (await client.get(f"{base}/cards")).json()}
+    assert after[card["id"]]["back"] == "My own words."
+
+
+async def test_new_cards_per_day_are_limited(
+    client: AsyncClient, class_id: uuid.UUID, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.config import settings
+
+    deck = await _generate_deck(client, class_id)
+    assert deck["card_count"] >= 3
+    monkeypatch.setattr(settings, "study_new_cards_per_day", 2)
+    base = f"/api/classes/{class_id}/decks/{deck['id']}"
+
+    due = (await client.get(f"{base}/due", params={"limit": 500})).json()
+    assert len(due) == 2
+    assert (await client.get(base)).json()["due_count"] == 2
+
+    # Starting a card uses up the allowance; once it's due again it is still shown.
+    await client.post(f"{base}/cards/{due[0]['id']}/review", json={"rating": "again"})
+    await client.post(f"{base}/cards/{due[1]['id']}/review", json={"rating": "again"})
+    assert (await client.get(f"{base}/due", params={"limit": 500})).json() == []
+
+    monkeypatch.setattr(settings, "study_new_cards_per_day", 3)
+    [extra] = (await client.get(f"{base}/due", params={"limit": 500})).json()
+    assert extra["id"] not in {due[0]["id"], due[1]["id"]}
+
+
+async def test_undo_restores_the_schedule_before_the_last_review(
+    client: AsyncClient, class_id: uuid.UUID
+) -> None:
+    deck = await _generate_deck(client, class_id)
+    base = f"/api/classes/{class_id}/decks/{deck['id']}"
+    [card] = (await client.get(f"{base}/due", params={"limit": 1})).json()
+
+    await client.post(f"{base}/cards/{card['id']}/review", json={"rating": "easy"})
+    undone = await client.post(f"{base}/cards/{card['id']}/review/undo")
+
+    assert undone.status_code == 200
+    restored = undone.json()
+    assert (restored["repetitions"], restored["learning_step"]) == (0, 0)
+    assert restored["last_reviewed_at"] is None
+    assert card["id"] in {c["id"] for c in (await client.get(f"{base}/due")).json()}
+    again = await client.post(f"{base}/cards/{card['id']}/review/undo")
+    assert again.status_code == 409

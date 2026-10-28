@@ -45,7 +45,10 @@ backend/            FastAPI Python backend
     services/
       credential_store.py  Platform-native credential storage (keyring → file fallback)
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
-      wiki_git.py     Per-Class git repo for wiki version history (init/commit/history/revert)
+      wiki_store.py   DB-is-truth helpers: per-Class operation lock, index from rows,
+                      mirror_to_disk (rewrites wiki files + git commit), log.md
+      wiki_git.py     Per-Class git repo for wiki version history (init/commit/history,
+                      bundles for backups, pages at a commit for revert)
       wiki_search.py  FTS5 full-text search across wiki pages
       study/          Study tools: extractors.py (offline cards from wiki
                       markdown), quiz_builder.py, grading.py, scheduler.py
@@ -60,8 +63,10 @@ backend/            FastAPI Python backend
       llm_service.py     LLM provider abstraction + factory
       llm_providers/     Concrete LLM implementations:
         base.py           Abstract LLMProvider base class
-        copilot_provider.py   Default: github-copilot-sdk (Copilot CLI + BYOK Ollama)
-        anthropic_provider.py Direct Anthropic SDK
+        copilot_provider.py   github-copilot-sdk (Copilot CLI + BYOK Ollama)
+        anthropic_provider.py Default: direct Anthropic SDK, claude-sonnet-5-5. Sends
+                              no temperature (current models reject it) and opts
+                              into server-side refusal fallback where supported
         openai_provider.py    Direct OpenAI SDK (also Ollama via base_url)
     utils/
       logging.py      structlog JSON logging setup (rotating file handler + stdout)
@@ -87,7 +92,8 @@ frontend/            Flutter application
       source_viewer/   Source file viewer (PDF, video, images, text)
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
-      common/          Shared widgets (error_card.dart)
+      common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
+                       status strip + file finished/failed notices)
 
 data/                Runtime data (gitignored; DB, wiki repos, uploaded files live here)
 docs/
@@ -131,6 +137,14 @@ launching a second backend, and the script stops Uvicorn when Flutter exits. In
 production or a direct `flutter run`, the app auto-launches and owns the backend
 itself (see `frontend/lib/services/backend_launcher.dart` and Task 1.9).
 
+`main()` creates the `BackendLauncher` and exposes it through
+`providers/backend_provider.dart`. There is a single `MaterialApp.router`, whose
+`builder` (`widgets/backend_gate.dart`) shows the startup and error screens
+until the backend is ready. Closing the window or quitting (Cmd+Q) awaits
+`stopBackend()` first (`_BackendShutdown` in `main.dart`). As a backstop, the
+launcher sets `HYPATIA_EXIT_ON_STDIN_CLOSE=1`, so the backend shuts itself down
+when the app's stdin pipe closes, even if the app crashed.
+
 To run just the backend:
 
 ```bash
@@ -141,7 +155,8 @@ cd backend
 
 ## Database
 
-- SQLite, single file at `<data_dir>/hypatia.db`, where `data_dir` defaults to
+- SQLite in WAL mode with a 5s busy timeout (`app/database.py`), single file at
+  `<data_dir>/hypatia.db`, where `data_dir` defaults to
   `~/.hypatia/data` (overridable via the `HYPATIA_DATA_DIR` env var / `.env`;
   see `backend/app/config.py`).
 - Schema is defined with SQLAlchemy 2.0 async ORM models in
@@ -156,7 +171,17 @@ cd backend
     existing name return 409. Converted artifacts are named by file ID
     (`converted/<file_id>.md`, `.summary.md`, ...) so sources never collide.
   - `wiki_pages` — LLM-maintained wiki pages for a Class (`path`, `title`,
-    `category`, `content`, `source_file_ids`).
+    `category`, `content`, `source_file_ids`, `user_edited`). This table is
+    the single source of truth for page content. `wiki/pages/**` and
+    `index.md` on disk are a mirror that `wiki_store.mirror_to_disk` rewrites
+    after each committed change, then commits to the Class's git repo.
+    Nothing reads page files back. Ingest collects the LLM's pages in memory
+    and writes them in one transaction only once every chunk succeeds, so
+    a cancel or failure changes nothing. Ingest, `/rebuild`, `/remove` and
+    `/summarize` take `wiki_store.class_operation_lock(class_id)`. `/rebuild`
+    writes the pages it deletes to `.rebuild-backup.json` in the Class
+    directory first; `recover_interrupted_rebuilds` (startup) restores any a
+    crash left missing.
   - `chat_messages` — chat history for a Class (`role`, `content`, `command`,
     `metadata_json`).
 - Study tables (Phase 9, DB-only, included in backups): `decks` →
@@ -165,6 +190,9 @@ cd backend
   questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
   the current page body marks them out of date (computed on read, frontmatter
   ignored).
+- Timestamp columns use `UTCDateTime` (`db_models.py`): SQLite drops
+  tzinfo, so values are stored as UTC and always come back timezone-aware,
+  and the API sends them with an offset. The Flutter models call `.toLocal()`.
 - Enums (`FileType`, `FileStatus`, `WikiCategory`, `ChatRole`, and the study
   enums) are Python
   `str` enums stored by their string `.value` (via a `values_callable` helper),
@@ -182,6 +210,24 @@ cd backend
 backend (health check, Classes CRUD, file upload/list, wiki tree/page
 retrieval, and the chat WebSocket message protocol). Keep it in sync with
 `backend/app/models/schemas.py` and the actual routes as endpoints are added.
+
+## LLM calls and long-running work
+
+- Size prompts with `wiki_engine._prompt_budget(system_prompt)`. It reserves
+  the output budget, the system prompt and 5% headroom against the
+  configured context window.
+- Close providers after use (`async with _llm() as provider:` in the
+  engine). Copilot's provider holds a CLI process.
+- Providers set `last_truncated` when output stopped at `max_tokens`. Ingest
+  then re-runs that chunk split in half.
+- A rate-limited ingest re-raises `LLM_RATE_LIMITED` with the file reset to
+  READY, so `IngestionQueue._ingest_with_retry` retries it.
+- Synchronous heavy work (document conversion, backup zip/unzip, git) runs
+  in `asyncio.to_thread`.
+- Chat commands run in a per-connection worker (`routers/chat.py`) and
+  outlive the socket. They write their results to chat history, and the
+  frontend reloads history when it reconnects. The router owns chat history;
+  the engine's streaming `/ask` and `/summarize` don't save messages.
 
 ## Logging
 
@@ -204,6 +250,28 @@ The backend uses a structured error catalog in `backend/app/errors.py`:
   and an optional `user_action` hint.
 - A global `@app.exception_handler(HypatiaError)` in `main.py` serializes these
   to `{"detail": ..., "code": ..., "user_action": ...}` JSON responses.
+
+## Local access security
+
+The backend binds `127.0.0.1`, but web pages in the user's browser can still
+reach loopback. `backend/app/security.py` (`LocalAccessMiddleware`, outermost)
+therefore checks every HTTP request and WebSocket handshake:
+- `Host` must be in `settings.allowed_hosts` (blocks DNS rebinding). Tests add
+  `test`/`testserver` in the conftest fixtures.
+- A browser `Origin`, if sent, must match `cors_origins` / `cors_origin_regex`.
+- When `settings.api_token` (`HYPATIA_API_TOKEN`) is set, everything except
+  `/health` needs `Authorization: Bearer <token>`. `BackendLauncher` generates a
+  fresh token per launch and passes it to the backend process. `ApiClient` sends
+  it, and exposes `authHeaders` for loaders that fetch backend URLs themselves
+  (WebSocket, media, PDF, image). `scripts/run_dev.sh` makes one per run and
+  passes it to Flutter as `--dart-define=HYPATIA_API_TOKEN`.
+
+Wiki page paths from LLM output, `PUT /wiki/pages/...` and backups go through
+`wiki_parser.normalize_page_path`. It accepts only `pages/**/*.md` with no `..`
+or `.git` segments (backups may also restore top-level `index.md`). Backups
+carry wiki git history as `wiki-history.bundle` and never a `.git` directory.
+Import ignores `.git` entries, so an untrusted backup can't plant git config or
+hooks.
 
 ## Credential storage
 

@@ -69,4 +69,12 @@ async def _run(
             logger.exception("study_generation_error", task_id=task_id)
             task_manager.fail_task(task_id, str(e))
             return
+        if task_manager.is_cancelled(task_id):
+            # Cancelled while saving: honour it rather than leave a deck the
+            # user was told was cancelled.
+            saved = deck if isinstance(request, DeckGenerateRequest) else quiz
+            await session.delete(saved)
+            await session.commit()
+            logger.info("study_generation_cancelled", task_id=task_id, after_save=True)
+            return
     task_manager.complete_task(task_id, result)

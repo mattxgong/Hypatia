@@ -22,6 +22,7 @@ from app.errors import ErrorCode, HypatiaError
 from app.models.db_models import File, FileStatus, WikiPage
 from app.services.task_manager import task_manager
 from app.services.wiki_engine import IngestResult, ingest_source
+from app.services.wiki_store import class_operation_lock
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -41,6 +42,10 @@ class QueueItem:
     status: QueueItemStatus = QueueItemStatus.PENDING
     error: str | None = None
     position: int = 0
+
+
+_MAX_FINISHED_ITEMS = 50
+_FINISHED = (QueueItemStatus.COMPLETE, QueueItemStatus.FAILED)
 
 
 @dataclass
@@ -123,6 +128,12 @@ class IngestionQueue:
         position = sum(1 for it in cq.items if it.status == QueueItemStatus.PENDING) + 1
         item = QueueItem(class_id=class_id, file_id=file_id, position=position)
         cq.items.append(item)
+        # Finished items only matter briefly (status of a recent upload); keep
+        # the newest few so a long session doesn't grow the list forever.
+        finished = [i for i in cq.items if i.status in _FINISHED]
+        if len(finished) > _MAX_FINISHED_ITEMS:
+            drop = {id(i) for i in finished[: len(finished) - _MAX_FINISHED_ITEMS]}
+            cq.items = [i for i in cq.items if id(i) not in drop]
 
         if not cq.processing:
             # Claim the class here, under the lock, rather than letting the
@@ -356,7 +367,11 @@ class IngestionQueue:
     ) -> IngestResult:
         for attempt in range(max_retries):
             try:
-                async with self._session_factory() as session:
+                # Waits out a /rebuild, /remove or /summarize of the same Class.
+                async with (
+                    class_operation_lock(item.class_id),
+                    self._session_factory() as session,
+                ):
                     result = await ingest_source(
                         session, item.class_id, item.file_id, task_id=task_id
                     )
@@ -390,10 +405,10 @@ class IngestionQueue:
 
     @staticmethod
     def _is_rate_limit(exc: Exception) -> bool:
-        if isinstance(exc, HypatiaError) and exc.code == ErrorCode.LLM_RATE_LIMITED:
-            return True
+        if isinstance(exc, HypatiaError):
+            return exc.code == ErrorCode.LLM_RATE_LIMITED
         error_str = str(exc).lower()
-        return "rate" in error_str or "429" in error_str
+        return "rate limit" in error_str or "too many requests" in error_str
 
     @staticmethod
     async def _mark_error(session: AsyncSession, file_id: uuid.UUID, message: str | None) -> None:

@@ -34,6 +34,9 @@ class ClassDropdown extends ConsumerWidget {
           children: [
             Expanded(
               child: DropdownButtonFormField<String>(
+                // Keyed by the current Class: initialValue is only read once,
+                // so without this the field ignores navigation elsewhere.
+                key: ValueKey(selectedId),
                 initialValue: selectedId,
                 decoration: InputDecoration(
                   contentPadding: const EdgeInsets.symmetric(
@@ -55,15 +58,8 @@ class ClassDropdown extends ConsumerWidget {
                       child: Text(c.name, overflow: TextOverflow.ellipsis),
                     ),
                   ),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('New Class'),
-                  ),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('Import Class'),
-                  ),
                 ],
+                hint: const Text('Choose a class'),
                 items: [
                   ...classes.map(
                     (c) => DropdownMenuItem<String>(
@@ -85,37 +81,38 @@ class ClassDropdown extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  const DropdownMenuItem<String>(
-                    value: '__new__',
-                    child: Row(
-                      children: [
-                        Icon(Icons.add, size: 16),
-                        SizedBox(width: 8),
-                        Text('New Class'),
-                      ],
-                    ),
-                  ),
-                  const DropdownMenuItem<String>(
-                    value: '__import__',
-                    child: Row(
-                      children: [
-                        Icon(Icons.file_upload_outlined, size: 16),
-                        SizedBox(width: 8),
-                        Text('Import Class'),
-                      ],
-                    ),
-                  ),
                 ],
                 onChanged: (value) {
-                  if (value == '__new__') {
-                    showCreateClassDialog(context, ref);
-                  } else if (value == '__import__') {
-                    importClassFromBackup(context, ref);
-                  } else if (value != null) {
-                    context.go('/class/$value');
-                  }
+                  if (value != null) context.go('/class/$value');
                 },
               ),
+            ),
+            // Separate from the list: as list items, picking one and then
+            // cancelling left the field showing "New Class".
+            PopupMenuButton<String>(
+              tooltip: 'Add a class',
+              icon: const Icon(Icons.add, size: 20),
+              onSelected: (action) => action == 'new'
+                  ? showCreateClassDialog(context, ref)
+                  : importClassFromBackup(context, ref),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'new',
+                  child: ListTile(
+                    leading: Icon(Icons.add),
+                    title: Text('New class…'),
+                    dense: true,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'import',
+                  child: ListTile(
+                    leading: Icon(Icons.file_upload_outlined),
+                    title: Text('Import from backup…'),
+                    dense: true,
+                  ),
+                ),
+              ],
             ),
             if (selectedId != null)
               IconButton(
@@ -136,65 +133,97 @@ void showCreateClassDialog(BuildContext context, WidgetRef ref) {
   final nameController = TextEditingController();
   final descController = TextEditingController();
   final formKey = GlobalKey<FormState>();
+  var creating = false;
+  String? error;
 
   showDialog<void>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('New Class'),
-      content: SizedBox(
-        width: 420,
-        child: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialogState) => AlertDialog(
+        title: const Text('New Class'),
+        content: SizedBox(
+          width: 420,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  autofocus: true,
+                  scrollPhysics: const ClampingScrollPhysics(),
+                  maxLength: maxClassNameLength,
+                  maxLines: 1,
+                  validator: validateClassName,
                 ),
-                autofocus: true,
-                scrollPhysics: const ClampingScrollPhysics(),
-                maxLength: maxClassNameLength,
-                maxLines: 1,
-                validator: validateClassName,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: descController,
-                decoration: const InputDecoration(
-                  labelText: 'Description',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: descController,
+                  decoration: const InputDecoration(
+                    labelText: 'Description',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLength: maxClassDescriptionLength,
+                  maxLines: 2,
+                  validator: validateClassDescription,
                 ),
-                maxLength: maxClassDescriptionLength,
-                maxLines: 2,
-                validator: validateClassDescription,
-              ),
-            ],
+                if (error != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(dialogContext).colorScheme.error,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            // Disabled while creating, so a double click makes one class.
+            onPressed: creating
+                ? null
+                : () async {
+                    if (!(formKey.currentState?.validate() ?? false)) return;
+                    setDialogState(() {
+                      creating = true;
+                      error = null;
+                    });
+                    try {
+                      final newClass = await ref
+                          .read(classListProvider.notifier)
+                          .create(
+                            name: nameController.text.trim(),
+                            description: descController.text.trim(),
+                          );
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (context.mounted) {
+                        context.go('/class/${newClass.id}');
+                      }
+                    } on ApiException catch (e) {
+                      if (dialogContext.mounted) {
+                        setDialogState(() {
+                          creating = false;
+                          error = e.detail;
+                        });
+                      }
+                    }
+                  },
+            child: Text(creating ? 'Creating…' : 'Create'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () async {
-            if (!(formKey.currentState?.validate() ?? false)) return;
-            final name = nameController.text.trim();
-            final newClass = await ref
-                .read(classListProvider.notifier)
-                .create(name: name, description: descController.text.trim());
-            if (dialogContext.mounted) Navigator.pop(dialogContext);
-            if (context.mounted) {
-              context.go('/class/${newClass.id}');
-            }
-          },
-          child: const Text('Create'),
-        ),
-      ],
     ),
   );
 }

@@ -10,6 +10,7 @@ rest of the app keeps working without version history.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,7 @@ from app.utils.logging import get_logger
 logger = get_logger()
 
 _GIT_AVAILABLE = shutil.which("git") is not None
+_COMMIT_SHA = re.compile(r"[0-9a-f]{7,40}")
 _warned_missing_git = False
 
 
@@ -41,6 +43,9 @@ def _run_git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         cwd=cwd,
         capture_output=True,
         text=True,
+        # Page content is UTF-8; the locale codepage (cp1252 on Windows) would garble it.
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
@@ -91,6 +96,63 @@ def commit_wiki_change(class_id: str, message: str) -> str | None:
     return sha
 
 
+def create_history_bundle(class_id: str, dest: Path) -> bool:
+    """Write the wiki's commit history to a git bundle at ``dest``.
+
+    Backups carry history as a bundle rather than the ``.git`` directory, since
+    a bundle holds only commits and refs, never config or hooks. Returns False
+    when there is no history to bundle or git is unavailable.
+    """
+    if not _GIT_AVAILABLE:
+        _warn_git_missing()
+        return False
+
+    path = wiki_dir(class_id)
+    if not (path / ".git").exists():
+        return False
+    if _run_git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=path).returncode != 0:
+        return False
+
+    result = _run_git(["bundle", "create", str(dest), "HEAD"], cwd=path)
+    if result.returncode != 0:
+        logger.warning("wiki_bundle_failed", class_id=class_id, stderr=result.stderr.strip())
+        return False
+    return True
+
+
+def restore_history_bundle(class_id: str, bundle: Path) -> bool:
+    """Load the history in ``bundle`` into the Class's wiki repo, keeping its files.
+
+    The repo must be freshly initialized. The working tree is left as is, and
+    any difference from the bundled history is committed on top of it. Returns
+    False (leaving a plain fresh repo) if the bundle is unusable.
+    """
+    path = init_wiki_repo(class_id)
+    if not _GIT_AVAILABLE or not (path / ".git").exists():
+        return False
+
+    steps = {
+        "verify": ["bundle", "verify", "--quiet", str(bundle)],
+        # The bundle comes from an untrusted archive, so check every object.
+        "fetch": ["-c", "transfer.fsckObjects=true", "fetch", "--quiet", str(bundle), "HEAD"],
+        "reset": ["reset", "--quiet", "FETCH_HEAD"],
+    }
+    for step, args in steps.items():
+        result = _run_git(args, cwd=path)
+        if result.returncode != 0:
+            logger.warning(
+                "wiki_bundle_restore_failed",
+                class_id=class_id,
+                step=step,
+                stderr=result.stderr.strip(),
+            )
+            return False
+
+    commit_wiki_change(class_id, "Import backup")
+    logger.info("wiki_history_restored", class_id=class_id)
+    return True
+
+
 def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[str, str]]:
     """Return commit history for a Class's wiki, optionally scoped to a
     single page path (relative to the wiki root). Most recent first."""
@@ -105,7 +167,7 @@ def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[s
     separator = "\x1f"
     args = ["log", f"--pretty=format:%H{separator}%an{separator}%aI{separator}%s"]
     if page_path:
-        args.extend(["--", page_path])
+        args.extend(["--", page_path])  # after "--", git reads it as a path only
 
     result = _run_git(args, cwd=path)
     if result.returncode != 0 or not result.stdout.strip():
@@ -118,27 +180,35 @@ def get_wiki_history(class_id: str, page_path: str | None = None) -> list[dict[s
     return history
 
 
-def revert_wiki_to(class_id: str, commit_sha: str) -> str | None:
-    """Restore the wiki's working tree to match an earlier commit and record
-    the revert as a new commit, preserving full history. Returns the new
-    commit sha, or ``None`` if git is unavailable or the revert failed."""
+def read_pages_at(class_id: str, commit_sha: str) -> dict[str, str] | None:
+    """The wiki's ``pages/**`` files as they were at ``commit_sha``, by path.
+
+    Returns None if git is unavailable or the commit can't be read. The
+    caller loads these into the database, which then mirrors them to disk.
+    """
     if not _GIT_AVAILABLE:
         _warn_git_missing()
         return None
+    if not _COMMIT_SHA.fullmatch(commit_sha):
+        return None  # never hand git something that could parse as an option
 
     path = wiki_dir(class_id)
     if not (path / ".git").exists():
-        logger.warning("wiki_revert_failed", class_id=class_id, detail="no repo")
         return None
 
-    checkout = _run_git(["checkout", commit_sha, "--", "."], cwd=path)
-    if checkout.returncode != 0:
+    listing = _run_git(["ls-tree", "-r", "-z", "--name-only", commit_sha, "--", "pages"], cwd=path)
+    if listing.returncode != 0:
         logger.warning(
-            "wiki_revert_failed",
+            "wiki_read_commit_failed",
             class_id=class_id,
             commit_sha=commit_sha,
-            stderr=checkout.stderr.strip(),
+            stderr=listing.stderr.strip(),
         )
         return None
 
-    return commit_wiki_change(class_id, f"Revert to {commit_sha[:8]}")
+    pages: dict[str, str] = {}
+    for rel_path in filter(None, listing.stdout.split("\0")):
+        shown = _run_git(["show", f"{commit_sha}:{rel_path}"], cwd=path)
+        if shown.returncode == 0:
+            pages[rel_path] = shown.stdout
+    return pages

@@ -50,6 +50,10 @@ class AddFileButton extends ConsumerWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Upload failed: ${next.errorMessage}'),
+            // A SnackBar with an action otherwise stays until dismissed,
+            // holding up every notice after it.
+            persist: false,
+            duration: const Duration(seconds: 8),
             action: SnackBarAction(
               label: 'Retry',
               onPressed: () =>
@@ -128,16 +132,12 @@ class _UploadProgressIndicator extends StatelessWidget {
               ),
               Text('$percent%', style: theme.textTheme.labelSmall),
               const SizedBox(width: 4),
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: IconButton(
-                  icon: const Icon(Icons.close, size: 12),
-                  onPressed: () =>
-                      ref.read(uploadProgressProvider.notifier).cancel(),
-                  padding: EdgeInsets.zero,
-                  tooltip: 'Cancel upload',
-                ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 16),
+                onPressed: () =>
+                    ref.read(uploadProgressProvider.notifier).cancel(),
+                tooltip: 'Cancel upload',
+                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
               ),
             ],
           ),

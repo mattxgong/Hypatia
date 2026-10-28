@@ -115,9 +115,9 @@ Note: the Flutter app's `BackendLauncher` uses port 8000 by default. If you chan
 
 ---
 
-## Copilot CLI not installed (default provider)
+## Copilot CLI not installed
 
-**Symptom**: The default LLM provider (`copilot`) fails with errors about missing the GitHub Copilot CLI.
+**Symptom**: With the `copilot` provider selected, requests fail with errors about missing the GitHub Copilot CLI.
 
 **Solution**: Either install the Copilot CLI or switch to a different provider.
 
@@ -179,6 +179,27 @@ backend\.venv\Scripts\activate
 
 # macOS/Linux
 source backend/.venv/bin/activate
+```
+
+---
+
+## Windows build fails with `Cannot open include file: 'atlstr.h'`
+
+**Symptom**: `flutter run` or `scripts/run_dev.sh` fails compiling
+`flutter_secure_storage_windows_plugin.cpp` with error C1083 for `atlstr.h`.
+
+**Cause**: The `flutter_secure_storage` Windows plugin uses ATL, which
+Visual Studio's "Desktop development with C++" workload doesn't install by
+default.
+
+**Solution**: Open Visual Studio Installer, choose **Modify**, and on the
+**Individual components** tab add **C++ ATL for latest v14x build tools
+(x86 & x64)**. Then clear the stale build and run again:
+
+```bash
+cd frontend
+flutter clean
+flutter run -d windows
 ```
 
 ---

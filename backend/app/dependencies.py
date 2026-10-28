@@ -34,10 +34,9 @@ async def check_llm_available() -> None:
     try:
         provider = get_llm_provider()
         try:
-            await asyncio.wait_for(
-                provider.complete("test", "ping", max_tokens=1),
-                timeout=_PROBE_TIMEOUT_SECONDS,
-            )
+            # Not a completion: on Copilot each one is a premium request, and
+            # this runs every 30 seconds while gated endpoints are in use.
+            await asyncio.wait_for(provider.check(), timeout=_PROBE_TIMEOUT_SECONDS)
         finally:
             await provider.close()
         _cache_result = True

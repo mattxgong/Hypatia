@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 from alembic.config import Config
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from alembic import command
@@ -24,6 +26,19 @@ def database_url() -> str:
 
 
 engine = create_async_engine(database_url())
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _configure_sqlite(dbapi_connection: Any, _record: Any) -> None:
+    # WAL lets readers and a writer work at once (chat, uploads and ingest
+    # share the file), and the timeout waits for a lock instead of failing
+    # at once with "database is locked".
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.close()
+
+
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 

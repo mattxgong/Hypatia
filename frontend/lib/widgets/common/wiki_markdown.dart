@@ -36,11 +36,23 @@ class WikiMarkdown extends ConsumerWidget {
     final pages = classId == null
         ? const <WikiPageSummary>[]
         : ref.watch(wikiTreeProvider(classId)).valueOrNull ?? const [];
+    // Only the file names matter here. Watching the whole list would
+    // re-render every page, bubble and card on each 3-second status poll.
+    if (classId != null) {
+      ref.watch(
+        fileListProvider(classId).select(
+          (files) => [
+            for (final f in files.valueOrNull ?? const <SourceFile>[])
+              '${f.id}=${f.originalFilename}',
+          ].join('\n'),
+        ),
+      );
+    }
     final files = classId == null
         ? const <SourceFile>[]
-        : ref.watch(fileListProvider(classId)).valueOrNull ?? const [];
+        : ref.read(fileListProvider(classId)).valueOrNull ?? const [];
     final rendered = numberCitations(
-      resolveWikiLinks(data, pages),
+      attachEquationCitations(resolveWikiLinks(data, pages)),
       fileNames: {for (final f in files) f.id: f.originalFilename},
     );
 

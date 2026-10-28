@@ -40,6 +40,9 @@ void main() {
     );
 
     expect(widths.sidebar, 0);
-    expect(widths.chat, 464);
+    expect(
+      widths.chat,
+      900 - 32 - 12 - 400,
+    ); // collapsed strip, divider, center
   });
 }

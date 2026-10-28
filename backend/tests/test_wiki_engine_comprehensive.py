@@ -102,10 +102,10 @@ async def test_ingest_llm_timeout(db_session: AsyncSession, tmp_path: Path):
     mock_provider.complete = AsyncMock(side_effect=OSError("Connection timed out"))
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await ingest_source(db_session, class_id, file_record.id)
 
@@ -128,10 +128,10 @@ async def test_ingest_malformed_llm_output(db_session: AsyncSession, tmp_path: P
     mock_provider.complete = AsyncMock(return_value="I'm sorry, I can't help with that request.")
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await ingest_source(db_session, class_id, file_record.id)
 
@@ -180,7 +180,7 @@ async def test_summarize_llm_error(db_session: AsyncSession, tmp_path: Path):
     mock_provider.complete = AsyncMock(side_effect=RuntimeError("API rate limit exceeded"))
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         result = await handle_summarize(db_session, class_id, "test")
@@ -231,9 +231,10 @@ async def test_ask_stream_llm_error_yields_error_message(db_session: AsyncSessio
 
     mock_provider = MagicMock()
     mock_provider.stream = failing_stream
+    mock_provider.close = AsyncMock()
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         chunks: list[str] = []
@@ -259,8 +260,8 @@ async def test_update_wiki_page_commits_user_edit(db_session: AsyncSession, tmp_
     content = '---\ntitle: "Page"\ntype: concept\nsources: []\ntags: []\n---\nEdited.\n'
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change") as mock_commit,
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change") as mock_commit,
     ):
         await update_wiki_page(
             db_session, class_id, "pages/concepts/test.md", content, is_user_edit=True
@@ -271,10 +272,10 @@ async def test_update_wiki_page_commits_user_edit(db_session: AsyncSession, tmp_
     assert commit_msg.startswith("user-edit:")
 
 
-async def test_update_wiki_page_no_commit_for_non_user_edit(
+async def test_update_wiki_page_non_user_edit_is_not_marked_user_edited(
     db_session: AsyncSession, tmp_path: Path
 ):
-    """Non-user edits (LLM generated) should not trigger a git commit."""
+    """Every change is mirrored to git, but only user edits are flagged as such."""
     class_id = uuid.uuid4()
     wiki_path = tmp_path / "wiki"
     wiki_path.mkdir()
@@ -282,14 +283,18 @@ async def test_update_wiki_page_no_commit_for_non_user_edit(
     content = '---\ntitle: "Page"\ntype: concept\nsources: []\ntags: []\n---\nGenerated.\n'
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change") as mock_commit,
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change") as mock_commit,
     ):
         await update_wiki_page(
             db_session, class_id, "pages/concepts/test.md", content, is_user_edit=False
         )
 
-    mock_commit.assert_not_called()
+    mock_commit.assert_called_once_with(str(class_id), "edit: modified pages/concepts/test.md")
+    page = (
+        await db_session.execute(select(WikiPage).where(WikiPage.class_id == class_id))
+    ).scalar_one()
+    assert page.user_edited is False
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +355,10 @@ async def test_ingest_skips_user_edited_pages(db_session: AsyncSession, tmp_path
     mock_provider.complete = AsyncMock(return_value=llm_output)
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await ingest_source(db_session, class_id, file_record.id)
 
@@ -375,7 +380,7 @@ async def test_handle_ask_empty_wiki(db_session: AsyncSession, tmp_path: Path):
     wiki_path.mkdir()
     (wiki_path / "index.md").write_text("# Index\n", encoding="utf-8")
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path):
+    with patch("app.services.wiki_store.wiki_dir", return_value=wiki_path):
         result = await handle_ask(db_session, class_id, "What is machine learning?")
 
     assert "upload" in result.answer.lower() or "no" in result.answer.lower()
@@ -426,8 +431,8 @@ async def test_handle_remove_multi_source_page_preserved(db_session: AsyncSessio
     await db_session.flush()
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
-        patch("app.services.wiki_engine.commit_wiki_change"),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.commit_wiki_change"),
     ):
         result = await handle_remove(db_session, class_id, "file-a.pdf")
 
@@ -455,7 +460,7 @@ async def test_lint_no_llm_for_small_wikis(db_session: AsyncSession, tmp_path: P
     (pages_dir / "two.md").write_text("---\ntitle: Two\n---\nContent [[one]].\n", encoding="utf-8")
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider") as mock_get_provider,
     ):
         result = await handle_lint(db_session, class_id)
@@ -504,7 +509,7 @@ async def test_handle_ask_saves_to_chat_messages(db_session: AsyncSession, tmp_p
     mock_provider.complete = AsyncMock(return_value="The topic is about X.")
 
     with (
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
     ):
         await handle_ask(db_session, class_id, "What is the topic?")

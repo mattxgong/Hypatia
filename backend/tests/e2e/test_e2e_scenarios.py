@@ -290,11 +290,11 @@ class TestSettingsAPI:
     async def test_update_settings(self, e2e_client: AsyncClient) -> None:
         resp = await e2e_client.put(
             "/api/settings",
-            json={"llm_provider": "anthropic"},
+            json={"llm_provider": "openai"},
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["llm_provider"] == "anthropic"
+        assert data["llm_provider"] == "openai"
 
     async def test_settings_start_from_deterministic_baseline(
         self, e2e_client: AsyncClient
@@ -303,7 +303,7 @@ class TestSettingsAPI:
         resp = await e2e_client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["llm_provider"] == "copilot"
+        assert data["llm_provider"] == "anthropic"
         assert data["llm_model"] is None
         assert data["anthropic_api_key"] is None
         assert data["ollama_base_url"] == "http://localhost:11434"

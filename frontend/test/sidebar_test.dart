@@ -127,6 +127,29 @@ void main() {
     expect(find.textContaining('Source Files'), findsOneWidget);
   });
 
+  testWidgets('List highlights paint inside the clipped list area', (
+    tester,
+  ) async {
+    setLargeTestSurface(tester);
+    await tester.pumpWidget(
+      wrapWithProviders(const Sidebar(), classId: 'class-1'),
+    );
+    await tester.pumpAndSettle();
+
+    // A ListTile's selected color goes on its nearest Material. That must be
+    // the clipped one around the list, not the sidebar's.
+    final tile = find.byType(ListTile).first;
+    final material = find.ancestor(of: tile, matching: find.byType(Material));
+    expect(
+      tester.widget<Material>(material.first).type,
+      MaterialType.transparency,
+    );
+    expect(
+      find.ancestor(of: material.first, matching: find.byType(ClipRect)),
+      findsWidgets,
+    );
+  });
+
   testWidgets('Wiki tree shows pages under categories', (tester) async {
     setLargeTestSurface(tester);
     await tester.pumpWidget(

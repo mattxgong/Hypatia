@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -66,13 +68,26 @@ class UploadProgressNotifier extends Notifier<UploadState> {
 
     final apiClient = ref.read(apiClientProvider);
     try {
+      // One request carries every file, so which file is being sent is
+      // worked out from the bytes sent so far.
+      final sizes = [for (final p in paths) File(p).lengthSync()];
       await apiClient.uploadFiles(
         classId,
         paths,
         onProgress: (sent, total) {
-          if (total > 0) {
-            state = state.copyWith(progress: sent / total);
+          if (total <= 0) return;
+          var done = 0;
+          var cumulative = 0;
+          for (final size in sizes) {
+            if (cumulative + size > sent) break;
+            cumulative += size;
+            done++;
           }
+          state = state.copyWith(
+            progress: sent / total,
+            filesDone: done,
+            currentFileName: fileNames[done.clamp(0, fileNames.length - 1)],
+          );
         },
         cancelToken: _cancelToken,
       );
@@ -97,6 +112,10 @@ class UploadProgressNotifier extends Notifier<UploadState> {
         status: UploadStatus.error,
         errorMessage: e.detail,
       );
+    } catch (e) {
+      // E.g. a file that can't be read. Anything else left the upload stuck
+      // in "uploading" with Add Files disabled for good.
+      state = state.copyWith(status: UploadStatus.error, errorMessage: '$e');
     }
   }
 

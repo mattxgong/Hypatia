@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../version.dart';
+
 class HypatiaAboutButton extends StatelessWidget {
   const HypatiaAboutButton({super.key});
 
@@ -18,7 +20,7 @@ void showHypatiaAboutDialog(BuildContext context) {
   showAboutDialog(
     context: context,
     applicationName: 'Hypatia',
-    applicationVersion: '1.0.0',
+    applicationVersion: appVersion,
     applicationIcon: const Icon(Icons.school_outlined, size: 48),
     applicationLegalese:
         'Copyright 2026 Matthew Gong\nLicensed under Apache-2.0',

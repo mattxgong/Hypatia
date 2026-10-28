@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -18,12 +19,41 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import Uuid
+from sqlalchemy.types import TypeDecorator, Uuid
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """A timestamp that is always timezone-aware UTC in Python.
+
+    SQLite has no timezone type and drops tzinfo even for
+    ``DateTime(timezone=True)``, so values came back naive and the API sent
+    them without an offset, which clients read as local time. Values are
+    converted to UTC on the way in and tagged UTC on the way out.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class Base(DeclarativeBase):
@@ -99,10 +129,8 @@ class Class(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     files: Mapped[list[File]] = relationship(back_populates="class_", cascade="all, delete-orphan")
     wiki_pages: Mapped[list[WikiPage]] = relationship(
@@ -143,10 +171,8 @@ class File(Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     class_: Mapped[Class] = relationship(back_populates="files")
 
@@ -166,10 +192,12 @@ class WikiPage(Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_file_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    # Set by user edits; ingest, /rebuild and /remove never overwrite such pages.
+    user_edited: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa_false()
     )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     class_: Mapped[Class] = relationship(back_populates="wiki_pages")
 
@@ -187,10 +215,8 @@ class ChatMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     command: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     class_: Mapped[Class] = relationship(back_populates="chat_messages")
 
@@ -218,10 +244,8 @@ class Deck(Base):
         Enum(StudyMethod, values_callable=_enum_values), nullable=False
     )
     scope_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     class_: Mapped[Class] = relationship(back_populates="decks")
     cards: Mapped[list[Flashcard]] = relationship(
@@ -251,14 +275,14 @@ class Flashcard(Base):
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     repetitions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lapses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    last_reviewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    # Position in the (re)learning steps; None once the card has graduated.
+    learning_step: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # When the card was first studied; counts it against the daily new-card limit.
+    first_reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     deck: Mapped[Deck] = relationship(back_populates="cards")
 
@@ -276,10 +300,8 @@ class Quiz(Base):
     )
     scope_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     settings_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     class_: Mapped[Class] = relationship(back_populates="quizzes")
     questions: Mapped[list[QuizQuestion]] = relationship(
@@ -309,7 +331,7 @@ class QuizQuestion(Base):
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_hashes: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     source_file_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
     quiz: Mapped[Quiz] = relationship(back_populates="questions")
 
@@ -325,6 +347,6 @@ class QuizAttempt(Base):
     grading_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     max_score: Mapped[float] = mapped_column(Float, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
     quiz: Mapped[Quiz] = relationship(back_populates="attempts")

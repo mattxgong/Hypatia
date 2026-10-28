@@ -12,7 +12,7 @@ class LlmProviderSettingNotifier extends AsyncNotifier<String> {
   Future<String> build() async {
     final apiClient = ref.read(apiClientProvider);
     final data = await apiClient.getSettings();
-    return data['llm_provider'] as String? ?? 'copilot';
+    return data['llm_provider'] as String? ?? 'anthropic';
   }
 
   Future<void> setProvider(String provider) async {
@@ -98,7 +98,7 @@ final llmConnectionStatusProvider = FutureProvider<LlmConnectionStatus>((
   final config = await ref.watch(
     fullSettingsProvider.selectAsync(
       (s) => (
-        provider: s['llm_provider'] as String? ?? 'copilot',
+        provider: s['llm_provider'] as String? ?? 'anthropic',
         model: s['llm_model'] as String?,
         baseUrl: s['ollama_base_url'] as String?,
         keys: (s['anthropic_api_key'], s['openai_api_key'], s['github_token']),

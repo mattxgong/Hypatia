@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -94,6 +96,7 @@ def _card_read(card: Flashcard, stale: bool) -> FlashcardRead:
         interval_days=card.interval_days,
         repetitions=card.repetitions,
         lapses=card.lapses,
+        learning_step=card.learning_step,
         due_at=card.due_at,
         last_reviewed_at=card.last_reviewed_at,
         created_at=card.created_at,
@@ -350,13 +353,8 @@ async def list_due_cards(
     session: AsyncSession = Depends(get_session),
 ) -> list[FlashcardRead]:
     deck = await _get_deck(session, class_id, deck_id)
-    result = await session.execute(
-        select(Flashcard)
-        .where(Flashcard.deck_id == deck.id, Flashcard.due_at <= _now())
-        .order_by(Flashcard.due_at, Flashcard.created_at)
-        .limit(limit)
-    )
-    return await _card_reads(session, class_id, list(result.scalars().all()))
+    cards = await service.due_cards(session, deck.id, _now(), limit)
+    return await _card_reads(session, class_id, cards)
 
 
 @router.post(
@@ -392,10 +390,16 @@ async def update_card(
 ) -> FlashcardRead:
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
+    edited = (body.front is not None and body.front != card.front) or (
+        body.back is not None and body.back != card.back
+    )
     if body.front is not None:
         card.front = body.front
     if body.back is not None:
         card.back = body.back
+    if edited:
+        # The user's wording now; Refresh must never rewrite or delete it.
+        card.origin = CardOrigin.USER
     if body.acknowledge_changes:
         card.page_hashes = await service.snapshot_pages(session, class_id, card)
     await session.commit()
@@ -426,10 +430,56 @@ async def review_card(
 ) -> FlashcardRead:
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
+    _remember_for_undo(card)
     service.apply_review(card, body.rating, _now())
     await session.commit()
     await session.refresh(card)
     return (await _card_reads(session, class_id, [card]))[0]
+
+
+@router.post("/decks/{deck_id}/cards/{card_id}/review/undo", response_model=FlashcardRead)
+async def undo_review(
+    class_id: uuid.UUID,
+    deck_id: uuid.UUID,
+    card_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> FlashcardRead:
+    """Put a card's schedule back to before its most recent review."""
+    deck = await _get_deck(session, class_id, deck_id)
+    card = await _get_card(session, deck, card_id)
+    previous = _undo_states.pop(card.id, None)
+    if previous is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Nothing to undo for this card"
+        )
+    for field_name, value in previous.items():
+        setattr(card, field_name, value)
+    await session.commit()
+    await session.refresh(card)
+    return (await _card_reads(session, class_id, [card]))[0]
+
+
+#: Scheduling state before each card's latest review, for Undo. In memory and
+#: bounded: undo is offered for a few seconds right after rating.
+_undo_states: OrderedDict[uuid.UUID, dict[str, Any]] = OrderedDict()
+_MAX_UNDO_STATES = 200
+_SCHEDULE_FIELDS = (
+    "ease",
+    "interval_days",
+    "repetitions",
+    "lapses",
+    "learning_step",
+    "due_at",
+    "last_reviewed_at",
+    "first_reviewed_at",
+)
+
+
+def _remember_for_undo(card: Flashcard) -> None:
+    _undo_states[card.id] = {f: getattr(card, f) for f in _SCHEDULE_FIELDS}
+    _undo_states.move_to_end(card.id)
+    while len(_undo_states) > _MAX_UNDO_STATES:
+        _undo_states.popitem(last=False)
 
 
 # --- Quizzes ---
@@ -440,10 +490,66 @@ async def list_quizzes(
     class_id: uuid.UUID, session: AsyncSession = Depends(get_session)
 ) -> list[QuizSummaryRead]:
     await service.get_class_or_404(session, class_id)
-    result = await session.execute(
-        select(Quiz).where(Quiz.class_id == class_id).order_by(Quiz.created_at.desc())
+    quizzes = list(
+        (
+            await session.execute(
+                select(Quiz).where(Quiz.class_id == class_id).order_by(Quiz.created_at.desc())
+            )
+        ).scalars()
     )
-    return [(await _quiz_summary(session, class_id, q))[0] for q in result.scalars().all()]
+    return await _quiz_summaries(session, class_id, quizzes)
+
+
+async def _quiz_summaries(
+    session: AsyncSession, class_id: uuid.UUID, quizzes: list[Quiz]
+) -> list[QuizSummaryRead]:
+    """Summaries of many quizzes in a fixed number of queries, not three per quiz."""
+    ids = [q.id for q in quizzes]
+    if not ids:
+        return []
+    questions: dict[uuid.UUID, list[QuizQuestion]] = {quiz_id: [] for quiz_id in ids}
+    for question in (
+        await session.execute(select(QuizQuestion).where(QuizQuestion.quiz_id.in_(ids)))
+    ).scalars():
+        questions[question.quiz_id].append(question)
+    count_rows = await session.execute(
+        select(QuizAttempt.quiz_id, func.count())
+        .where(QuizAttempt.quiz_id.in_(ids))
+        .group_by(QuizAttempt.quiz_id)
+    )
+    attempt_counts: dict[uuid.UUID, int] = {quiz_id: n for quiz_id, n in count_rows.all()}
+    latest: dict[uuid.UUID, QuizAttempt] = {}
+    for attempt in (
+        await session.execute(
+            select(QuizAttempt)
+            .where(QuizAttempt.quiz_id.in_(ids))
+            .order_by(QuizAttempt.created_at.desc())
+        )
+    ).scalars():
+        latest.setdefault(attempt.quiz_id, attempt)
+    current = await service.current_hashes(
+        session, class_id, service.referenced_paths([q for qs in questions.values() for q in qs])
+    )
+    return [
+        QuizSummaryRead(
+            id=quiz.id,
+            class_id=quiz.class_id,
+            name=quiz.name,
+            generation_method=quiz.generation_method,
+            scope_json=quiz.scope_json,
+            settings_json=quiz.settings_json,
+            question_count=len(questions[quiz.id]),
+            stale_count=sum(
+                1 for q in questions[quiz.id] if service.is_stale(q.page_hashes, current)
+            ),
+            attempt_count=attempt_counts.get(quiz.id, 0),
+            last_score=latest[quiz.id].score if quiz.id in latest else None,
+            last_max_score=latest[quiz.id].max_score if quiz.id in latest else None,
+            created_at=quiz.created_at,
+            updated_at=quiz.updated_at,
+        )
+        for quiz in quizzes
+    ]
 
 
 @router.post(

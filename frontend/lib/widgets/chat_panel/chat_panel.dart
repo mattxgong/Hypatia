@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
+import '../../utils/shortcuts.dart';
 import '../common/error_card.dart';
 import '../sidebar/add_file_button.dart';
 import 'command_input.dart';
@@ -15,6 +18,7 @@ class ChatPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final classId = ref.watch(currentClassIdProvider);
+    ref.watch(chatConnectionProvider);
     final theme = Theme.of(context);
 
     return Material(
@@ -22,17 +26,45 @@ class ChatPanel extends ConsumerWidget {
       child: Column(
         children: [
           _ChatHeader(
-            onNewChat: () {
-              if (classId != null) {
-                ref.read(chatMessagesProvider(classId).notifier).clearHistory();
-              }
-            },
+            onClearHistory: classId == null
+                ? null
+                : () => _confirmClearHistory(context, ref, classId),
           ),
           Expanded(child: _ChatBody(classId: classId)),
           const CommandInput(),
         ],
       ),
     );
+  }
+}
+
+Future<void> _confirmClearHistory(
+  BuildContext context,
+  WidgetRef ref,
+  String classId,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Clear chat history?'),
+      content: const Text(
+        "This permanently deletes this class's chat messages. "
+        'Your wiki, sources and study material are not affected.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Clear history'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true) {
+    await ref.read(chatMessagesProvider(classId).notifier).clearHistory();
   }
 }
 
@@ -46,7 +78,29 @@ class _ChatBody extends ConsumerWidget {
     if (classId == null) return _buildStarterCards(context, ref);
 
     final messagesAsync = ref.watch(chatMessagesProvider(classId!));
-    final streamingContent = ref.watch(chatStreamingContentProvider);
+    // Screen readers hear a reply when it arrives (one new message), not
+    // every message again when history loads.
+    ref.listen(chatMessagesProvider(classId!), (previous, next) {
+      final before = previous?.valueOrNull;
+      final after = next.valueOrNull;
+      if (before == null || after == null) return;
+      if (after.length != before.length + 1) return;
+      final reply = after.last;
+      if (reply.role == ChatRole.user) return;
+      final text = reply.content.length > 300
+          ? '${reply.content.substring(0, 300)}…'
+          : reply.content;
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        text,
+        Directionality.of(context),
+      );
+    });
+    // Only whether something is streaming: the text itself is watched by the
+    // streaming bubble, so each chunk doesn't rebuild every message.
+    final streaming = ref.watch(
+      chatStreamingContentProvider(classId!).select((s) => s.isNotEmpty),
+    );
 
     return messagesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -57,21 +111,20 @@ class _ChatBody extends ConsumerWidget {
         ),
       ),
       data: (messages) {
-        if (messages.isEmpty && streamingContent.isEmpty) {
+        if (messages.isEmpty && !streaming) {
           return _buildStarterCards(context, ref);
         }
 
-        final itemCount =
-            messages.length + (streamingContent.isNotEmpty ? 1 : 0);
+        final itemCount = messages.length + (streaming ? 1 : 0);
         return ListView.builder(
           padding: const EdgeInsets.all(12),
           reverse: true,
           itemCount: itemCount,
           itemBuilder: (context, index) {
-            if (index == 0 && streamingContent.isNotEmpty) {
-              return _StreamingBubble(content: streamingContent);
+            if (index == 0 && streaming) {
+              return _StreamingBubble(classId: classId!);
             }
-            final msgIndex = streamingContent.isNotEmpty ? index - 1 : index;
+            final msgIndex = streaming ? index - 1 : index;
             final message = messages[messages.length - 1 - msgIndex];
             return MessageBubble(message: message);
           },
@@ -82,8 +135,7 @@ class _ChatBody extends ConsumerWidget {
 
   Widget _buildStarterCards(BuildContext context, WidgetRef ref) {
     return StarterCards(
-      onAsk: () => ref.read(chatInputProvider.notifier).state =
-          'What would you like to know? ',
+      onAsk: () => ref.read(chatInputFocusRequestProvider.notifier).state++,
       onSummarize: () =>
           ref.read(chatInputProvider.notifier).state = '/summarize ',
       onAddFiles: () => pickAndUploadFiles(context, ref),
@@ -91,13 +143,14 @@ class _ChatBody extends ConsumerWidget {
   }
 }
 
-class _StreamingBubble extends StatelessWidget {
-  const _StreamingBubble({required this.content});
+class _StreamingBubble extends ConsumerWidget {
+  const _StreamingBubble({required this.classId});
 
-  final String content;
+  final String classId;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final content = ref.watch(chatStreamingContentProvider(classId));
     final theme = Theme.of(context);
     return Align(
       alignment: Alignment.centerLeft,
@@ -115,9 +168,9 @@ class _StreamingBubble extends StatelessWidget {
 }
 
 class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({required this.onNewChat});
+  const _ChatHeader({required this.onClearHistory});
 
-  final VoidCallback onNewChat;
+  final VoidCallback? onClearHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -137,16 +190,14 @@ class _ChatHeader extends StatelessWidget {
             onPressed: () => _showCommandReference(context),
             tooltip: 'Command reference',
             iconSize: 18,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
           IconButton(
-            icon: const Icon(Icons.add, size: 18),
-            onPressed: onNewChat,
-            tooltip: 'New conversation',
+            icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+            onPressed: onClearHistory,
+            tooltip: 'Clear chat history',
             iconSize: 18,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
         ],
       ),
@@ -264,10 +315,11 @@ class _CommandReferenceDialog extends StatelessWidget {
               const SizedBox(height: 4),
               Text('Keyboard shortcuts', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),
-              _shortcutRow('Ctrl+K', 'Focus search bar'),
-              _shortcutRow('Ctrl+N', 'Create a new class'),
-              _shortcutRow('Ctrl+B', 'Toggle sidebar'),
-              _shortcutRow('Ctrl+J', 'Toggle chat panel'),
+              _shortcutRow('$shortcutModifierLabel+K', 'Focus search bar'),
+              _shortcutRow('$shortcutModifierLabel+N', 'Create a new class'),
+              _shortcutRow('$shortcutModifierLabel+B', 'Toggle sidebar'),
+              _shortcutRow('$shortcutModifierLabel+J', 'Toggle chat panel'),
+              _shortcutRow('Enter', 'Send (Shift+Enter: new line)'),
               _shortcutRow('Escape', 'Clear search / close dialog'),
             ],
           ),

@@ -21,12 +21,14 @@ Questions that need answers before or during implementation. Grouped by area.
 
 4. **Should the backend run as a local server only, or also support remote deployment?**
    - *Open.* Start local-only. Remote deployment is a future consideration.
+   - **Update (2026-10-19):** Phase 10 adds an opt-in remote-access mode: paired devices reach the desktop backend over LAN or Tailscale. A hosted backend stays a later option. See [10-mobile.md](./10-mobile.md).
 
 5. **How should the Flutter app launch the FastAPI backend?**
    - **RESOLVED (2026-08-06):** **Option B — Flutter app spawns the backend process automatically on launch.** The app will start the FastAPI/uvicorn process as a child process and manage its lifecycle (start on app launch, kill on app close).
 
 6. **SQLite vs. PostgreSQL?**
    - *Open.* Start with SQLite. Design ORM layer so it's swappable. PostgreSQL only needed if going multi-user/remote.
+   - **Update (2026-10-19):** Phase 10's companion mode keeps SQLite on the desktop. PostgreSQL would only come with a future hosted mode (see [10-mobile.md](./10-mobile.md) §2).
 
 ---
 
@@ -50,6 +52,7 @@ Questions that need answers before or during implementation. Grouped by area.
 
 11. **Desktop-only or also mobile?**
     - **RESOLVED (2026-08-06):** **Desktop-first.** Mobile layout is a future phase (Phase 9+). The 3-panel layout targets desktop (Windows, macOS, Linux).
+    - **Update (2026-10-19):** Mobile is planned as Phase 10 (Android first, phones and tablets). See [10-mobile.md](./10-mobile.md).
 
 12. **Should the app support multiple windows/tabs for the same Class?**
     - *Open.* Recommendation: Single-window for now.

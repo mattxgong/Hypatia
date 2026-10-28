@@ -7,7 +7,9 @@ import 'providers/class_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/class_settings_screen.dart';
 import 'screens/home_screen.dart';
+import 'widgets/backend_gate.dart';
 import 'widgets/common/hypatia_about_button.dart';
+import 'widgets/common/provider_setup_prompt.dart';
 import 'widgets/sidebar/class_dropdown.dart' show showCreateClassDialog;
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -16,13 +18,17 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) => const _ClassRedirectScreen(),
+        builder: (context, state) =>
+            const ProviderSetupPrompt(child: _ClassRedirectScreen()),
       ),
       GoRoute(
         path: '/class/:classId',
         builder: (context, state) {
           final classId = state.pathParameters['classId']!;
-          return _ClassRouteSync(classId: classId, child: const HomeScreen());
+          return _ClassRouteSync(
+            classId: classId,
+            child: const ProviderSetupPrompt(child: HomeScreen()),
+          );
         },
       ),
       GoRoute(
@@ -160,8 +166,8 @@ class _NoClassesScreen extends ConsumerWidget {
   }
 }
 
-class HypatiaShell extends ConsumerWidget {
-  const HypatiaShell({super.key});
+class HypatiaApp extends ConsumerWidget {
+  const HypatiaApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -175,6 +181,7 @@ class HypatiaShell extends ConsumerWidget {
       darkTheme: HypatiaTheme.darkTheme,
       themeMode: themeMode,
       routerConfig: router,
+      builder: (context, child) => BackendGate(child: child!),
     );
   }
 }

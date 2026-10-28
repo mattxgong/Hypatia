@@ -91,6 +91,9 @@ class OpenAIProvider(LLMProvider):
                 response.usage.completion_tokens or 0,
             )
         choice = response.choices[0] if response.choices else None
+        self.last_truncated = choice is not None and choice.finish_reason == "length"
+        if self.last_truncated:
+            logger.warning("openai_output_truncated", model=self._model, max_tokens=max_tokens)
         message = choice.message if choice else None
         if message and message.content:
             return message.content

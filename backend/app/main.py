@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import signal
+import sys
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -12,7 +16,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from app import __version__
 from app.config import Settings, settings
-from app.database import engine, run_migrations
+from app.database import async_session_factory, engine, run_migrations
 from app.errors import HypatiaError
 from app.routers import backup as backup_router
 from app.routers import chat as chat_router
@@ -22,20 +26,50 @@ from app.routers import settings as settings_router
 from app.routers import study as study_router
 from app.routers import tasks as tasks_router
 from app.routers import wiki as wiki_router
+from app.security import LocalAccessMiddleware
 from app.services.credential_store import CredentialStore
 from app.services.ingestion_queue import get_ingestion_queue
 from app.services.ollama_manager import refresh_if_native_ollama, unload_if_ollama
 from app.services.settings_store import load_settings, reconcile_active_model
+from app.services.wiki_engine import recover_interrupted_rebuilds
 from app.services.wiki_search import ensure_fts_index
 from app.utils.logging import bind_context, clear_context, configure_logging, get_logger
 
 configure_logging()
 logger = get_logger()
 
+_FORCED_EXIT_DELAY_SECONDS = 15
+
+
+def _watch_stdin_for_parent_exit() -> None:
+    """Shut down once stdin reaches EOF, meaning the parent process is gone.
+
+    Raises SIGINT so uvicorn runs the normal shutdown (ingestion queue, Ollama
+    unload), and force-exits if that hasn't finished in time.
+    """
+    stdin = sys.stdin
+    if stdin is None:
+        return
+
+    def wait_for_eof() -> None:
+        try:
+            while stdin.buffer.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        logger.warning("parent_process_gone", detail="stdin closed; shutting down")
+        signal.raise_signal(signal.SIGINT)
+        time.sleep(_FORCED_EXIT_DELAY_SECONDS)
+        os._exit(0)
+
+    threading.Thread(target=wait_for_eof, name="stdin-watchdog", daemon=True).start()
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    if settings.exit_on_stdin_close:
+        _watch_stdin_for_parent_exit()
 
     persisted = load_settings(settings.data_dir)
     for key, value in persisted.items():
@@ -64,6 +98,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         settings.llm_provider, settings.llm_model, settings.ollama_base_url
     )
     try:
+        async with async_session_factory() as session:
+            await recover_interrupted_rebuilds(session)
+    except Exception:
+        logger.exception("rebuild_recovery_failed")
+    try:
         await get_ingestion_queue().recover_pending()
     except Exception:
         logger.exception("ingest_recovery_failed")
@@ -86,6 +125,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it runs first, before CORS and the routers.
+app.add_middleware(LocalAccessMiddleware)
 
 app.include_router(backup_router.router)
 app.include_router(classes_router.router)

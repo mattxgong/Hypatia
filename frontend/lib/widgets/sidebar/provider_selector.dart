@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
+
 import '../../providers/settings_provider.dart';
 import '../common/provider_icon.dart';
 import '../sidebar/class_dropdown.dart' show providerOptions;
@@ -124,14 +126,22 @@ class ConnectionStatusIndicator extends ConsumerWidget {
           .map((p) => p.label)
           .firstOrNull;
       if (value != null && value.connected) {
-        icon = const Icon(Icons.check_circle, color: Colors.green, size: 18);
+        icon = Icon(
+          Icons.check_circle,
+          color: StatusColors.of(context).success,
+          size: 18,
+        );
         final model = value.model;
         tooltip =
             'Connected to ${label ?? value.provider}'
             '${model != null && model.isNotEmpty ? ' ($model)' : ''}. '
             'Click to re-check.';
       } else {
-        icon = const Icon(Icons.error, color: Colors.red, size: 18);
+        icon = Icon(
+          Icons.error,
+          color: Theme.of(context).colorScheme.error,
+          size: 18,
+        );
         final reason = value?.error ?? 'Could not reach the Hypatia backend.';
         tooltip = 'Not connected: $reason\nClick to re-check.';
       }

@@ -103,6 +103,24 @@ page the supporting text appears on, not the printed page number.
 Use one citation link per location. The viewer renders them as numbered \
 superscripts with a reference list, so the link text is not shown.
 
+## Math
+
+The viewer typesets TeX, so write every formula, variable and symbol as TeX \
+math, never as Unicode look-alikes or plain text:
+- Inline: `\\( \\sigma(x) = \\frac{1}{1 + e^{-x}} \\)`, `\\( W_2 \\max(0, W_1 x) \\)`.
+- Display, on lines of their own: `\\[ f(x) = \\begin{cases} x & x > 0 \\\\ \
+\\alpha (e^x - 1) & x \\le 0 \\end{cases} \\]`.
+- Math inside a sentence stays inline. An equation set apart on its own line \
+uses display math.
+- Cite a displayed equation in the sentence that introduces it, before the \
+colon: `The loss is the mean squared error [source](...):`. Put nothing after \
+the equation on its line, and don't start the next paragraph with its citation.
+- Not `σ(x) = 1/(1 + e⁻ˣ)`, `W₂`, `xᵀ` or `≤`: subscripts, superscripts, \
+fractions and Greek letters go in TeX (`W_2`, `x^\\top`, `\\le`).
+- Text extracted from slides and PDFs often flattens math (`W2 max(0, W1x)`, \
+`e-x`). Reconstruct the intended formula in TeX.
+- Keep the source's notation, and leave math out of headings and `[[links]]`.
+
 ## Content Guidelines
 
 - Write in clear, concise academic prose.

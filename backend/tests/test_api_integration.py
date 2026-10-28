@@ -332,7 +332,7 @@ class TestGracefulDegradationIntegration:
         await self._reset_llm_cache()
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
+        mock_provider.check = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):
             assert (await client_no_llm_override.get("/health")).status_code == 200
@@ -348,7 +348,7 @@ class TestGracefulDegradationIntegration:
         await self._reset_llm_cache()
 
         mock_provider = AsyncMock()
-        mock_provider.complete = AsyncMock(side_effect=RuntimeError("LLM down"))
+        mock_provider.check = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         class_id = uuid.uuid4()
         with patch("app.dependencies.get_llm_provider", return_value=mock_provider):

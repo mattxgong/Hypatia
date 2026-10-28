@@ -1,2 +1,10 @@
 # AppImage runs AppRun directly; a CRLF shebang would break it.
 frontend/linux/packaging/AppRun text eol=lf
+
+# Flutter regenerates these with LF on every pub get. Check them out as LF too,
+# or core.autocrlf=true leaves them showing as modified on Windows.
+frontend/linux/flutter/generated_plugin_registrant.* text eol=lf
+frontend/linux/flutter/generated_plugins.cmake text eol=lf
+frontend/macos/Flutter/GeneratedPluginRegistrant.swift text eol=lf
+frontend/windows/flutter/generated_plugin_registrant.* text eol=lf
+frontend/windows/flutter/generated_plugins.cmake text eol=lf

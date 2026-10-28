@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
+
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/input_validation.dart';
@@ -10,6 +12,7 @@ Future<bool> showProviderConfigDialog(
   BuildContext context,
   String providerId, {
   bool activateProvider = false,
+  String? intro,
 }) async {
   return await showDialog<bool>(
         context: context,
@@ -18,6 +21,7 @@ Future<bool> showProviderConfigDialog(
         builder: (_) => ProviderConfigDialog(
           providerId: providerId,
           activateProvider: activateProvider,
+          intro: intro,
         ),
       ) ??
       false;
@@ -28,10 +32,14 @@ class ProviderConfigDialog extends ConsumerStatefulWidget {
     super.key,
     required this.providerId,
     this.activateProvider = false,
+    this.intro,
   });
 
   final String providerId;
   final bool activateProvider;
+
+  /// Shown above the form, e.g. to explain why the dialog opened on its own.
+  final String? intro;
 
   @override
   ConsumerState<ProviderConfigDialog> createState() =>
@@ -154,7 +162,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
       case 'copilot':
         return 'gpt-5.4';
       case 'anthropic':
-        return 'claude-sonnet-4-20250514';
+        return 'claude-sonnet-5-5';
       case 'openai':
         return 'gpt-4o';
       case 'ollama':
@@ -326,6 +334,10 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (widget.intro case final intro?) ...[
+                Text(intro, style: theme.textTheme.bodyMedium),
+                const SizedBox(height: 16),
+              ],
               if (widget.providerId == 'copilot') ...[
                 Text(
                   'GitHub Copilot uses CLI-based authentication by default. '
@@ -470,7 +482,9 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Icon(
                         _testResult! ? Icons.check_circle : Icons.cancel,
-                        color: _testResult! ? Colors.green : Colors.red,
+                        color: _testResult!
+                            ? StatusColors.of(context).success
+                            : theme.colorScheme.error,
                         size: 20,
                       ),
                     ),
@@ -483,7 +497,9 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                               ? 'Connected'
                               : (_testError ?? 'Connection failed'),
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: _testResult! ? Colors.green : Colors.red,
+                            color: _testResult!
+                                ? StatusColors.of(context).success
+                                : theme.colorScheme.error,
                           ),
                           maxLines: 4,
                           overflow: TextOverflow.ellipsis,

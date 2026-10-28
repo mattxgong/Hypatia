@@ -57,6 +57,7 @@ def _build_response() -> SettingsRead:
         ollama_base_url=settings.ollama_base_url,
         whisper_model_size=settings.whisper_model_size,
         whisper_device=settings.whisper_device,
+        study_new_cards_per_day=settings.study_new_cards_per_day,
     )
 
 
@@ -139,6 +140,15 @@ async def update_settings(body: SettingsUpdate, request: Request) -> SettingsRea
         settings.whisper_device = body.whisper_device
         persist_fields["whisper_device"] = body.whisper_device
         logger.info("settings_updated", field="whisper_device", value=body.whisper_device)
+
+    if body.study_new_cards_per_day is not None:
+        settings.study_new_cards_per_day = body.study_new_cards_per_day
+        persist_fields["study_new_cards_per_day"] = body.study_new_cards_per_day
+        logger.info(
+            "settings_updated",
+            field="study_new_cards_per_day",
+            value=body.study_new_cards_per_day,
+        )
 
     if persist_fields:
         save_settings(settings.data_dir, persist_fields)

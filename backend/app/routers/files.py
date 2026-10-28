@@ -262,3 +262,41 @@ async def delete_file(
 
     await handle_remove(session, class_id, file_.original_filename)
     logger.info("file_deleted", class_id=str(class_id), file_id=str(file_id))
+
+
+@router.post("/{file_id}/retry", response_model=FileRead, status_code=status.HTTP_202_ACCEPTED)
+async def retry_file(
+    class_id: uuid.UUID,
+    file_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> FileRead:
+    """Process a failed file again: re-ingest it if it was converted, else convert it again."""
+    file_ = await session.get(FileRecord, file_id)
+    if file_ is None or file_.class_id != class_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+    if file_.status != FileStatus.ERROR:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Only a file that failed can be retried"
+        )
+
+    file_.error_message = None
+    converted = Path(file_.converted_path) if file_.converted_path else None
+    if converted is not None and converted.exists():
+        file_.status = FileStatus.READY
+        await session.commit()
+        await get_ingestion_queue().enqueue(class_id, file_id)
+    else:
+        file_.status = FileStatus.PENDING
+        await session.commit()
+        background_tasks.add_task(
+            _process_file_background,
+            class_id,
+            file_id,
+            file_.original_filename,
+            Path(file_.raw_path),
+            storage_service.converted_output_path(str(class_id), file_id),
+        )
+    logger.info("file_retry", class_id=str(class_id), file_id=str(file_id))
+    await session.refresh(file_)
+    return _file_read(file_)

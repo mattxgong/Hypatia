@@ -82,6 +82,7 @@ def test_wiki_page_read_and_summary_round_trip() -> None:
         category=WikiCategory.CONCEPT,
         content="# Gradient Descent\n\n...",
         source_file_ids=["abc", "def"],
+        user_edited=True,
         created_at=now,
         updated_at=now,
     )

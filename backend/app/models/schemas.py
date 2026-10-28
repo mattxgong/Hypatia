@@ -111,8 +111,26 @@ class WikiPageRead(BaseModel):
     category: WikiCategory
     content: str
     source_file_ids: list[str] | None
+    user_edited: bool
     created_at: datetime
     updated_at: datetime
+
+
+class WikiHistoryEntry(BaseModel):
+    sha: str
+    author: str
+    date: str
+    message: str
+
+
+class WikiRevertRequest(BaseModel):
+    # A hex commit hash only: it is passed to git, which would read a leading
+    # "-" as an option.
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{7,40}$")
+
+
+class WikiRevertResponse(BaseModel):
+    commit_sha: str
 
 
 class WikiPageSummary(BaseModel):
@@ -214,6 +232,7 @@ class SettingsRead(BaseModel):
     ollama_base_url: str
     whisper_model_size: str
     whisper_device: str
+    study_new_cards_per_day: int
 
 
 class SettingsUpdate(BaseModel):
@@ -227,6 +246,7 @@ class SettingsUpdate(BaseModel):
     ollama_base_url: OllamaBaseUrl | None = None
     whisper_model_size: WhisperModelSize | None = None
     whisper_device: WhisperDevice | None = None
+    study_new_cards_per_day: int | None = Field(default=None, ge=0, le=9999)
 
 
 class ValidateKeyRequest(BaseModel):
@@ -346,6 +366,8 @@ class FlashcardRead(BaseModel):
     interval_days: int
     repetitions: int
     lapses: int
+    #: Position in the (re)learning steps; None once the card has graduated.
+    learning_step: int | None = None
     due_at: datetime
     last_reviewed_at: datetime | None
     created_at: datetime

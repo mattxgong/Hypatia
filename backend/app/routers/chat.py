@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Coroutine
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import delete, select
@@ -21,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session_factory, get_session
 from app.dependencies import check_llm_available
 from app.errors import ErrorCode, HypatiaError
-from app.models.db_models import ChatMessage, ChatRole
+from app.models.db_models import ChatMessage, ChatRole, WikiPage
 from app.models.schemas import (
     ChatMessageRead,
     DeckGenerateRequest,
@@ -40,15 +42,55 @@ logger = get_logger()
 router = APIRouter(prefix="/api/classes/{class_id}/chat", tags=["chat"])
 
 
+class ChatConnection:
+    """One client's chat socket, as the command handlers see it.
+
+    Commands outlive the socket: once it closes, sends are dropped and the
+    running command finishes anyway, recording its result in chat history,
+    which the client reloads when it reconnects.
+    """
+
+    def __init__(self, websocket: WebSocket) -> None:
+        self._websocket = websocket
+        self.open = True
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        if not self.open:
+            return
+        try:
+            await self._websocket.send_json(payload)
+        except Exception:  # noqa: BLE001 - any failure means the client has gone
+            self.open = False
+
+
+_INVALID_MESSAGE = {
+    "type": "error",
+    "message": 'Messages must be JSON objects like {"type": "message", "content": "..."}',
+    "code": "INVALID_COMMAND",
+}
+
+
 @router.websocket("")
 async def chat_websocket(websocket: WebSocket, class_id: uuid.UUID) -> None:
     await websocket.accept()
+    conn = ChatConnection(websocket)
+    commands: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+    # Not tied to this handler: a command keeps running after the socket closes.
+    _spawn(_run_commands(conn, class_id, commands))
 
     try:
         while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-            if msg_type == "cancel":
+            # Read while a command runs, so a cancel reaches it.
+            try:
+                data = await websocket.receive_json()
+            except (ValueError, KeyError, TypeError):
+                await conn.send_json(_INVALID_MESSAGE)
+                continue
+            if not isinstance(data, dict):
+                await conn.send_json(_INVALID_MESSAGE)
+                continue
+
+            if data.get("type") == "cancel":
                 op_id = data.get("operation_id")
                 if op_id:
                     task_manager.cancel_task(op_id)
@@ -56,38 +98,62 @@ async def chat_websocket(websocket: WebSocket, class_id: uuid.UUID) -> None:
 
             content = data.get("content", "")
             try:
-                parsed = parse_command(content)
+                parsed = parse_command(content if isinstance(content, str) else "")
             except ValueError as e:
-                await websocket.send_json(
+                await conn.send_json(
                     {"type": "error", "message": str(e), "code": "INVALID_COMMAND"}
                 )
                 continue
-
-            await _handle_command(websocket, class_id, parsed.command, parsed.args)
+            commands.put_nowait((parsed.command, parsed.args))
 
     except WebSocketDisconnect:
         logger.debug("chat_ws_disconnected", class_id=str(class_id))
+    finally:
+        conn.open = False
+        commands.put_nowait(None)
+
+
+async def _run_commands(
+    conn: ChatConnection,
+    class_id: uuid.UUID,
+    commands: asyncio.Queue[tuple[str, str] | None],
+) -> None:
+    """Run one connection's commands in order, so their replies don't interleave."""
+    while (item := await commands.get()) is not None:
+        if not conn.open:
+            continue  # sent, but the client left before it started
+        command, args = item
+        try:
+            await _handle_command(conn, class_id, command, args)
+        except Exception:
+            logger.exception("chat_command_failed", class_id=str(class_id), command=command)
+
+
+def _spawn(coro: Coroutine[Any, Any, None]) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 async def _handle_command(
-    websocket: WebSocket, class_id: uuid.UUID, command: str, args: str
+    conn: ChatConnection, class_id: uuid.UUID, command: str, args: str
 ) -> None:
     if command == "help":
-        await _handle_help(websocket)
+        await _handle_help(conn)
     elif command == "ask":
-        await _handle_ask_stream(websocket, class_id, args)
+        await _handle_ask_stream(conn, class_id, args)
     elif command == "summarize":
-        await _handle_summarize(websocket, class_id, args)
+        await _handle_summarize(conn, class_id, args)
     elif command == "remove":
-        await _handle_remove(websocket, class_id, args)
+        await _handle_remove(conn, class_id, args)
     elif command == "lint":
-        await _handle_lint(websocket, class_id)
+        await _handle_lint(conn, class_id)
     elif command == "export":
-        await _handle_export(websocket, class_id)
+        await _handle_export(conn, class_id)
     elif command == "rebuild":
-        await _handle_rebuild(websocket, class_id)
+        await _handle_rebuild(conn, class_id)
     elif command in ("flashcards", "quiz"):
-        await _handle_study(websocket, class_id, command, args.strip())
+        await _handle_study(conn, class_id, command, args.strip())
 
 
 _HELP_TEXT = """\
@@ -108,8 +174,8 @@ _HELP_TEXT = """\
 Type a message without a `/` prefix to default to `/ask`."""
 
 
-async def _handle_help(websocket: WebSocket) -> None:
-    await websocket.send_json(
+async def _handle_help(conn: ChatConnection) -> None:
+    await conn.send_json(
         {
             "type": "complete",
             "message_id": str(uuid.uuid4()),
@@ -119,38 +185,79 @@ async def _handle_help(websocket: WebSocket) -> None:
     )
 
 
-async def _handle_ask_stream(websocket: WebSocket, class_id: uuid.UUID, query: str) -> None:
+#: Earlier messages /ask sees, so follow-up questions make sense.
+_ASK_HISTORY_MESSAGES = 6
+
+
+async def _recent_turns(session: AsyncSession, class_id: uuid.UUID) -> list[tuple[str, str]]:
+    """The last few questions and answers, oldest first."""
+    rows = (
+        await session.execute(
+            select(ChatMessage)
+            .where(
+                ChatMessage.class_id == class_id,
+                ChatMessage.role.in_((ChatRole.USER, ChatRole.ASSISTANT)),
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(_ASK_HISTORY_MESSAGES)
+        )
+    ).scalars()
+    return [(m.role.value, m.content) for m in reversed(list(rows))]
+
+
+async def _page_citations(
+    session: AsyncSession, class_id: uuid.UUID, paths: list[str]
+) -> list[dict[str, str]]:
+    if not paths:
+        return []
+    titles = dict(
+        (
+            await session.execute(
+                select(WikiPage.path, WikiPage.title).where(
+                    WikiPage.class_id == class_id, WikiPage.path.in_(paths)
+                )
+            )
+        ).tuples()
+    )
+    return [{"path": p, "title": titles.get(p, p)} for p in paths]
+
+
+async def _handle_ask_stream(conn: ChatConnection, class_id: uuid.UUID, query: str) -> None:
     async with async_session_factory() as session:
         try:
+            history = await _recent_turns(session, class_id)
             session.add(ChatMessage(class_id=class_id, role=ChatRole.USER, content=query))
             await session.commit()
 
             chunks: list[str] = []
-            async for chunk in wiki_engine.handle_ask_stream(session, class_id, query):
+            consulted: list[str] = []
+            async for chunk in wiki_engine.handle_ask_stream(
+                session, class_id, query, history=history, consulted=consulted
+            ):
                 chunks.append(chunk)
-                await websocket.send_json({"type": "chunk", "content": chunk})
+                await conn.send_json({"type": "chunk", "content": chunk})
 
-            msg_id = str(uuid.uuid4())
-            session.add(
-                ChatMessage(
-                    class_id=class_id,
-                    role=ChatRole.ASSISTANT,
-                    content="".join(chunks),
-                    command="ask",
-                )
+            citations = await _page_citations(session, class_id, consulted)
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content="".join(chunks),
+                command="ask",
+                metadata_json={"pages": citations} if citations else None,
             )
+            session.add(reply)
             await session.commit()
 
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "complete",
-                    "message_id": msg_id,
-                    "citations": [],
+                    "message_id": str(reply.id),
+                    "citations": citations,
                 }
             )
         except HypatiaError as e:
             logger.error("chat_ask_error", class_id=str(class_id), code=e.code.value)
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -160,7 +267,7 @@ async def _handle_ask_stream(websocket: WebSocket, class_id: uuid.UUID, query: s
             )
         except Exception as e:  # noqa: BLE001
             logger.error("chat_ask_error", class_id=str(class_id), error=str(e))
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": str(e),
@@ -169,7 +276,7 @@ async def _handle_ask_stream(websocket: WebSocket, class_id: uuid.UUID, query: s
             )
 
 
-async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: str) -> None:
+async def _handle_summarize(conn: ChatConnection, class_id: uuid.UUID, topic: str) -> None:
     async with async_session_factory() as session:
         try:
             session.add(
@@ -188,7 +295,7 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                     )
                 )
                 await session.commit()
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
@@ -200,7 +307,7 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                     }
                 )
             else:
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "error",
                         "message": result.error or "Summarize failed",
@@ -208,7 +315,7 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                     }
                 )
         except HypatiaError as e:
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -217,12 +324,12 @@ async def _handle_summarize(websocket: WebSocket, class_id: uuid.UUID, topic: st
                 }
             )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json(
+            await conn.send_json(
                 {"type": "error", "message": str(e), "code": ErrorCode.SUMMARIZE_ERROR}
             )
 
 
-async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: str) -> None:
+async def _handle_remove(conn: ChatConnection, class_id: uuid.UUID, filename: str) -> None:
     async with async_session_factory() as session:
         try:
             session.add(
@@ -241,7 +348,7 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                     )
                 )
                 await session.commit()
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
@@ -257,7 +364,7 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                     }
                 )
             else:
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "error",
                         "message": result.error or "Remove failed",
@@ -265,7 +372,7 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                     }
                 )
         except HypatiaError as e:
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -274,12 +381,12 @@ async def _handle_remove(websocket: WebSocket, class_id: uuid.UUID, filename: st
                 }
             )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json(
+            await conn.send_json(
                 {"type": "error", "message": str(e), "code": ErrorCode.REMOVE_ERROR}
             )
 
 
-async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
+async def _handle_lint(conn: ChatConnection, class_id: uuid.UUID) -> None:
     async with async_session_factory() as session:
         try:
             session.add(ChatMessage(class_id=class_id, role=ChatRole.USER, content="/lint"))
@@ -297,7 +404,7 @@ async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
             )
             await session.commit()
 
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "complete",
                     "message_id": str(uuid.uuid4()),
@@ -309,7 +416,7 @@ async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 }
             )
         except HypatiaError as e:
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -318,12 +425,10 @@ async def _handle_lint(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 }
             )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json(
-                {"type": "error", "message": str(e), "code": ErrorCode.LINT_ERROR}
-            )
+            await conn.send_json({"type": "error", "message": str(e), "code": ErrorCode.LINT_ERROR})
 
 
-async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
+async def _handle_export(conn: ChatConnection, class_id: uuid.UUID) -> None:
     async with async_session_factory() as session:
         try:
             session.add(ChatMessage(class_id=class_id, role=ChatRole.USER, content="/export"))
@@ -340,11 +445,11 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     )
                 )
                 await session.commit()
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "complete",
                         "message_id": str(uuid.uuid4()),
-                        "content": f"Export complete: {result.page_count} pages",
+                        "content": (f"Exported {result.page_count} pages to {result.export_path}"),
                         "result": {
                             "command": "/export",
                             "export_path": result.export_path,
@@ -353,7 +458,7 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     }
                 )
             else:
-                await websocket.send_json(
+                await conn.send_json(
                     {
                         "type": "error",
                         "message": result.error or "Export failed",
@@ -361,7 +466,7 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                     }
                 )
         except HypatiaError as e:
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -370,14 +475,23 @@ async def _handle_export(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 }
             )
         except Exception as e:  # noqa: BLE001
-            await websocket.send_json(
+            await conn.send_json(
                 {"type": "error", "message": str(e), "code": ErrorCode.EXPORT_ERROR}
             )
 
 
-async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
+async def _record_message(
+    class_id: uuid.UUID, role: ChatRole, content: str, command: str | None = None
+) -> None:
+    async with async_session_factory() as session:
+        session.add(ChatMessage(class_id=class_id, role=role, content=content, command=command))
+        await session.commit()
+
+
+async def _handle_rebuild(conn: ChatConnection, class_id: uuid.UUID) -> None:
+    await _record_message(class_id, ChatRole.USER, "/rebuild")
     task_id = task_manager.start_task("rebuild", str(class_id))
-    await websocket.send_json(
+    await conn.send_json(
         {
             "type": "progress",
             "operation": "rebuild",
@@ -404,63 +518,53 @@ async def _handle_rebuild(websocket: WebSocket, class_id: uuid.UUID) -> None:
                 logger.exception("chat_rebuild_error", class_id=str(class_id), error=str(e))
                 task_manager.fail_task(task_id, str(e))
 
-    # Not cancelled with the socket: a cancelled rebuild still has to put back
-    # the pages of sources it never reached.
-    rebuild_task = asyncio.create_task(_run())
-    _background_tasks.add(rebuild_task)
-    rebuild_task.add_done_callback(_background_tasks.discard)
+    # Runs to the end even if the socket closes; a cancelled rebuild still
+    # has to put back the pages of sources it never reached.
+    _spawn(_run())
 
-    try:
-        while True:
-            t = task_manager.get_status(task_id)
-            if t is None:
-                break
-            if t.status == "complete":
-                result = outcome.get("result")
-                await websocket.send_json(
-                    {
-                        "type": "complete",
-                        "message_id": str(uuid.uuid4()),
-                        "content": _rebuild_summary(result)
-                        if isinstance(result, wiki_engine.RebuildResult)
-                        else "Rebuild complete.",
-                        "result": {"command": "/rebuild", "task_id": task_id},
-                    }
-                )
-                break
-            elif t.status == "cancelled":
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "message": "Rebuild cancelled. Pages from sources that were not "
-                        "re-ingested yet are being restored.",
-                        "code": "REBUILD_ERROR",
-                    }
-                )
-                break
-            elif t.status == "failed":
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "message": t.error or t.message,
-                        "code": "REBUILD_ERROR",
-                    }
-                )
-                break
-            else:
-                await websocket.send_json(
-                    {
-                        "type": "progress",
-                        "operation": "rebuild",
-                        "operation_id": task_id,
-                        "percent": t.progress,
-                        "message": t.message,
-                    }
-                )
-            await asyncio.sleep(0.5)
-    except WebSocketDisconnect:
-        task_manager.cancel_task(task_id)
-        raise
+    while True:
+        t = task_manager.get_status(task_id)
+        if t is None:
+            break
+        if t.status == "complete":
+            result = outcome.get("result")
+            summary = (
+                _rebuild_summary(result)
+                if isinstance(result, wiki_engine.RebuildResult)
+                else "Rebuild complete."
+            )
+            # In history too: the client may have left before it finished.
+            await _record_message(class_id, ChatRole.ASSISTANT, summary, "rebuild")
+            await conn.send_json(
+                {
+                    "type": "complete",
+                    "message_id": str(uuid.uuid4()),
+                    "content": summary,
+                    "result": {"command": "/rebuild", "task_id": task_id},
+                }
+            )
+            break
+        elif t.status in ("cancelled", "failed"):
+            message = (
+                "Rebuild cancelled. Pages from sources that were not "
+                "re-ingested yet are being restored."
+                if t.status == "cancelled"
+                else t.error or t.message
+            )
+            await _record_message(class_id, ChatRole.SYSTEM, message, "rebuild")
+            await conn.send_json({"type": "error", "message": message, "code": "REBUILD_ERROR"})
+            break
+        else:
+            await conn.send_json(
+                {
+                    "type": "progress",
+                    "operation": "rebuild",
+                    "operation_id": task_id,
+                    "percent": t.progress,
+                    "message": t.message,
+                }
+            )
+        await asyncio.sleep(0.5)
 
 
 _background_tasks: set[asyncio.Task[None]] = set()
@@ -474,30 +578,30 @@ async def _llm_ready() -> bool:
     return True
 
 
-async def _follow_task(websocket: WebSocket, task_id: str, operation: str) -> TaskStatus | None:
-    """Relay a background task's progress until it finishes; returns its final state."""
-    try:
-        while True:
-            status = task_manager.get_status(task_id)
-            if status is None or status.status != "running":
-                return status
-            await websocket.send_json(
-                {
-                    "type": "progress",
-                    "operation": operation,
-                    "operation_id": task_id,
-                    "percent": status.progress,
-                    "message": status.message,
-                }
-            )
-            await asyncio.sleep(0.5)
-    except WebSocketDisconnect:
-        task_manager.cancel_task(task_id)
-        raise
+async def _follow_task(conn: ChatConnection, task_id: str, operation: str) -> TaskStatus | None:
+    """Relay a background task's progress until it finishes; returns its final state.
+
+    Keeps waiting if the socket closes, so the caller can still record the
+    result in chat history.
+    """
+    while True:
+        status = task_manager.get_status(task_id)
+        if status is None or status.status != "running":
+            return status
+        await conn.send_json(
+            {
+                "type": "progress",
+                "operation": operation,
+                "operation_id": task_id,
+                "percent": status.progress,
+                "message": status.message,
+            }
+        )
+        await asyncio.sleep(0.5)
 
 
 async def _handle_study(
-    websocket: WebSocket, class_id: uuid.UUID, command: str, topic: str
+    conn: ChatConnection, class_id: uuid.UUID, command: str, topic: str
 ) -> None:
     """``/flashcards`` and ``/quiz``: AI generation when a model is reachable, else offline."""
     kind: study_jobs.StudyKind = "deck" if command == "flashcards" else "quiz"
@@ -522,13 +626,13 @@ async def _handle_study(
                     else QuizGenerateRequest(scope=scope, method="llm")
                 )
                 task_id = study_jobs.start_generation(kind, class_id, request)
-                final = await _follow_task(websocket, task_id, command)
+                final = await _follow_task(conn, task_id, command)
                 if final is None or final.status != "complete" or final.result is None:
                     if final is not None and final.status == "cancelled":
                         message = "Generation cancelled."
                     else:
                         message = (final.error if final else None) or "Generation failed."
-                    await websocket.send_json(
+                    await conn.send_json(
                         {
                             "type": "error",
                             "message": message,
@@ -572,7 +676,7 @@ async def _handle_study(
                 )
             )
             await session.commit()
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "complete",
                     "message_id": str(uuid.uuid4()),
@@ -581,7 +685,7 @@ async def _handle_study(
                 }
             )
         except HypatiaError as e:
-            await websocket.send_json(
+            await conn.send_json(
                 {
                     "type": "error",
                     "message": e.detail,
@@ -589,11 +693,9 @@ async def _handle_study(
                     "user_action": e.user_action,
                 }
             )
-        except WebSocketDisconnect:
-            raise
         except Exception as e:
             logger.exception("chat_study_error", class_id=str(class_id))
-            await websocket.send_json(
+            await conn.send_json(
                 {"type": "error", "message": str(e), "code": ErrorCode.INTERNAL_ERROR.value}
             )
 

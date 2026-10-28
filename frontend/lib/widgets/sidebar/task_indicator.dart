@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/task_status.dart';
 import '../../providers/task_provider.dart';
+import '../common/activity_status.dart';
 
 class TaskIndicator extends ConsumerWidget {
   const TaskIndicator({super.key});
@@ -19,7 +20,7 @@ class TaskIndicator extends ConsumerWidget {
         label: Text('${taskState.activeCount}'),
         child: IconButton(
           icon: const Icon(Icons.pending_actions, size: 18),
-          onPressed: () => _showTasksDialog(context, ref, taskState),
+          onPressed: () => showActiveTasksDialog(context),
           iconSize: 18,
           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           padding: EdgeInsets.zero,
@@ -28,28 +29,22 @@ class TaskIndicator extends ConsumerWidget {
       ),
     );
   }
+}
 
-  void _showTasksDialog(
-    BuildContext context,
-    WidgetRef ref,
-    TaskListState taskState,
-  ) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => _TaskListDialog(tasks: taskState.activeTasks),
-    );
-  }
+/// Lists the backend's running tasks, live, with a Cancel button for each.
+void showActiveTasksDialog(BuildContext context) {
+  showDialog<void>(
+    context: context,
+    builder: (context) => const _TaskListDialog(),
+  );
 }
 
 class _TaskListDialog extends ConsumerWidget {
-  const _TaskListDialog({required this.tasks});
-
-  final List<TaskStatus> tasks;
+  const _TaskListDialog();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final currentTasks = ref.watch(taskListProvider).activeTasks;
-    final displayTasks = currentTasks.isNotEmpty ? currentTasks : tasks;
+    final displayTasks = ref.watch(taskListProvider).activeTasks;
 
     return AlertDialog(
       title: const Text('Active Tasks'),
@@ -93,21 +88,20 @@ class _TaskTile extends ConsumerWidget {
         Row(
           children: [
             Expanded(
-              child: Text(task.operation, style: theme.textTheme.titleSmall),
+              child: Text(
+                describeOperation(task.operation),
+                style: theme.textTheme.titleSmall,
+              ),
             ),
             if (progress != null)
               Text('$progress%', style: theme.textTheme.bodySmall),
             const SizedBox(width: 8),
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: IconButton(
-                icon: const Icon(Icons.cancel_outlined, size: 16),
-                onPressed: () =>
-                    ref.read(taskListProvider.notifier).cancelTask(task.taskId),
-                padding: EdgeInsets.zero,
-                tooltip: 'Cancel',
-              ),
+            IconButton(
+              icon: const Icon(Icons.cancel_outlined, size: 18),
+              onPressed: () =>
+                  ref.read(taskListProvider.notifier).cancelTask(task.taskId),
+              tooltip: 'Cancel',
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
             ),
           ],
         ),

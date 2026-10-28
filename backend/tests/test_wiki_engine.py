@@ -94,9 +94,9 @@ async def test_ingest_source_success(db_session: AsyncSession, tmp_path: Path):
 
     with (
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.wiki_dir", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.commit_wiki_change", return_value="abc123"),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.wiki_dir", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.commit_wiki_change", return_value="abc123"),
     ):
         (tmp_path / "wiki").mkdir(parents=True, exist_ok=True)
         result = await ingest_source(db_session, class_id, file_id)
@@ -129,9 +129,9 @@ async def test_ingest_source_exposes_processing_without_holding_transaction(
 
     with (
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.wiki_dir", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.commit_wiki_change", return_value="abc123"),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.wiki_dir", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.commit_wiki_change", return_value="abc123"),
     ):
         (tmp_path / "wiki").mkdir(parents=True, exist_ok=True)
         ingest_task = asyncio.create_task(ingest_source(db_session, class_id, file_id))
@@ -188,9 +188,9 @@ async def test_ingest_creates_wiki_pages_in_db(db_session: AsyncSession, tmp_pat
 
     with (
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.init_wiki_repo", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.wiki_dir", return_value=tmp_path / "wiki"),
-        patch("app.services.wiki_engine.commit_wiki_change", return_value="abc123"),
+        patch("app.services.wiki_store.init_wiki_repo", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.wiki_dir", return_value=tmp_path / "wiki"),
+        patch("app.services.wiki_store.commit_wiki_change", return_value="abc123"),
     ):
         (tmp_path / "wiki").mkdir(parents=True, exist_ok=True)
         await ingest_source(db_session, class_id, file_id)
@@ -208,7 +208,7 @@ async def test_ingest_creates_wiki_pages_in_db(db_session: AsyncSession, tmp_pat
 async def test_handle_ask_no_pages(db_session: AsyncSession, tmp_path: Path):
     class_id = uuid.uuid4()
 
-    with patch("app.services.wiki_engine.wiki_dir", return_value=tmp_path / "wiki"):
+    with patch("app.services.wiki_store.wiki_dir", return_value=tmp_path / "wiki"):
         (tmp_path / "wiki").mkdir(parents=True, exist_ok=True)
         result = await handle_ask(db_session, class_id, "What is testing?")
 
@@ -261,7 +261,7 @@ async def test_handle_ask_with_pages(db_session: AsyncSession, tmp_path: Path):
 
     with (
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
     ):
         result = await handle_ask(db_session, class_id, "What is unit testing?")
 
@@ -296,7 +296,7 @@ async def test_handle_ask_saves_chat_messages(db_session: AsyncSession, tmp_path
 
     with (
         patch("app.services.wiki_engine.get_llm_provider", return_value=mock_provider),
-        patch("app.services.wiki_engine.wiki_dir", return_value=wiki_path),
+        patch("app.services.wiki_store.wiki_dir", return_value=wiki_path),
     ):
         await handle_ask(db_session, class_id, "What is X?")
 

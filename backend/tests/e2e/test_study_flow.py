@@ -176,9 +176,9 @@ class TestOfflineStudyFlow:
 
         [first] = (await e2e_client.get(f"{deck_url}/due", params={"limit": 1})).json()
         resp = await e2e_client.post(
-            f"{deck_url}/cards/{first['id']}/review", json={"rating": "good"}
+            f"{deck_url}/cards/{first['id']}/review", json={"rating": "easy"}
         )
-        assert resp.json()["repetitions"] == 1
+        assert resp.json()["repetitions"] == 1  # easy graduates a new card at once
         assert (await e2e_client.get(deck_url)).json()["due_count"] == deck["card_count"] - 1
 
         quiz = (

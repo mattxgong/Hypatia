@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     logs_dir: Path = Field(default_factory=lambda: Path.home() / ".hypatia" / "logs")
     log_level: str = "INFO"
 
-    llm_provider: str = "copilot"
+    llm_provider: str = "anthropic"
     llm_model: str | None = None
     # Last model chosen for each provider (see settings_store.model_slot); llm_model
     # is always the entry for llm_provider.
@@ -47,10 +47,22 @@ class Settings(BaseSettings):
     whisper_model_size: str = "base"
     whisper_device: str = "cpu"
 
+    # New flashcards a deck introduces per day (Anki's default); reviews of
+    # cards already started are never limited.
+    study_new_cards_per_day: int = 20
+
     max_upload_size_bytes: int = 3 * 1024 * 1024 * 1024  # 3GB, per Task 2.9
 
     cors_origins: list[str] = []
     cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Host headers the backend answers to ("*" allows any); blocks DNS rebinding.
+    allowed_hosts: list[str] = ["127.0.0.1", "localhost", "::1"]
+    # Bearer token every request except /health must carry (see app/security.py).
+    # The desktop app generates one per launch; unset disables the check.
+    api_token: str | None = None
+    # Exit when stdin closes. The desktop app holds the other end of the pipe,
+    # so the backend can't outlive it even if the app crashes or is killed.
+    exit_on_stdin_close: bool = False
 
 
 settings = Settings()

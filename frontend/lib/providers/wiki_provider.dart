@@ -14,6 +14,16 @@ final wikiTreeProvider = FutureProvider.family<List<WikiPageSummary>, String>((
 
 final currentWikiPagePathProvider = StateProvider<String?>((ref) => null);
 
+/// Identifies one wiki page in one Class.
+typedef WikiPageKey = ({String classId, String path});
+
+/// Unsaved wiki page edits by page. A draft outlives navigating away, so
+/// returning to the page resumes the edit, and saving always writes to the
+/// page the text was typed for.
+final wikiEditDraftsProvider = StateProvider<Map<WikiPageKey, String>>(
+  (ref) => const {},
+);
+
 final currentWikiPageProvider = FutureProvider<WikiPage?>((ref) async {
   final path = ref.watch(currentWikiPagePathProvider);
   if (path == null) return null;

@@ -100,7 +100,7 @@ void main() {
           fileListProvider(_classId).overrideWith((ref) async => []),
           wikiTreeProvider(_classId).overrideWith((ref) async => []),
         ],
-        child: const HypatiaShell(),
+        child: const HypatiaApp(),
       ),
     );
     await tester.pumpAndSettle();

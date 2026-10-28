@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import stat
@@ -43,7 +44,14 @@ from app.models.db_models import (
     File as FileRecord,
 )
 from app.services import storage_service
-from app.services.wiki_git import init_wiki_repo
+from app.services.wiki_engine import index_page_for_search
+from app.services.wiki_git import (
+    create_history_bundle,
+    init_wiki_repo,
+    restore_history_bundle,
+)
+from app.services.wiki_parser import is_git_path_part, normalize_page_path
+from app.services.wiki_store import mirror_to_disk
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -51,6 +59,8 @@ logger = get_logger()
 router = APIRouter(prefix="/api/classes", tags=["backup"])
 
 _MANIFEST_FILENAME = "manifest.json"
+# Wiki git history travels as a bundle; a .git directory is never exported or imported.
+_HISTORY_FILENAME = "wiki-history.bundle"
 _BACKUP_VERSION = 1
 _MAX_ARCHIVE_ENTRIES = 10_000
 _MAX_MANIFEST_SIZE_BYTES = 10 * 1024 * 1024
@@ -89,6 +99,8 @@ class _WikiPageManifest(_ManifestModel):
     category: WikiCategory
     content: str
     source_file_ids: list[uuid.UUID] | None = None
+    # Absent from backups made before the column existed.
+    user_edited: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -116,6 +128,9 @@ class _FlashcardManifest(_ManifestModel):
     lapses: int = Field(default=0, ge=0)
     due_at: datetime | None = None
     last_reviewed_at: datetime | None = None
+    # Absent from backups made before learning steps existed.
+    learning_step: int | None = Field(default=None, ge=0)
+    first_reviewed_at: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -188,6 +203,7 @@ def _archive_path(info: zipfile.ZipInfo) -> PurePosixPath:
     if (
         not name
         or "\\" in name
+        or ":" in name
         or path.is_absolute()
         or any(part in {"", ".", ".."} for part in path.parts)
         or path.parts[0] not in _ARCHIVE_ROOTS
@@ -209,6 +225,7 @@ def _inspect_archive(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, PurePos
 
     seen_names: set[str] = set()
     expanded_size = 0
+    skipped_git_entries = 0
     entries: list[tuple[zipfile.ZipInfo, PurePosixPath]] = []
     for info in infos:
         normalized_name = info.filename.casefold()
@@ -238,8 +255,16 @@ def _inspect_archive(zf: zipfile.ZipFile) -> list[tuple[zipfile.ZipInfo, PurePos
                     status.HTTP_413_CONTENT_TOO_LARGE,
                 )
             continue
+        if info.filename == _HISTORY_FILENAME:
+            continue
+        # Older backups included wiki/.git; its config and hooks could run commands.
+        if any(is_git_path_part(part) for part in info.filename.replace("\\", "/").split("/")):
+            skipped_git_entries += 1
+            continue
         entries.append((info, _archive_path(info)))
 
+    if skipped_git_entries:
+        logger.info("backup_git_entries_skipped", count=skipped_git_entries)
     return entries
 
 
@@ -308,6 +333,7 @@ def _serialize_wiki_page(p: WikiPage) -> dict:
         "category": p.category.value,
         "content": p.content,
         "source_file_ids": p.source_file_ids,
+        "user_edited": p.user_edited,
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
     }
@@ -350,6 +376,8 @@ def _serialize_deck(deck: Deck, cards: list[Flashcard]) -> dict:
                 "lapses": c.lapses,
                 "due_at": _iso(c.due_at),
                 "last_reviewed_at": _iso(c.last_reviewed_at),
+                "learning_step": c.learning_step,
+                "first_reviewed_at": _iso(c.first_reviewed_at),
                 "created_at": _iso(c.created_at),
             }
             for c in cards
@@ -419,6 +447,37 @@ def _mapped_file_ids(
     return mapped or None
 
 
+async def _unused_class_name(session: AsyncSession, name: str) -> str:
+    """``name``, or ``name (imported)``, ``name (imported 2)``, ... if it is taken."""
+    taken = set(
+        (await session.execute(select(Class.name).where(Class.name.startswith(name)))).scalars()
+    )
+    if name not in taken:
+        return name
+    candidate = f"{name} (imported)"
+    n = 2
+    while candidate in taken:
+        candidate = f"{name} (imported {n})"
+        n += 1
+    return candidate[:255]
+
+
+def _rename_converted(
+    stage_root: Path, old_id: uuid.UUID, new_id: uuid.UUID, converted_path: str | None
+) -> str | None:
+    """Rename a file's staged ``converted/<old_id>*`` artifacts to the new ID.
+
+    Returns ``converted_path`` (manifest-relative) with the ID replaced.
+    """
+    converted_dir = stage_root / "converted"
+    if converted_dir.is_dir():
+        for artifact in converted_dir.glob(f"{old_id}*"):
+            artifact.rename(artifact.with_name(artifact.name.replace(str(old_id), str(new_id), 1)))
+    if not converted_path:
+        return None
+    return converted_path.replace(str(old_id), str(new_id))
+
+
 def _timestamps(**values: datetime | None) -> dict[str, datetime]:
     """Only pass timestamps the backup has, so missing ones fall back to column defaults."""
     return {key: value for key, value in values.items() if value is not None}
@@ -456,6 +515,11 @@ def _restore_study(
                     repetitions=card.repetitions,
                     lapses=card.lapses,
                     last_reviewed_at=card.last_reviewed_at,
+                    # Older backups: unstarted cards learn, the rest have graduated.
+                    learning_step=card.learning_step
+                    if "learning_step" in card.model_fields_set
+                    else (0 if card.repetitions == 0 else None),
+                    first_reviewed_at=card.first_reviewed_at or card.last_reviewed_at,
                     **_timestamps(due_at=card.due_at, created_at=card.created_at),
                 )
             )
@@ -551,17 +615,8 @@ async def backup_class(
 
     tmp_dir = Path(tempfile.mkdtemp())
     zip_path = tmp_dir / f"hypatia-backup-{class_id}.zip"
-
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(_MANIFEST_FILENAME, json.dumps(manifest, indent=2))
-
-        for subdir in ("raw", "converted", "wiki", "thumbnails"):
-            dir_path = class_root / subdir
-            if dir_path.exists():
-                for file_path in dir_path.rglob("*"):
-                    if file_path.is_file():
-                        arcname = str(file_path.relative_to(class_root))
-                        zf.write(file_path, arcname)
+    # In a thread: a Class with lecture videos takes minutes to compress.
+    await asyncio.to_thread(_write_backup_zip, zip_path, manifest, class_root, str(class_id))
 
     from starlette.background import BackgroundTask
 
@@ -571,6 +626,57 @@ async def backup_class(
         media_type="application/zip",
         background=BackgroundTask(shutil.rmtree, tmp_dir, True),
     )
+
+
+def _write_backup_zip(
+    zip_path: Path, manifest: dict[str, object], class_root: Path, class_id: str
+) -> None:
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(_MANIFEST_FILENAME, json.dumps(manifest, indent=2))
+
+        for subdir in ("raw", "converted", "wiki", "thumbnails"):
+            dir_path = class_root / subdir
+            if dir_path.exists():
+                for file_path in dir_path.rglob("*"):
+                    relative = file_path.relative_to(class_root)
+                    if file_path.is_file() and not any(
+                        is_git_path_part(part) for part in relative.parts
+                    ):
+                        zf.write(file_path, relative.as_posix())
+
+        history_path = zip_path.parent / _HISTORY_FILENAME
+        if create_history_bundle(class_id, history_path):
+            zf.write(history_path, _HISTORY_FILENAME)
+            history_path.unlink()
+
+
+def _unpack_backup(zip_path: Path, tmp_dir: Path) -> tuple[_BackupManifest, Path, Path | None]:
+    """Validate and extract an uploaded backup. Returns the manifest, the
+    staged class directory, and the extracted history bundle if any."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        archive_entries = _inspect_archive(zf)
+        try:
+            manifest = _BackupManifest.model_validate_json(zf.read(_MANIFEST_FILENAME))
+        except (ValidationError, ValueError) as exc:
+            raise _invalid_backup("manifest validation failed") from exc
+
+        stage_root = tmp_dir / "class"
+        _extract_archive(zf, archive_entries, stage_root)
+        history_path: Path | None = None
+        if _HISTORY_FILENAME in zf.namelist():
+            history_path = tmp_dir / _HISTORY_FILENAME
+            with zf.open(_HISTORY_FILENAME) as source, history_path.open("wb") as dest:
+                shutil.copyfileobj(source, dest, length=1024 * 1024)
+    return manifest, stage_root, history_path
+
+
+def _install_class_files(
+    stage_root: Path, class_root: Path, class_id: str, history_path: Path | None
+) -> None:
+    class_root.parent.mkdir(parents=True, exist_ok=True)
+    stage_root.replace(class_root)
+    if history_path is None or not restore_history_bundle(class_id, history_path):
+        init_wiki_repo(class_id)
 
 
 @router.post("/import", status_code=status.HTTP_201_CREATED)
@@ -584,7 +690,11 @@ async def import_class(
             detail="Upload must be a .zip file",
         )
 
-    tmp_dir = Path(tempfile.mkdtemp())
+    # Staged on the data directory's drive: the staged class directory is
+    # moved into place with a rename, which can't cross filesystems.
+    staging_parent = settings.data_dir / "tmp"
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(dir=staging_parent))
     zip_path = tmp_dir / "upload.zip"
 
     with zip_path.open("wb") as f:
@@ -604,104 +714,124 @@ async def import_class(
     class_root = storage_service.class_dir(str(new_class_id))
     class_directory_created = False
     try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            archive_entries = _inspect_archive(zf)
+        manifest, stage_root, history_path = await asyncio.to_thread(
+            _unpack_backup, zip_path, tmp_dir
+        )
+
+        # Importing next to the original (restoring a backup of a Class that
+        # still exists) makes a copy rather than failing on the name.
+        new_class.name = await _unused_class_name(session, manifest.class_info.name)
+        new_class.description = manifest.class_info.description
+        if manifest.class_info.created_at is not None:
+            new_class.created_at = manifest.class_info.created_at
+        session.add(new_class)
+
+        paths = [p.path for p in manifest.wiki_pages]
+        if len(paths) != len(set(paths)):
+            raise _invalid_backup("duplicate wiki page paths")
+
+        file_id_map: dict[uuid.UUID, uuid.UUID] = {}
+        imported_filenames: set[str] = set()
+        for file_data in manifest.files:
+            if file_data.id in file_id_map:
+                raise _invalid_backup(f"duplicate file ID {file_data.id}")
             try:
-                manifest = _BackupManifest.model_validate_json(zf.read(_MANIFEST_FILENAME))
-            except (ValidationError, ValueError) as exc:
-                raise _invalid_backup("manifest validation failed") from exc
-
-            stage_root = tmp_dir / "class"
-            _extract_archive(zf, archive_entries, stage_root)
-
-            new_class.name = manifest.class_info.name
-            new_class.description = manifest.class_info.description
-            session.add(new_class)
-
-            file_id_map: dict[uuid.UUID, uuid.UUID] = {}
-            imported_filenames: set[str] = set()
-            for file_data in manifest.files:
-                if file_data.id in file_id_map:
-                    raise _invalid_backup(f"duplicate file ID {file_data.id}")
-                try:
-                    safe_filename = storage_service.sanitize_filename(file_data.original_filename)
-                except ValueError as exc:
-                    raise _invalid_backup(
-                        f"unsafe file name {file_data.original_filename!r}"
-                    ) from exc
-                # Backups made before file names were unique may repeat a name.
-                filename = storage_service.unique_filename(safe_filename, imported_filenames)
-                imported_filenames.add(filename)
-                imported_file_id = uuid.uuid4()
-                file_id_map[file_data.id] = imported_file_id
-                raw_path = _restored_path(
+                safe_filename = storage_service.sanitize_filename(file_data.original_filename)
+            except ValueError as exc:
+                raise _invalid_backup(f"unsafe file name {file_data.original_filename!r}") from exc
+            # Backups made before file names were unique may repeat a name.
+            filename = storage_service.unique_filename(safe_filename, imported_filenames)
+            imported_filenames.add(filename)
+            imported_file_id = uuid.uuid4()
+            file_id_map[file_data.id] = imported_file_id
+            # Converted artifacts are named by file ID; follow the new one so
+            # later cleanup (by ID) finds them all.
+            converted_rel = _rename_converted(
+                stage_root, file_data.id, imported_file_id, file_data.converted_path
+            )
+            raw_path = _restored_path(
+                stage_root,
+                class_root,
+                file_data.raw_path,
+                "raw",
+            )
+            converted_path = (
+                _restored_path(
                     stage_root,
                     class_root,
-                    file_data.raw_path,
-                    "raw",
+                    converted_rel,
+                    "converted",
                 )
-                converted_path = (
-                    _restored_path(
-                        stage_root,
-                        class_root,
-                        file_data.converted_path,
-                        "converted",
-                    )
-                    if file_data.converted_path
-                    else None
+                if converted_rel
+                else None
+            )
+            session.add(
+                FileRecord(
+                    id=imported_file_id,
+                    class_id=new_class_id,
+                    original_filename=filename,
+                    file_type=file_data.file_type,
+                    file_size_bytes=file_data.file_size_bytes,
+                    raw_path=raw_path,
+                    converted_path=converted_path,
+                    status=file_data.status,
+                    error_message=file_data.error_message,
+                    metadata_json=file_data.metadata_json,
+                    **_timestamps(created_at=file_data.created_at, updated_at=file_data.updated_at),
                 )
-                session.add(
-                    FileRecord(
-                        id=imported_file_id,
-                        class_id=new_class_id,
-                        original_filename=filename,
-                        file_type=file_data.file_type,
-                        file_size_bytes=file_data.file_size_bytes,
-                        raw_path=raw_path,
-                        converted_path=converted_path,
-                        status=file_data.status,
-                        error_message=file_data.error_message,
-                        metadata_json=file_data.metadata_json,
-                    )
-                )
+            )
 
-            for page_data in manifest.wiki_pages:
-                source_file_ids: list[str] = []
-                for source_id in page_data.source_file_ids or []:
-                    imported_source_id = file_id_map.get(source_id)
-                    if imported_source_id is None:
-                        raise _invalid_backup(f"unknown source file ID {source_id}")
-                    source_file_ids.append(str(imported_source_id))
-                session.add(
-                    WikiPage(
-                        class_id=new_class_id,
-                        path=page_data.path,
-                        title=page_data.title,
-                        category=page_data.category,
-                        content=page_data.content,
-                        source_file_ids=source_file_ids or None,
-                    )
+        imported_pages: list[WikiPage] = []
+        for page_data in manifest.wiki_pages:
+            page_path = normalize_page_path(page_data.path, require_pages_dir=False)
+            if page_path is None:
+                raise _invalid_backup(f"unsafe wiki page path {page_data.path!r}")
+            source_file_ids: list[str] = []
+            for source_id in page_data.source_file_ids or []:
+                imported_source_id = file_id_map.get(source_id)
+                if imported_source_id is None:
+                    raise _invalid_backup(f"unknown source file ID {source_id}")
+                source_file_ids.append(str(imported_source_id))
+            user_edited = page_data.user_edited
+            if user_edited is None:
+                user_edited = "user_edited: true" in page_data.content[:500]
+            page = WikiPage(
+                class_id=new_class_id,
+                path=page_path,
+                title=page_data.title,
+                category=page_data.category,
+                content=page_data.content,
+                source_file_ids=source_file_ids or None,
+                user_edited=user_edited,
+                **_timestamps(created_at=page_data.created_at, updated_at=page_data.updated_at),
+            )
+            session.add(page)
+            imported_pages.append(page)
+
+        for msg_data in manifest.chat_messages:
+            session.add(
+                ChatMessage(
+                    class_id=new_class_id,
+                    role=msg_data.role,
+                    content=msg_data.content,
+                    command=msg_data.command,
+                    metadata_json=msg_data.metadata_json,
+                    **_timestamps(created_at=msg_data.created_at, updated_at=msg_data.updated_at),
                 )
+            )
 
-            for msg_data in manifest.chat_messages:
-                session.add(
-                    ChatMessage(
-                        class_id=new_class_id,
-                        role=msg_data.role,
-                        content=msg_data.content,
-                        command=msg_data.command,
-                        metadata_json=msg_data.metadata_json,
-                    )
-                )
+        _restore_study(session, new_class_id, manifest, file_id_map)
 
-            _restore_study(session, new_class_id, manifest, file_id_map)
-
-            await session.flush()
-            class_root.parent.mkdir(parents=True, exist_ok=True)
-            stage_root.replace(class_root)
-            class_directory_created = True
-            init_wiki_repo(str(new_class_id))
-            await session.commit()
+        await session.flush()
+        # Search (and so /ask, /summarize, topic-scoped study) needs these.
+        for page in imported_pages:
+            await index_page_for_search(session, page)
+        # Set first: the move can succeed and the repo setup after it fail.
+        class_directory_created = True
+        await asyncio.to_thread(
+            _install_class_files, stage_root, class_root, str(new_class_id), history_path
+        )
+        await session.commit()
 
     except HTTPException:
         await session.rollback()
@@ -712,9 +842,10 @@ async def import_class(
         await session.rollback()
         if class_directory_created:
             storage_service.delete_class_directory(str(new_class_id))
+        logger.warning("class_import_conflict", error=str(exc.orig))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="A class with this name already exists",
+            detail="The backup conflicts with existing data; try importing it again",
         ) from exc
     except zipfile.BadZipFile as exc:
         await session.rollback()
@@ -731,6 +862,8 @@ async def import_class(
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    # The database is the source of truth; make the wiki files match it.
+    await mirror_to_disk(session, new_class_id, "import: restore pages")
     logger.info("class_imported", class_id=str(new_class_id), name=new_class.name)
     return {
         "id": str(new_class_id),

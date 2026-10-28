@@ -42,7 +42,10 @@ class _RecordingChatNotifier extends ChatMessagesNotifier {
   Future<List<ChatMessage>> build(String arg) async => [];
 
   @override
-  void sendMessage(String content) => sent.add(content);
+  bool sendMessage(String content) {
+    sent.add(content);
+    return true;
+  }
 }
 
 void main() {
@@ -76,12 +79,14 @@ void main() {
     expect(find.text('Add files'), findsOneWidget);
   });
 
-  testWidgets('Chat panel shows header with new chat button', (tester) async {
+  testWidgets('Chat panel shows header with clear history button', (
+    tester,
+  ) async {
     await tester.pumpWidget(wrapWithProviders(const ChatPanel()));
     await tester.pumpAndSettle();
 
     expect(find.text('Chat'), findsOneWidget);
-    expect(find.byTooltip('New conversation'), findsOneWidget);
+    expect(find.byTooltip('Clear chat history'), findsOneWidget);
   });
 
   testWidgets('Starter cards populate and focus the command input', (

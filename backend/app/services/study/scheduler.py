@@ -1,4 +1,15 @@
-"""SM-2 spaced-repetition scheduling with four answer buttons (Task 9.4)."""
+"""Spaced-repetition scheduling with four answer buttons (Task 9.4).
+
+SM-2 for learned cards, with Anki-style learning steps in front of it:
+
+- A new card goes through short learning steps (1 minute, then 10 minutes)
+  before it graduates to a 1-day interval. Easy graduates it straight to
+  4 days. Ease is not touched while learning: missing a card you have only
+  just met says nothing about how hard it will be to remember.
+- A learned card answered Again is a lapse: ease drops by 0.2 and it is
+  relearned through one 10-minute step, then restarts at 1 day.
+- Otherwise the usual SM-2 intervals and ease adjustments apply.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +21,12 @@ Rating = Literal["again", "hard", "good", "easy"]
 
 MIN_EASE = 1.3
 DEFAULT_EASE = 2.5
-RELEARN_DELAY = timedelta(minutes=10)
+LAPSE_EASE_PENALTY = 0.2
+LEARNING_STEPS = (timedelta(minutes=1), timedelta(minutes=10))
+RELEARNING_STEPS = (timedelta(minutes=10),)
+RELEARN_DELAY = RELEARNING_STEPS[0]
+GRADUATING_INTERVAL_DAYS = 1
+EASY_INTERVAL_DAYS = 4
 
 # SM-2 answer quality for each button.
 _QUALITY: dict[str, int] = {"hard": 3, "good": 4, "easy": 5}
@@ -23,6 +39,8 @@ class ReviewState:
     interval_days: int = 0
     repetitions: int = 0
     lapses: int = 0
+    #: Index into the (re)learning steps, or None once the card has graduated.
+    learning_step: int | None = 0
 
 
 @dataclass(frozen=True)
@@ -37,19 +55,23 @@ def _updated_ease(ease: float, quality: int) -> float:
 
 
 def review(state: ReviewState, rating: Rating, now: datetime) -> ReviewOutcome:
-    """Apply one review. ``again`` resets the card and shows it again shortly."""
+    """Apply one review and return the card's new state and due time."""
+    if state.learning_step is not None:
+        return _learning_review(state, rating, now)
+
     if rating == "again":
         lapsed = ReviewState(
-            ease=max(MIN_EASE, round(state.ease - 0.2, 4)),
+            ease=max(MIN_EASE, round(state.ease - LAPSE_EASE_PENALTY, 4)),
             interval_days=0,
             repetitions=0,
-            lapses=state.lapses + (1 if state.repetitions > 0 else 0),
+            lapses=state.lapses + 1,
+            learning_step=0,
         )
-        return ReviewOutcome(lapsed, now + RELEARN_DELAY)
+        return ReviewOutcome(lapsed, now + RELEARNING_STEPS[0])
 
     repetitions = state.repetitions + 1
     if repetitions == 1:
-        interval = 4 if rating == "easy" else 1
+        interval = EASY_INTERVAL_DAYS if rating == "easy" else GRADUATING_INTERVAL_DAYS
     elif repetitions == 2:
         interval = _SECOND_INTERVAL[rating]
     else:
@@ -63,3 +85,20 @@ def review(state: ReviewState, rating: Rating, now: datetime) -> ReviewOutcome:
         repetitions=repetitions,
     )
     return ReviewOutcome(updated, now + timedelta(days=interval))
+
+
+def _learning_review(state: ReviewState, rating: Rating, now: datetime) -> ReviewOutcome:
+    # A card that has lapsed is relearning; one that never graduated is learning.
+    steps = RELEARNING_STEPS if state.lapses else LEARNING_STEPS
+    step = min(state.learning_step or 0, len(steps) - 1)
+
+    if rating == "again":
+        return ReviewOutcome(replace(state, learning_step=0), now + steps[0])
+    if rating == "hard":
+        return ReviewOutcome(replace(state, learning_step=step), now + steps[step])
+    if rating == "good" and step + 1 < len(steps):
+        return ReviewOutcome(replace(state, learning_step=step + 1), now + steps[step + 1])
+
+    interval = EASY_INTERVAL_DAYS if rating == "easy" else GRADUATING_INTERVAL_DAYS
+    graduated = replace(state, interval_days=interval, repetitions=1, learning_step=None)
+    return ReviewOutcome(graduated, now + timedelta(days=interval))

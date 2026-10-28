@@ -13,11 +13,22 @@ servers:
       Local dev backend. Port may vary 8000-8010 if 8000 is taken
       (see Task 1.9 auto-launch/port management).
 
+# Timestamps are ISO 8601 in UTC with an explicit offset
+# (e.g. 2026-10-27T18:00:00+00:00); clients convert them to local time.
+#
+# Every request except /health, including the chat WebSocket handshake, must
+# carry the launch token when the backend has one (HYPATIA_API_TOKEN). The
+# backend also rejects a Host header outside HYPATIA_ALLOWED_HOSTS (400) and a
+# browser Origin that doesn't match the CORS settings (403). See app/security.py.
+security:
+  - LaunchToken: []
+
 paths:
   /health:
     get:
       summary: Health check
       operationId: getHealth
+      security: []
       responses:
         "200":
           description: Backend is up and ready to accept requests
@@ -60,6 +71,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClassRead"
+        "409":
+          description: A Class with this name already exists
 
   /api/classes/{class_id}:
     parameters:
@@ -94,6 +107,8 @@ paths:
                 $ref: "#/components/schemas/ClassRead"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Another Class already has this name
     delete:
       summary: Delete a Class and all its data
       operationId: deleteClass
@@ -177,6 +192,28 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/classes/{class_id}/files/{file_id}/retry:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/FileId"
+    post:
+      summary: Process a failed file again
+      description: >-
+        Re-queues ingestion when the file was converted and only the ingest
+        failed; otherwise converts it again. Only files with status error.
+      operationId: retryFile
+      responses:
+        "202":
+          description: Accepted; the file is ready to ingest or pending conversion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileRead"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The file has not failed
+
   /api/classes/{class_id}/files/{file_id}/raw:
     parameters:
       - $ref: "#/components/parameters/ClassId"
@@ -250,10 +287,11 @@ paths:
       - $ref: "#/components/parameters/ClassId"
     get:
       summary: Get the wiki index page content
+      description: Generated from the Class's pages, grouped by category.
       operationId: getWikiIndex
       responses:
         "200":
-          description: Index page content (empty string if no index exists)
+          description: Index page content
           content:
             application/json:
               schema:
@@ -271,7 +309,10 @@ paths:
         required: true
         schema:
           type: string
-        description: Slash-separated relative path to the wiki page
+        description: >-
+          Slash-separated path relative to the wiki root, e.g.
+          `pages/concepts/entropy.md`. PUT accepts only `pages/**/*.md`
+          without `..` or `.git` segments.
     get:
       summary: Get a wiki page
       operationId: getWikiPage
@@ -300,6 +341,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WikiPageRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/classes/{class_id}/wiki/history:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Limit to one page's versions (pages/**/*.md).
+    get:
+      summary: The wiki's versions, newest first
+      operationId: getWikiHistory
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WikiHistoryEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/classes/{class_id}/wiki/revert:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+    post:
+      summary: Make the wiki what it was at an earlier version
+      description: >-
+        Loads that version's pages into the database and records the change
+        as a new version, so history is kept.
+      operationId: revertWiki
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                commit_sha:
+                  type: string
+                  pattern: "^[0-9a-f]{7,40}$"
+              required: [commit_sha]
+      responses:
+        "200":
+          description: Reverted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit_sha:
+                    type: string
+                required: [commit_sha]
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -388,6 +489,13 @@ paths:
       summary: >-
         WebSocket chat connection (OpenAPI 3.0 has no native WebSocket
         support). See ChatWs* schemas for message formats.
+      description: >-
+        Commands from one connection run one at a time, in order; the socket
+        keeps reading while one runs, so a ChatWsCancel reaches it. A command
+        that is running when the socket closes finishes anyway and records its
+        result in chat history (commands still queued are dropped), so a client
+        reconnecting should reload /chat/history. A frame that isn't a JSON
+        object gets an INVALID_COMMAND error and the connection stays open.
       operationId: chatWebSocket
       responses:
         "101":
@@ -431,6 +539,10 @@ paths:
       - $ref: "#/components/parameters/ClassId"
     post:
       summary: Export a Class as a backup ZIP
+      description: >-
+        The ZIP holds manifest.json, the raw/, converted/, wiki/ and thumbnails/
+        files, and the wiki's git history as wiki-history.bundle. It never
+        contains a .git directory.
       operationId: backupClass
       responses:
         "200":
@@ -443,6 +555,12 @@ paths:
   /api/classes/import:
     post:
       summary: Import a Class from a backup ZIP
+      description: >-
+        Any .git entries (from older backups) are ignored; history is restored
+        from wiki-history.bundle when present, otherwise the wiki starts with
+        a fresh repository. If a Class with the backup's name exists, the
+        import is named "<name> (imported)" (or "(imported 2)", ...). Original
+        timestamps are kept and pages are indexed for search.
       operationId: importClass
       requestBody:
         required: true
@@ -822,6 +940,9 @@ paths:
           default: 20
     get:
       summary: Cards due for review, most overdue first
+      description: >-
+        Every due card already started, then unseen cards up to the deck's
+        daily allowance (study_new_cards_per_day, counted from local midnight).
       operationId: listDueCards
       responses:
         "200":
@@ -888,7 +1009,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/FlashcardRead"
 
-  /api/classes/{class_id}/quizzes:
+  /api/classes/{class_id}/decks/{deck_id}/cards/{card_id}/review/undo:
+    parameters:
+      - $ref: "#/components/parameters/ClassId"
+      - $ref: "#/components/parameters/DeckId"
+      - $ref: "#/components/parameters/CardId"
+    post:
+      summary: Undo the card's last review, restoring its previous schedule
+      description: >
+        The previous schedule is held in memory for the most recent reviews
+        only, so undo is available until the backend restarts.
+      operationId: undoReview
+      responses:
+        "200":
+          description: Card with its schedule from before the last review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashcardRead"
+        "404":
+          description: Class, deck or card not found
+        "409":
+          description: The card has no review to undo
     parameters:
       - $ref: "#/components/parameters/ClassId"
     get:
@@ -1046,6 +1188,11 @@ paths:
           $ref: "#/components/responses/NotFound"
 
 components:
+  securitySchemes:
+    LaunchToken:
+      type: http
+      scheme: bearer
+      description: Per-launch secret generated by the desktop app (HYPATIA_API_TOKEN).
   parameters:
     ClassId:
       name: class_id
@@ -1174,6 +1321,9 @@ components:
           $ref: "#/components/schemas/WhisperModelSize"
         whisper_device:
           $ref: "#/components/schemas/WhisperDevice"
+        study_new_cards_per_day:
+          type: integer
+          description: New flashcards each deck introduces per day (default 20).
       required:
         - llm_provider
         - llm_model
@@ -1186,6 +1336,7 @@ components:
         - ollama_base_url
         - whisper_model_size
         - whisper_device
+        - study_new_cards_per_day
 
     SettingsUpdate:
       type: object
@@ -1233,6 +1384,10 @@ components:
           $ref: "#/components/schemas/WhisperModelSize"
         whisper_device:
           $ref: "#/components/schemas/WhisperDevice"
+        study_new_cards_per_day:
+          type: integer
+          minimum: 0
+          maximum: 9999
 
     ValidateKeyRequest:
       type: object
@@ -1451,6 +1606,9 @@ components:
           items:
             type: string
           nullable: true
+        user_edited:
+          type: boolean
+          description: The user edited this page; ingest, /rebuild and /remove keep it.
         created_at:
           type: string
           format: date-time
@@ -1462,6 +1620,7 @@ components:
         - class_id
         - path
         - title
+        - user_edited
         - category
         - content
         - created_at
@@ -1679,6 +1838,20 @@ components:
           type: string
       required: [type, content]
 
+    WikiHistoryEntry:
+      type: object
+      properties:
+        sha:
+          type: string
+        author:
+          type: string
+        date:
+          type: string
+          format: date-time
+        message:
+          type: string
+      required: [sha, author, date, message]
+
     ChatWsComplete:
       description: Server -> client. Assistant reply finished.
       type: object
@@ -1695,8 +1868,16 @@ components:
           nullable: true
         citations:
           type: array
+          description: >-
+            For /ask, the wiki pages the answer was based on (also saved on
+            the reply's metadata_json as "pages").
           items:
             type: object
+            properties:
+              path:
+                type: string
+              title:
+                type: string
         result:
           type: object
           nullable: true
@@ -1940,6 +2121,12 @@ components:
           type: integer
         lapses:
           type: integer
+        learning_step:
+          type: integer
+          nullable: true
+          description: >-
+            Position in the learning steps (1m, 10m) or, after a lapse, the
+            relearning step (10m); null once the card has graduated.
         due_at:
           type: string
           format: date-time

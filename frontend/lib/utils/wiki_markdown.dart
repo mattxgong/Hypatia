@@ -1,4 +1,5 @@
 import '../models/wiki_page.dart';
+import 'markdown_math.dart' show standaloneInlineMath;
 
 final _nonSlug = RegExp(r'[^a-z0-9]+');
 final _edgeDashes = RegExp(r'^-+|-+$');
@@ -56,6 +57,97 @@ final _citeOne = RegExp(_citePattern);
 final _citeRun = RegExp(
   '[ \\t]*$_citePattern(?:[ \\t]*,?[ \\t]*$_citePattern)*',
 );
+
+final _displayOpen = RegExp(r'^ {0,3}(\$\$|\\\[)');
+// A citation run with an optional sentence-ending mark, at the start of a line
+// or making up the rest of one.
+final _leadingCites = RegExp(
+  '^[ \\t]*($_citePattern(?:[ \\t]*,?[ \\t]*$_citePattern)*)[ \\t]*[.,;]?[ \\t]*',
+);
+final _trailingMark = RegExp(r'[ \t]*([:,;.])?[ \t]*$');
+
+/// Moves the citation for a display equation into the sentence that
+/// introduces it ("the loss is[source](…):"). Written after the equation, it
+/// would render as a stray "¹." paragraph, and on the equation's own line it
+/// would turn the equation into inline math.
+String attachEquationCitations(String content) {
+  final lines = content.split('\n');
+  int? lead; // The last prose line, which introduces the next equation.
+  var inFence = false;
+  var i = 0;
+  while (i < lines.length) {
+    final line = lines[i];
+    if (line.trimLeft().startsWith('```')) {
+      inFence = !inFence;
+      lead = null;
+    } else if (!inFence &&
+        (_displayOpen.hasMatch(line) || standaloneInlineMath.hasMatch(line))) {
+      final end = _displayEnd(lines, i);
+      if (end != null) {
+        final (last, closeAt) = end;
+        final tail = lines[last].substring(closeAt);
+        if (tail.trim().isNotEmpty) {
+          final m = _leadingCites.firstMatch(tail);
+          if (m == null || m.end != tail.length) {
+            lead = i; // Text after the closer: a paragraph, not an equation.
+            i++;
+            continue;
+          }
+          if (lead != null) {
+            lines[lead] = _insertBeforeMark(lines[lead], m[1]!);
+            lines[last] = lines[last].substring(0, closeAt);
+          }
+        } else if (lead != null) {
+          var next = last + 1;
+          while (next < lines.length && lines[next].trim().isEmpty) {
+            next++;
+          }
+          final m = next < lines.length
+              ? _leadingCites.firstMatch(lines[next])
+              : null;
+          if (m != null) {
+            lines[lead] = _insertBeforeMark(lines[lead], m[1]!);
+            final rest = lines[next].substring(m.end);
+            if (rest.isEmpty) {
+              lines.removeAt(next);
+            } else {
+              lines[next] = rest;
+            }
+          }
+        }
+        i = last + 1;
+        continue;
+      }
+    } else if (!inFence && line.trim().isNotEmpty) {
+      final t = line.trimLeft();
+      lead = t.startsWith('#') || t.startsWith('|') ? null : i;
+    }
+    i++;
+  }
+  return lines.join('\n');
+}
+
+/// The line and column where the display math opened on line [start] closes,
+/// or null if it doesn't close.
+(int, int)? _displayEnd(List<String> lines, int start) {
+  if (standaloneInlineMath.hasMatch(lines[start])) {
+    return (start, lines[start].length);
+  }
+  final open = _displayOpen.firstMatch(lines[start])!;
+  final close = open[1] == r'$$' ? r'$$' : r'\]';
+  final first = lines[start].indexOf(close, open.end);
+  if (first >= 0) return (start, first + close.length);
+  for (var j = start + 1; j < lines.length; j++) {
+    final at = lines[j].indexOf(close);
+    if (at >= 0) return (j, at + close.length);
+  }
+  return null;
+}
+
+String _insertBeforeMark(String line, String cites) {
+  final m = _trailingMark.firstMatch(line)!;
+  return '${line.substring(0, m.start)} $cites${m[1] ?? ''}';
+}
 
 /// Renders `hypatia://cite` links as numbered superscripts (AMA style) and
 /// appends a numbered References list. Repeat citations of the same file

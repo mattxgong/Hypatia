@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -16,10 +17,31 @@ enum BackendStatus {
 }
 
 class BackendLauncher {
-  BackendLauncher({String? externalBaseUrl})
-    : externalBaseUrl = normalizeExternalBaseUrl(externalBaseUrl);
+  BackendLauncher({String? externalBaseUrl, String? externalApiToken})
+    : externalBaseUrl = normalizeExternalBaseUrl(externalBaseUrl),
+      apiToken = externalBaseUrl == null || externalBaseUrl.trim().isEmpty
+          ? generateApiToken()
+          : _emptyToNull(externalApiToken);
 
   final String? externalBaseUrl;
+
+  /// Secret the backend requires on every request (HYPATIA_API_TOKEN). Fresh
+  /// for each app launch; for an external backend it is whatever that backend
+  /// was started with, or null if it was started without one.
+  final String? apiToken;
+
+  static String generateApiToken() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
+  }
+
+  static String? _emptyToNull(String? value) =>
+      value == null || value.isEmpty ? null : value;
+
+  Map<String, String> get _authHeaders => {
+    if (apiToken != null) 'Authorization': 'Bearer $apiToken',
+  };
 
   static const _defaultPort = 8000;
   static const _maxPortAttempts = 11;
@@ -31,6 +53,14 @@ class BackendLauncher {
   String? _pythonPath;
   bool _stopRequested = false;
   bool _restartedAfterCrash = false;
+
+  /// When the backend last became healthy; a crash after a long healthy run
+  /// gets a fresh automatic restart rather than counting as a repeat.
+  DateTime? _healthySince;
+  static const _healthyRunResetsRestart = Duration(minutes: 1);
+
+  /// About five minutes of one-second health checks while the process runs.
+  static const _startupHealthAttempts = 300;
   BackendStatus _status = BackendStatus.stopped;
 
   final _statusController = StreamController<BackendStatus>.broadcast();
@@ -160,7 +190,6 @@ class BackendLauncher {
     }
 
     _port = await _selectPort();
-    await _writePortFile(_port);
 
     _setStatus(BackendStatus.starting);
     final started = await _spawnProcess(venvPython, backendDir, appSupportDir);
@@ -169,7 +198,13 @@ class BackendLauncher {
       return;
     }
 
-    final ready = await _pollHealth(maxAttempts: 30);
+    // A first start (migrations, model imports) can take a while: keep
+    // waiting as long as the process is alive, up to a generous limit.
+    final ready = await _pollHealth(
+      maxAttempts: _startupHealthAttempts,
+      whileProcessAlive: true,
+    );
+    if (ready) _healthySince = DateTime.now();
     _setStatus(ready ? BackendStatus.ready : BackendStatus.error);
   }
 
@@ -232,6 +267,7 @@ class BackendLauncher {
       BaseOptions(
         connectTimeout: const Duration(seconds: 2),
         receiveTimeout: const Duration(seconds: 10),
+        headers: _authHeaders,
       ),
     );
     try {
@@ -244,7 +280,10 @@ class BackendLauncher {
     }
   }
 
-  Future<bool> _pollHealth({required int maxAttempts}) async {
+  Future<bool> _pollHealth({
+    required int maxAttempts,
+    bool whileProcessAlive = false,
+  }) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 2),
@@ -254,6 +293,10 @@ class BackendLauncher {
     try {
       for (var attempt = 0; attempt < maxAttempts; attempt++) {
         if (_stopRequested) return false;
+        if (whileProcessAlive && _process == null) {
+          _log('Backend exited before it became healthy.');
+          return false;
+        }
         try {
           final response = await dio.get<Map<String, dynamic>>(
             '$baseUrl/health',
@@ -501,15 +544,6 @@ class BackendLauncher {
     return _defaultPort;
   }
 
-  Future<void> _writePortFile(int port) async {
-    try {
-      final file = File(
-        '${Directory.systemTemp.path}${Platform.pathSeparator}hypatia_backend_port.txt',
-      );
-      await file.writeAsString('$port');
-    } catch (_) {}
-  }
-
   Future<bool> _spawnProcess(
     String venvPython,
     Directory backendDir,
@@ -530,6 +564,10 @@ class BackendLauncher {
         workingDirectory: backendDir.path,
         // Writing __pycache__ into a signed macOS bundle would invalidate it.
         environment: {
+          'HYPATIA_API_TOKEN': ?apiToken,
+          // The backend exits when this pipe closes, so it can't outlive the
+          // app even if the app crashes or is killed before stopBackend().
+          'HYPATIA_EXIT_ON_STDIN_CLOSE': '1',
           'PYTHONPYCACHEPREFIX':
               '${appSupportDir.path}${Platform.pathSeparator}pycache',
         },
@@ -541,16 +579,20 @@ class BackendLauncher {
     }
 
     _log('Backend process started (PID: ${_process!.pid}).');
-    _process!.stdout.transform(utf8.decoder).listen((data) {
-      for (final line in data.trim().split('\n')) {
-        if (line.isNotEmpty) _log('[backend] $line');
-      }
-    });
-    _process!.stderr.transform(utf8.decoder).listen((data) {
-      for (final line in data.trim().split('\n')) {
-        if (line.isNotEmpty) _log('[backend] $line');
-      }
-    });
+    // Split into lines across chunks (a chunk can end mid-line), and drop the
+    // \r Windows line endings leave behind.
+    void logLines(Stream<List<int>> output) {
+      output
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter())
+          .listen((line) {
+            final trimmed = line.trimRight();
+            if (trimmed.isNotEmpty) _log('[backend] $trimmed');
+          });
+    }
+
+    logLines(_process!.stdout);
+    logLines(_process!.stderr);
 
     unawaited(
       _process!.exitCode.then((code) async {
@@ -559,6 +601,13 @@ class BackendLauncher {
         if (wasRequested) return;
 
         _log('Backend exited unexpectedly (code $code).');
+        final healthySince = _healthySince;
+        _healthySince = null;
+        if (healthySince != null &&
+            DateTime.now().difference(healthySince) >=
+                _healthyRunResetsRestart) {
+          _restartedAfterCrash = false;
+        }
         if (!_restartedAfterCrash) {
           _restartedAfterCrash = true;
           _log('Attempting a single automatic restart...');

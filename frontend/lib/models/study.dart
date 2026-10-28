@@ -86,7 +86,7 @@ class Deck {
     cardCount: json['card_count'] as int,
     dueCount: json['due_count'] as int,
     staleCount: json['stale_count'] as int,
-    createdAt: DateTime.parse(json['created_at'] as String),
+    createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
   );
 
   final String id;
@@ -166,7 +166,7 @@ class QuizSummary {
     attemptCount: json['attempt_count'] as int,
     lastScore: (json['last_score'] as num?)?.toDouble(),
     lastMaxScore: (json['last_max_score'] as num?)?.toDouble(),
-    createdAt: DateTime.parse(json['created_at'] as String),
+    createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
   );
 
   final String id;
@@ -293,7 +293,7 @@ class QuizAttempt {
     results: (json['results'] as List<dynamic>)
         .map((e) => QuestionResult.fromJson(e as Map<String, dynamic>))
         .toList(),
-    createdAt: DateTime.parse(json['created_at'] as String),
+    createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
   );
 
   final String id;
