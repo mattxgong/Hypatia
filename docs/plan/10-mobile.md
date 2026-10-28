@@ -269,6 +269,10 @@ IP means re-scanning the QR code, or using the Tailscale MagicDNS name.
 
 ### 10.5 Make chat resilient to disconnects (bug)
 
+**Done (2026-10-28).** The v0.3.0 review fixes already kept commands running after a
+disconnect and reloaded history on reconnect. W1 finished it: every `complete` frame's
+`message_id` is the saved row's ID, and failures are saved to history as system messages.
+
 `_handle_ask_stream` and the other handlers in `chat.py` save the assistant message only
 after every chunk has been sent. If the socket drops mid-stream, `send_json` raises and the
 answer is lost even though the LLM tokens were spent. Phones background apps constantly,

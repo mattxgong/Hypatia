@@ -225,8 +225,10 @@ retrieval, and the chat WebSocket message protocol). Keep it in sync with
 - Synchronous heavy work (document conversion, backup zip/unzip, git) runs
   in `asyncio.to_thread`.
 - Chat commands run in a per-connection worker (`routers/chat.py`) and
-  outlive the socket. They write their results to chat history, and the
-  frontend reloads history when it reconnects. The router owns chat history;
+  outlive the socket. They write their results to chat history (failures
+  too, via `_report_error`, as a system "Error: ..." message), and the
+  `complete` frame's `message_id` is the saved row's ID. The frontend reloads
+  history when it reconnects. The router owns chat history;
   the engine's streaming `/ask` and `/summarize` don't save messages.
 
 ## Logging

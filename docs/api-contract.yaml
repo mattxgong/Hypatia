@@ -1860,6 +1860,9 @@ components:
           type: string
           enum: [complete]
         message_id:
+          description: >-
+            ID of the saved assistant message in chat history. /help isn't
+            saved, so its ID matches no message.
           type: string
           format: uuid
         content:
@@ -1884,7 +1887,12 @@ components:
       required: [type, message_id]
 
     ChatWsError:
-      description: Server -> client. Error processing message/command.
+      description: >-
+        Server -> client. Error processing message/command. A failed command
+        is also saved to chat history as a system message "Error: <message>",
+        so a client that disconnected while it ran sees it after reloading.
+        Errors for frames that never started a command (INVALID_COMMAND) are
+        not saved.
       type: object
       properties:
         type:
@@ -1893,6 +1901,10 @@ components:
         message:
           type: string
         code:
+          type: string
+          nullable: true
+        user_action:
+          description: Suggested next step for the user, when there is one.
           type: string
           nullable: true
       required: [type, message]
