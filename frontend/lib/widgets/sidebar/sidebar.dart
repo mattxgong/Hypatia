@@ -69,11 +69,19 @@ class Sidebar extends ConsumerWidget {
             ),
           const SizedBox(height: 4),
           Expanded(
-            child: searchQuery.isNotEmpty
-                ? const SearchResults()
-                : mode == SidebarMode.study
-                ? const StudyPanel()
-                : const WikiTree(),
+            // ListTiles paint their selected color on the nearest Material,
+            // which the list's own clip doesn't cover. Without this one, a
+            // scrolled-away highlight shows above and below the list.
+            child: ClipRect(
+              child: Material(
+                type: MaterialType.transparency,
+                child: searchQuery.isNotEmpty
+                    ? const SearchResults()
+                    : mode == SidebarMode.study
+                    ? const StudyPanel()
+                    : const WikiTree(),
+              ),
+            ),
           ),
           const Divider(height: 1),
           const Padding(padding: EdgeInsets.all(12), child: AddFileButton()),

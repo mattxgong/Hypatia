@@ -1,10 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:frontend/version.dart';
 import 'package:frontend/widgets/common/hypatia_about_button.dart';
 
 void main() {
+  test('appVersion matches pubspec.yaml', () {
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    final version = RegExp(
+      r'^version:\s*([^+\s]+)',
+      multiLine: true,
+    ).firstMatch(pubspec)![1];
+    expect(appVersion, version);
+  });
+
   testWidgets('About dialog exposes compiled dependency licenses', (
     tester,
   ) async {
@@ -22,6 +34,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Hypatia'), findsOneWidget);
+    expect(find.text(appVersion), findsOneWidget);
     expect(find.textContaining('Copyright 2026 Matthew Gong'), findsOneWidget);
 
     await tester.tap(find.text('View licenses'));
