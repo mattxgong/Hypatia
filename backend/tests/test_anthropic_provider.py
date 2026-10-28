@@ -10,14 +10,66 @@ import httpx
 import pytest
 
 from app.errors import ErrorCode, LLMProviderError
-from app.services.llm_providers.anthropic_provider import AnthropicProvider
+from app.services.llm_providers.anthropic_provider import _THINKING_HEADROOM, AnthropicProvider
 
 
-def _provider(response: dict[str, Any], seen: dict[str, Any], model: str | None = None):
+def _sse(message: dict[str, Any]) -> str:
+    """``message`` as the server-sent events of a streamed response."""
+    start = {**message, "content": [], "stop_reason": None, "stop_details": None}
+    events: list[dict[str, Any]] = [{"type": "message_start", "message": start}]
+    for index, block in enumerate(message["content"]):
+        if block["type"] == "thinking":
+            empty = {"type": "thinking", "thinking": "", "signature": ""}
+            delta = {"type": "signature_delta", "signature": block["signature"]}
+        else:
+            empty = {"type": "text", "text": ""}
+            delta = {"type": "text_delta", "text": block["text"]}
+        events += [
+            {"type": "content_block_start", "index": index, "content_block": empty},
+            {"type": "content_block_delta", "index": index, "delta": delta},
+            {"type": "content_block_stop", "index": index},
+        ]
+    events += [
+        {
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": message["stop_reason"],
+                "stop_sequence": None,
+                "stop_details": message.get("stop_details"),
+            },
+            "usage": {"output_tokens": message["usage"]["output_tokens"]},
+        },
+        {"type": "message_stop"},
+    ]
+    return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+
+
+def _provider(
+    response: dict[str, Any],
+    seen: dict[str, Any],
+    model: str | None = None,
+    *,
+    model_max_tokens: int | None = 128_000,
+):
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.startswith("/v1/models/"):
+            if model_max_tokens is None:
+                return httpx.Response(
+                    404, json={"type": "error", "error": {"type": "not_found_error"}}
+                )
+            info = {
+                "type": "model",
+                "id": request.url.path.rsplit("/", 1)[-1],
+                "display_name": "Test model",
+                "created_at": "2026-01-01T00:00:00Z",
+                "max_tokens": model_max_tokens,
+            }
+            return httpx.Response(200, json=info)
         seen["body"] = json.loads(request.content)
         seen["beta"] = request.headers.get("anthropic-beta")
-        return httpx.Response(200, json=response)
+        return httpx.Response(
+            200, text=_sse(response), headers={"content-type": "text/event-stream"}
+        )
 
     provider = AnthropicProvider(api_key="sk-test", **({"model": model} if model else {}))
     provider._client = anthropic.AsyncAnthropic(
@@ -95,3 +147,24 @@ async def test_output_cut_off_at_max_tokens_is_flagged():
 
     assert await provider.complete("system", "hi", max_tokens=1) == "partial"
     assert provider.last_truncated is True
+
+
+async def test_thinking_gets_headroom_within_the_models_output_limit():
+    seen: dict[str, Any] = {}
+    reply = _message(content=[{"type": "text", "text": "ok"}])
+
+    await _provider(reply, seen).complete("system", "hi", max_tokens=8192)
+    assert seen["body"]["max_tokens"] == 8192 + _THINKING_HEADROOM
+
+    await _provider(reply, seen, model_max_tokens=20_000).complete("system", "hi", max_tokens=8192)
+    assert seen["body"]["max_tokens"] == 20_000
+
+
+async def test_unknown_output_limit_sends_the_text_budget_unchanged():
+    seen: dict[str, Any] = {}
+    provider = _provider(
+        _message(content=[{"type": "text", "text": "ok"}]), seen, model_max_tokens=None
+    )
+
+    assert await provider.complete("system", "hi", max_tokens=8192) == "ok"
+    assert seen["body"]["max_tokens"] == 8192

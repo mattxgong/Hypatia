@@ -96,22 +96,6 @@ def test_factory_unknown_provider_raises():
         get_llm_provider(_settings(llm_provider="nonexistent"))
 
 
-async def test_anthropic_complete():
-    from app.services.llm_providers.anthropic_provider import AnthropicProvider
-
-    provider = AnthropicProvider(api_key="sk-test", model="test-model")
-
-    mock_response = MagicMock()
-    mock_response.content = [MagicMock(type="text", text="Hello world")]
-    mock_response.stop_reason = "end_turn"
-
-    with patch.object(provider._client.messages, "create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_response
-        result = await provider.complete("sys prompt", "user prompt")
-        assert result == "Hello world"
-        mock_create.assert_called_once()
-
-
 async def test_openai_complete():
     from app.services.llm_providers.openai_provider import OpenAIProvider
 

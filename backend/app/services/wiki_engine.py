@@ -412,6 +412,10 @@ async def _ingest_chunks(
     pending: dict[str, _PendingPage] = {}
 
     remaining = deque(chunks)
+    # Progress is the share of the source done, so re-splitting a cut-off
+    # chunk adds parts without moving the bar backwards.
+    source_tokens = max(sum(_count_tokens(c) for c in chunks), 1)
+    done_tokens = 0
     i = 0
     while remaining:
         chunk = remaining.popleft()
@@ -422,7 +426,7 @@ async def _ingest_chunks(
             if total > 1:
                 task_manager.update_progress(
                     task_id,
-                    int(i / total * 100),
+                    min(done_tokens * 100 // source_tokens, 99),
                     f"Ingesting {filename} (part {i + 1}/{total})",
                 )
             else:
@@ -471,6 +475,7 @@ async def _ingest_chunks(
             logger.warning("ingest_output_truncated", file_id=str(file_id), chunk=i)
 
         i += 1
+        done_tokens += _count_tokens(chunk)
         pages = parse_llm_output(raw_output)
         if not pages:
             logger.warning("ingest_no_pages_parsed", class_id=cid, file_id=str(file_id), chunk=i)

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +33,26 @@ void main() {
     expect(find.byType(Math), findsNWidgets(2));
     expect(find.textContaining('is normalized.'), findsOneWidget);
     expect(find.textContaining(r'\mid'), findsNothing);
+  });
+
+  testWidgets('renders the forms the wiki prompt asks for', (tester) async {
+    await tester.pumpWidget(
+      _render(
+        r'**Sigmoid:** \( \sigma(x) = \frac{1}{1 + e^{-x}} \) squashes.'
+        '\n\n'
+        r'\[ f(x) = \begin{cases} x & x > 0 \\ \alpha (e^x - 1) & x \le 0 \end{cases} \]',
+      ),
+    );
+
+    final maths = tester.widgetList<Math>(find.byType(Math)).toList();
+    expect(maths, hasLength(2));
+    expect(maths.map((m) => m.parseError), everyElement(isNull));
+
+    // The `\\` row break reaches TeX intact rather than as a markdown escape.
+    final nodes = md.Document(
+      extensionSet: mathExtensionSet,
+    ).parseLines([r'\[ \begin{cases} a & b \\ c & d \end{cases} \]']);
+    expect(nodes.single.textContent, contains(r'b \\ c'));
   });
 
   testWidgets('leaves prices as text', (tester) async {

@@ -137,6 +137,52 @@ async def test_truncated_ingest_output_retries_the_chunk_in_halves(
     provider.close.assert_awaited_once()
 
 
+async def test_ingest_progress_never_goes_backwards_when_a_chunk_is_split(
+    db_session: AsyncSession, tmp_path: Path
+):
+    from app.services.task_manager import task_manager
+
+    class_id = uuid.uuid4()
+    record = await _make_file(db_session, class_id, tmp_path, "unused")
+    long_chunk = "\n".join(f"Line {i} explains a separate idea in some detail." for i in range(120))
+    chunks = ["# Part A\n\nShort.", long_chunk, "# Part C\n\nShort."]
+    provider = AsyncMock()
+    calls = 0
+
+    async def complete(*args: object, **kwargs: object) -> str:
+        nonlocal calls
+        calls += 1
+        provider.last_truncated = calls == 2  # the long middle chunk is cut off
+        return _page_xml(f"pages/concepts/part-{calls}.md", f"Part {calls}.")
+
+    provider.complete = AsyncMock(side_effect=complete)
+    task_id = task_manager.start_task("Ingest", str(class_id))
+    progress: list[int] = []
+    real_update = task_manager.update_progress
+
+    def record_progress(tid: str, value: int | None, message: str) -> None:
+        if value is not None:
+            progress.append(value)
+        real_update(tid, value, message)
+
+    with patch.object(task_manager, "update_progress", side_effect=record_progress):
+        result = await wiki_engine._ingest_chunks(
+            db_session,
+            class_id,
+            record,
+            chunks,
+            provider,
+            task_id=task_id,
+            related_budget=1000,
+            index_budget=1000,
+        )
+
+    assert result.success
+    assert calls == 5  # A, the cut-off middle, its two halves, C
+    assert progress == sorted(progress), progress
+    assert progress[0] == 0 and progress[-1] < 100
+
+
 async def test_rate_limited_ingest_raises_and_leaves_the_file_ready(
     db_session: AsyncSession, tmp_path: Path
 ):
