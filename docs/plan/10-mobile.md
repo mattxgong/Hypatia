@@ -323,6 +323,19 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
 
 ### 10.9 Add the platforms
 
+**Done (2026-10-28, W10).** Notes from doing it:
+- `flutter create` also upgraded `pubspec.lock` and rewrote `.metadata` without the desktop
+  platforms. Both were restored, and only the android/ios entries were added.
+- `compileSdk` is 37: `flutter_secure_storage` requires it, and Flutter's default is 36.
+  `android/build.gradle.kts` raises every plugin to 37 through `finalizeDsl`, because
+  `desktop_drop` and others declare older SDKs that their AndroidX dependencies reject.
+- `minSdk` stays at Flutter's default. No plugin's manifest needed more.
+- `INTERNET` is in the main manifest. The template only puts it in the debug and profile
+  ones. Cleartext and network-security config come with 10.3.
+- Launcher icons use a white background, because the glyph is transparent.
+- Several plugins still use the Kotlin Gradle plugin, which Flutter warns about
+  ("Built-in Kotlin"). It's a warning for now. Recheck when upgrading Flutter.
+
 - `flutter create --platforms=android,ios --org com.mattxgong --project-name hypatia .` in
   `frontend/`. The pubspec `name` is `frontend`, so set the IDs explicitly rather than relying
   on the generated defaults: Android `applicationId` and `namespace` set to

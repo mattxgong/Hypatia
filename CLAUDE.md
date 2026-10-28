@@ -94,6 +94,9 @@ frontend/            Flutter application
       study/           Study panel, generate dialog, flashcard review, quiz view
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
                        status strip + file finished/failed notices)
+  android/, ios/       Mobile targets (Phase 10), app ID com.mattxgong.hypatia.
+                       compileSdk is 37 for the app and, via android/build.gradle.kts,
+                       for every plugin (some still declare older SDKs)
 
 data/                Runtime data (gitignored; DB, wiki repos, uploaded files live here)
 docs/
@@ -342,6 +345,10 @@ CI regenerates it and fails on any diff; after editing `pyproject.toml` run
 `python -m uv pip compile pyproject.toml --extra dev --universal --python-version 3.11 -o requirements.lock`
 from `backend/`. `--python-version 3.11` matches `requires-python`; without it
 uv targets the local interpreter and drops markers CI's 3.11 run needs.
+
+`ci.yml` also builds an unsigned debug APK (ubuntu) and an unsigned iOS release
+build (`--no-codesign`, macOS runner) on every PR, so mobile breakage shows up
+before the mobile client exists.
 
 `.github/workflows/build-desktop.yml` is a reusable workflow that builds the
 Windows, macOS, and Linux desktop apps, bundles the backend source, packages
