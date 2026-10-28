@@ -1,11 +1,8 @@
 """Shared test fixtures.
 
-The ingestion queue returned by ``get_ingestion_queue()`` is process-wide and
-bound to the real ``async_session_factory``, which points at the developer's
-``~/.hypatia/data/hypatia.db`` — tests only override the ``get_session``
-dependency, not the module-level factory. Left alone, any test that runs the
-app lifespan (``TestClient``) or an upload background task would enqueue real
-files and start real LLM ingestion. Every test therefore gets an inert queue;
+The ingestion queue returned by ``get_ingestion_queue()`` is process-wide.
+Left alone, any test that runs the app lifespan (``TestClient``) or an upload
+background task would enqueue real files and start real LLM ingestion. Every test therefore gets an inert queue;
 tests that exercise queue behaviour construct ``IngestionQueue`` directly.
 """
 
@@ -91,10 +88,30 @@ class MemoryCredentialStore:
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep every test's wiki repos, uploads and logs out of ~/.hypatia."""
+    """Keep every test's database, wiki repos, uploads and logs out of ~/.hypatia.
+
+    ``app.database`` builds its engine at import time from the default data
+    directory, so patching ``settings.data_dir`` alone leaves the lifespan
+    (``TestClient``) and background tasks on ``~/.hypatia/data/hypatia.db``:
+    the developer's real database, or "unable to open database file" in CI.
+    Point them at this test's directory, where the lifespan's migrations run.
+    NullPool keeps no connections, as ``TestClient`` runs its own event loop.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
     from app.config import settings
 
-    monkeypatch.setattr(settings, "data_dir", tmp_path / "hypatia-data")
+    data_dir = tmp_path / "hypatia-data"
+    monkeypatch.setattr(settings, "data_dir", data_dir)
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{data_dir / 'hypatia.db'}", poolclass=NullPool
+    )
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    for target in ("app.database.engine", "app.main.engine"):
+        monkeypatch.setattr(target, engine)
+    for module in ("database", "main", "routers.chat", "routers.files", "routers.wiki"):
+        monkeypatch.setattr(f"app.{module}.async_session_factory", factory)
 
 
 # Host names httpx's ASGITransport ("http://test") and Starlette's TestClient use.
