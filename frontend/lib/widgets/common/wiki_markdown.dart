@@ -52,7 +52,7 @@ class WikiMarkdown extends ConsumerWidget {
         ? const <SourceFile>[]
         : ref.read(fileListProvider(classId)).valueOrNull ?? const [];
     final rendered = numberCitations(
-      resolveWikiLinks(data, pages),
+      attachEquationCitations(resolveWikiLinks(data, pages)),
       fileNames: {for (final f in files) f.id: f.originalFilename},
     );
 

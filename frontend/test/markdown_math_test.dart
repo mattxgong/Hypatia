@@ -55,6 +55,44 @@ void main() {
     expect(nodes.single.textContent, contains(r'b \\ c'));
   });
 
+  testWidgets('display math is centered', (tester) async {
+    await tester.pumpWidget(_render('Intro text.\n\n\\[ y = Xw \\]'));
+
+    final page = tester.getRect(find.byType(Markdown));
+    final math = tester.getRect(find.byType(Math));
+    expect(math.center.dx, moreOrLessEquals(page.center.dx, epsilon: 1));
+  });
+
+  testWidgets('math on a line of its own is displayed, math in a sentence '
+      'stays inline', (tester) async {
+    await tester.pumpWidget(
+      _render(
+        'The gradient is\n'
+        r'\( \nabla J = \frac{2}{n} X^\top (Xw - y) \),'
+        '\n'
+        r'where \(w\) are the weights.',
+      ),
+    );
+
+    final maths = tester.widgetList<Math>(find.byType(Math)).toList();
+    expect(maths.map((m) => m.mathStyle), [MathStyle.display, MathStyle.text]);
+    expect(maths.map((m) => m.parseError), everyElement(isNull));
+    final page = tester.getRect(find.byType(Markdown));
+    expect(
+      tester.getRect(find.byWidget(maths.first)).center.dx,
+      moreOrLessEquals(page.center.dx, epsilon: 1),
+    );
+  });
+
+  testWidgets('display math on the line after a sentence breaks out of it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_render('Then\n\\[ y = Xw \\]\nfollows.'));
+
+    expect(tester.widget<Math>(find.byType(Math)).mathStyle, MathStyle.display);
+    expect(find.textContaining('follows.'), findsOneWidget);
+  });
+
   testWidgets('leaves prices as text', (tester) async {
     await tester.pumpWidget(_render(r'It costs $5 or $10.'));
 

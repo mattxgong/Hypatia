@@ -65,6 +65,48 @@ void main() {
     });
   });
 
+  group('attachEquationCitations', () {
+    const c1 = '[source](hypatia://cite?file=a.pdf&page=1)';
+    const c2 = '[source](hypatia://cite?file=a.pdf&page=2)';
+
+    test('moves a citation under an equation into its lead-in', () {
+      expect(
+        attachEquationCitations(
+          'The loss is:\n\n\\[ J = x \\]\n\n$c1. The slides add more $c2.',
+        ),
+        'The loss is $c1:\n\n\\[ J = x \\]\n\nThe slides add more $c2.',
+      );
+    });
+
+    test('drops a citation-only paragraph and skips back over equations', () {
+      expect(
+        attachEquationCitations(
+          'Two forms\n\n\$\$\na\n\$\$\n\n\\[ b \\]\n\n$c1.\n\nNext.',
+        ),
+        'Two forms $c1\n\n\$\$\na\n\$\$\n\n\\[ b \\]\n\n\nNext.',
+      );
+    });
+
+    test('takes a citation off the equation line so it stays display math', () {
+      expect(
+        attachEquationCitations('Then,\n\\[ y = Xw \\] $c1 $c2.'),
+        'Then $c1 $c2,\n\\[ y = Xw \\]',
+      );
+    });
+
+    test('treats inline math on its own line as an equation', () {
+      expect(
+        attachEquationCitations('The model is\n\n\\( y = Xw \\)\n\n$c1.'),
+        'The model is $c1\n\n\\( y = Xw \\)\n',
+      );
+    });
+
+    test('leaves equations without a lead-in alone', () {
+      const text = '## Loss\n\n\\[ J = x \\]\n\n$c1.';
+      expect(attachEquationCitations(text), text);
+    });
+  });
+
   test('citationLocation maps query parameters to viewer locations', () {
     expect(citationLocation(Uri.parse('hypatia://cite?file=a&page=5')), 'p:5');
     expect(citationLocation(Uri.parse('hypatia://cite?file=a&t=12')), 't:12');

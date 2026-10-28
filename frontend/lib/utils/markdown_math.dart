@@ -39,7 +39,14 @@ class MathInlineSyntax extends md.InlineSyntax {
   }
 }
 
+/// Inline math (`\(..\)` or `$..$`) that makes up a whole line, with an
+/// optional closing punctuation mark: it stands on its own, so it is displayed.
+final standaloneInlineMath = RegExp(
+  r'^ {0,3}(?:\\\(((?:(?!\\\)).)+)\\\)|\$([^$]+)\$)[ \t]*([.,;:])?[ \t]*$',
+);
+
 /// A `$$` or `\[` line opens display math that runs until the matching closer.
+/// A line that is nothing but inline math is display math too.
 class MathBlockSyntax extends md.BlockSyntax {
   static final _open = RegExp(r'^ {0,3}(\$\$|\\\[)(.*)$');
 
@@ -48,6 +55,7 @@ class MathBlockSyntax extends md.BlockSyntax {
 
   @override
   bool canParse(md.BlockParser parser) {
+    if (standaloneInlineMath.hasMatch(parser.current.content)) return true;
     final match = _open.firstMatch(parser.current.content);
     if (match == null) return false;
     final close = _closerFor(match[1]!);
@@ -58,6 +66,12 @@ class MathBlockSyntax extends md.BlockSyntax {
 
   @override
   md.Node parse(md.BlockParser parser) {
+    final alone = standaloneInlineMath.firstMatch(parser.current.content);
+    if (alone != null) {
+      parser.advance();
+      final tex = (alone[1] ?? alone[2]!).trim();
+      return md.Element.text(_blockTag, '$tex${alone[3] ?? ''}');
+    }
     final match = _open.firstMatch(parser.current.content)!;
     final close = _closerFor(match[1]!);
     final rest = match[2]!;
@@ -113,11 +127,21 @@ class _MathBuilder extends MarkdownElementBuilder {
     );
 
     if (block) {
+      // Centered like typeset display math; scrolls when wider than the page.
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: math,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: constraints.hasBoundedWidth
+                    ? constraints.maxWidth
+                    : 0,
+              ),
+              child: Center(child: math),
+            ),
+          ),
         ),
       );
     }
