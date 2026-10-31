@@ -357,6 +357,19 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
 
 ### 10.10 Isolate desktop-only code
 
+**Done (2026-11-01, W12).** `utils/platform.dart` has the shared `isDesktop` check.
+- `BackendLauncher` and `window_manager` were already desktop-only in `main()`. On mobile
+  `backendLauncherProvider` stays null, and the base URL waits for 10.11.
+- `DropTarget` wraps the home screen only on desktop. Phones and tablets use the Add File
+  button.
+- Added `media_kit_libs_android_video` and `media_kit_libs_ios_video` next to the Windows
+  libs, so desktop builds are unchanged. macOS still has no bundled libmpv; that is a
+  desktop gap, not a mobile one.
+- No frontend code calls `/files/{id}/open`, so there is nothing to replace yet. 10.13/W20
+  adds the share sheet when sources open on mobile.
+- Every shortcut already has an on-screen control: the search bar (Ctrl+K), Create Class
+  (Ctrl+N), the panel collapse strips (Ctrl+B / Ctrl+J), and the search clear button (Esc).
+
 | Code | Issue on mobile | Action |
 |---|---|---|
 | `BackendLauncher` (spawns Python via `dart:io` `Process`) | Can't run on iOS, and is pointless on Android | Never construct it on mobile. Use the connection provider (10.11) for `baseUrl`. |

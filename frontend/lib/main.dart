@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ui' show AppExitResponse;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
@@ -12,6 +11,7 @@ import 'app.dart';
 import 'providers/backend_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/backend_launcher.dart';
+import 'utils/platform.dart';
 
 const _externalBackendUrl = String.fromEnvironment('HYPATIA_BACKEND_URL');
 const _externalApiToken = String.fromEnvironment('HYPATIA_API_TOKEN');
@@ -21,7 +21,7 @@ Future<void> main() async {
   MediaKit.ensureInitialized();
 
   BackendLauncher? launcher;
-  if (_isDesktop) {
+  if (isDesktop) {
     launcher = BackendLauncher(
       externalBaseUrl: _externalBackendUrl,
       externalApiToken: _externalApiToken,
@@ -57,12 +57,6 @@ Future<void> main() async {
   );
   if (launcher != null) unawaited(launcher.startBackend());
 }
-
-bool get _isDesktop =>
-    !kIsWeb &&
-    (defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.linux);
 
 /// Stops the backend before the app exits. Flutter desktop doesn't dispose
 /// the widget tree when the window closes, so this hooks the window close

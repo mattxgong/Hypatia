@@ -12,6 +12,7 @@ import '../providers/study_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/upload_provider.dart';
 import '../providers/wiki_provider.dart';
+import '../utils/platform.dart';
 import '../utils/shortcuts.dart';
 import '../widgets/chat_panel/chat_panel.dart';
 import '../widgets/common/activity_status.dart';
@@ -212,14 +213,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         autofocus: true,
         child: Scaffold(
           body: SourceFileEvents(
-            child: DropTarget(
-              onDragEntered: (_) => setState(() => _isDragging = true),
-              onDragExited: (_) => setState(() => _isDragging = false),
-              onDragDone: (details) {
-                setState(() => _isDragging = false);
-                _handleDrop(details);
-              },
-              child: Stack(
+            child: _dropTarget(
+              Stack(
                 children: [
                   LayoutBuilder(
                     builder: (context, constraints) {
@@ -352,6 +347,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Accepts files dragged in from the file manager. Desktop only: phones and
+  /// tablets add files with the Add File button.
+  Widget _dropTarget(Widget child) {
+    if (!isDesktop) return child;
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _isDragging = true),
+      onDragExited: (_) => setState(() => _isDragging = false),
+      onDragDone: (details) {
+        setState(() => _isDragging = false);
+        _handleDrop(details);
+      },
+      child: child,
     );
   }
 
