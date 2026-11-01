@@ -482,6 +482,35 @@ no text layer (it's cheap to include, and it helps desktop users too).
   dependency for users, whereas Tesseract would be a second "install ffmpeg"-style
   prerequisite. Confirm that the license, wheel availability on Windows, macOS (arm64), and
   Linux, and the lockfile all work under `--universal --python-version 3.11`.
+- **Evaluation (2026-11-01, W3): RapidOCR, provisionally.** Script:
+  `spikes/ocr-eval/eval_ocr.py` (`generate` makes labelled images; `run` scores every
+  engine it finds on a folder, labelled or not).
+  - 16 generated images (handout, small print, JPEG q35, angled page, angled with shadow,
+    4° skew, blur, slide, projector photo, marker whiteboard and its photo, handwriting
+    fonts, code, low light, sideways via EXIF). RapidOCR 3.10 (PP-OCRv6 small models) read
+    15 perfectly and dropped one character in the 16th: mean CER 0.001, about 1 s per
+    image on this laptop's CPU. These are rendered fonts, not real photos or real
+    handwriting, so they show it copes with the distortions, not how it does on a phone
+    photo of a real board.
+  - **Not done yet**: the 15-20 real photos, and Tesseract. Tesseract needs a system
+    install, which this run didn't do. To finish: put photos (plus optional `.txt`
+    transcriptions) in `spikes/ocr-eval/samples/real/` and run the script, with
+    Tesseract on PATH or in `TESSERACT_CMD` if comparing.
+  - Install: Apache-2.0 for code and models (models from PaddleOCR, see its
+    `MODEL_LICENSES.md`), models bundled in the wheel, no download at runtime. It adds
+    `opencv-python-headless` (~113 MB installed, the bulk), `shapely`, `pyclipper`,
+    `omegaconf` and a few small packages. `onnxruntime`, `numpy` and Pillow are already
+    dependencies. The universal lock resolves with `--python-version 3.11`, and
+    binary-only resolution finds wheels for Windows x64, Linux x64/arm64 and macOS arm64
+    (macOS 14+).
+  - Intel Macs: `onnxruntime` has no x86_64 macOS wheels after 1.23, and the lock already
+    pins a newer one for faster-whisper. That's an existing gap, not one OCR adds.
+  - Runtime: about 1 s to load; memory peaked near 580 MB on a 2500 px image, then settled
+    around 150 MB. W4 should run OCR one image at a time in a worker thread, and could
+    lower the downscale to 2000 px if memory matters.
+  - Windows: a deep venv path can exceed 260 characters in `onnxruntime`'s package tree
+    when long paths are off. The backend's venv path is short enough today, and the
+    package is already installed there.
 - **Handwriting**: none of the local engines handle handwriting well. Set expectations in
   the UI ("printed text works best"). A vision-LLM option for handwriting can come later.
 - **Pipeline**: correct the EXIF orientation (Pillow), downscale very large photos (for
@@ -874,8 +903,8 @@ lifetime (system tray), image OCR (local engine), tablets (first-class), doc loc
 Still open:
 
 1. **PWA**: still worth pursuing, now that native Android distribution is decided? (Probably not.)
-2. **OCR engine**: RapidOCR (pip only) vs Tesseract (system binary). Decide after the
-   sample-photo evaluation in 10.13a.
+2. **OCR engine**: provisionally RapidOCR (2026-11-01, see 10.13a). Confirm with real
+   photos before W4 ships camera capture.
 3. **Final app identifier**: keep `com.mattxgong.hypatia` permanently? Confirm before
    sharing APKs beyond your own devices (see 10.9).
 
