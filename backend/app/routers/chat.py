@@ -32,6 +32,7 @@ from app.models.schemas import (
 )
 from app.services import wiki_engine
 from app.services.study import jobs as study_jobs
+from app.services.study import mistake_review
 from app.services.study import service as study_service
 from app.services.task_manager import TaskStatus, task_manager
 from app.utils.command_parser import parse_command
@@ -154,6 +155,8 @@ async def _handle_command(
         await _handle_rebuild(conn, class_id)
     elif command in ("flashcards", "quiz"):
         await _handle_study(conn, class_id, command, args.strip())
+    elif command == "review-quiz":
+        await _handle_review_quiz(conn, class_id, args.strip())
 
 
 _HELP_TEXT = """\
@@ -169,6 +172,7 @@ _HELP_TEXT = """\
 | `/export` | Export the wiki as markdown files |
 | `/flashcards [topic]` | Make a flashcard deck from the wiki (or one topic) |
 | `/quiz [topic]` | Make a practice quiz from the wiki (or one topic) |
+| `/review-quiz <attempt id>` | Go over a quiz attempt's mistakes with a tutor |
 | `/help` | Show this command reference |
 
 Type a message without a `/` prefix to default to `/ask`."""
@@ -260,6 +264,49 @@ async def _handle_ask_stream(conn: ChatConnection, class_id: uuid.UUID, query: s
         except Exception as e:  # noqa: BLE001
             logger.error("chat_ask_error", class_id=str(class_id), error=str(e))
             await _report_error(conn, class_id, "ask", str(e), ErrorCode.ASK_ERROR)
+
+
+async def _handle_review_quiz(conn: ChatConnection, class_id: uuid.UUID, arg: str) -> None:
+    """Tutor through an attempt's mistakes. The quiz view's Review button sends this."""
+    await _record_message(class_id, ChatRole.USER, f"/review-quiz {arg}".strip())
+    try:
+        attempt_id = uuid.UUID(arg)
+    except ValueError:
+        await _report_error(
+            conn, class_id, "review-quiz", "Usage: /review-quiz <attempt id>", "INVALID_COMMAND"
+        )
+        return
+    async with async_session_factory() as session:
+        try:
+            chunks: list[str] = []
+            consulted: list[str] = []
+            async for chunk in mistake_review.review_stream(
+                session, class_id, attempt_id, consulted=consulted
+            ):
+                chunks.append(chunk)
+                await conn.send_json({"type": "chunk", "content": chunk})
+
+            citations = await _page_citations(session, class_id, consulted)
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content="".join(chunks),
+                command="review-quiz",
+                metadata_json={"pages": citations} if citations else None,
+            )
+            session.add(reply)
+            await session.commit()
+            await conn.send_json(
+                {"type": "complete", "message_id": str(reply.id), "citations": citations}
+            )
+        except HypatiaError as e:
+            logger.error("chat_review_quiz_error", class_id=str(class_id), code=e.code.value)
+            await _report_error(
+                conn, class_id, "review-quiz", e.detail, e.code.value, e.user_action
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("chat_review_quiz_error", class_id=str(class_id), error=str(e))
+            await _report_error(conn, class_id, "review-quiz", str(e), ErrorCode.REVIEW_ERROR)
 
 
 async def _handle_summarize(conn: ChatConnection, class_id: uuid.UUID, topic: str) -> None:

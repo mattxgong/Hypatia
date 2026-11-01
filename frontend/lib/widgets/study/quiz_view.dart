@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../config/theme.dart';
 
 import '../../models/study.dart';
+import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../services/api_client.dart';
@@ -160,6 +161,14 @@ class _QuizViewState extends ConsumerState<QuizView> {
     );
   }
 
+  /// Starts a tutoring chat about this attempt's mistakes and shows the chat.
+  void _reviewMistakes(String classId, QuizAttempt attempt) {
+    final sent = ref
+        .read(chatMessagesProvider(classId).notifier)
+        .sendMessage('/review-quiz ${attempt.id}');
+    if (sent) ref.read(chatRevealRequestProvider.notifier).state++;
+  }
+
   Widget _buildQuiz(BuildContext context, String classId, Quiz quiz) {
     final theme = Theme.of(context);
     final attempt = _attempt;
@@ -211,12 +220,21 @@ class _QuizViewState extends ConsumerState<QuizView> {
                         )
                       : const Text('Submit'),
                 )
-              else
+              else ...[
+                if (attempt.results.any(isMistake)) ...[
+                  FilledButton.tonalIcon(
+                    onPressed: () => _reviewMistakes(classId, attempt),
+                    icon: const Icon(Icons.school_outlined, size: 16),
+                    label: const Text('Review my mistakes'),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 OutlinedButton.icon(
                   onPressed: _retake,
                   icon: const Icon(Icons.replay, size: 16),
                   label: const Text('Retake'),
                 ),
+              ],
             ],
           ),
         ),

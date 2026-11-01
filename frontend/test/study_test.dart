@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:frontend/models/chat_message.dart';
 import 'package:frontend/models/hypatia_class.dart';
 import 'package:frontend/models/source_file.dart';
 import 'package:frontend/models/study.dart';
 import 'package:frontend/models/task_status.dart';
 import 'package:frontend/models/wiki_page.dart';
+import 'package:frontend/providers/chat_provider.dart';
 import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/file_provider.dart';
 import 'package:frontend/providers/settings_provider.dart';
@@ -96,6 +98,20 @@ Quiz _quiz({bool twoQuestions = false, int points = 1}) => Quiz.fromJson({
       },
   ],
 });
+
+/// Records what the quiz view sends to chat instead of opening a socket.
+class _RecordingChat extends ChatMessagesNotifier {
+  final sent = <String>[];
+
+  @override
+  Future<List<ChatMessage>> build(String arg) async => const [];
+
+  @override
+  bool sendMessage(String content) {
+    sent.add(content);
+    return true;
+  }
+}
 
 class _FakeApi extends ApiClient {
   _FakeApi() : super(baseUrl: 'http://test');
@@ -443,6 +459,7 @@ void main() {
     });
     expect(find.text('Score: 1 / 1'), findsOneWidget);
     expect(find.text('Correct · 1 / 1'), findsOneWidget);
+    expect(find.text('Review my mistakes'), findsNothing);
     expect(find.text('Rank and frequency follow a power law.'), findsOneWidget);
     expect(find.text('Retake'), findsOneWidget);
   });
@@ -454,14 +471,22 @@ void main() {
     api
       ..resultScore = 0.5
       ..resultPoints = 3;
+    final chat = _RecordingChat();
+    late ProviderContainer container;
     await tester.pumpWidget(
       wrap(
-        const QuizView(quizId: 'quiz-1'),
+        Consumer(
+          builder: (context, ref, _) {
+            container = ProviderScope.containerOf(context);
+            return const QuizView(quizId: 'quiz-1');
+          },
+        ),
         overrides: [
           quizProvider((
             classId: _classId,
             quizId: 'quiz-1',
           )).overrideWith((ref) async => _quiz(points: 3)),
+          chatMessagesProvider.overrideWith(() => chat),
         ],
       ),
     );
@@ -483,6 +508,11 @@ void main() {
 
     expect(find.text('Score: 1.5 / 3'), findsOneWidget);
     expect(find.text('50% · 1.5 / 3'), findsOneWidget);
+
+    await tester.tap(find.text('Review my mistakes'));
+    await tester.pumpAndSettle();
+    expect(chat.sent, ['/review-quiz a1']);
+    expect(container.read(chatRevealRequestProvider), 1);
   });
 
   testWidgets('a rating can be undone from its notice', (tester) async {

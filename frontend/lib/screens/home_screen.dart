@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../providers/chat_provider.dart';
 import '../providers/class_provider.dart';
 import '../providers/search_provider.dart';
 import '../providers/study_provider.dart';
@@ -161,6 +162,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     _persistLayout();
+    ref.listen(chatRevealRequestProvider, (_, _) {
+      ref.read(_chatPanelCollapsedProvider.notifier).state = false;
+    });
     ref.listen(sourceViewerRequestProvider, (prev, next) {
       if (next != null) {
         showSourceViewer(context, next);

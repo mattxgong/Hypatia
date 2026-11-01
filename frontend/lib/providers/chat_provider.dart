@@ -38,6 +38,9 @@ final chatInputProvider = StateProvider<String>((ref) => '');
 /// Bumped to move keyboard focus to the chat input without changing its text.
 final chatInputFocusRequestProvider = StateProvider<int>((ref) => 0);
 
+/// Bumped to show the chat panel, e.g. after sending a message from elsewhere.
+final chatRevealRequestProvider = StateProvider<int>((ref) => 0);
+
 /// The long-running operation (/rebuild, /flashcards, ...) a Class's chat is
 /// following, if any; Stop cancels it.
 final chatActiveOperationProvider = StateProvider.family<String?, String>(

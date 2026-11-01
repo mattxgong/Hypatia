@@ -36,7 +36,7 @@ backend/            FastAPI Python backend
     routers/
       backup.py       Backup export/import endpoints
       chat.py         WebSocket chat with /ask, /summarize, /remove, /lint, /rebuild, /export,
-                      /flashcards, /quiz
+                      /flashcards, /quiz, /review-quiz
       classes.py      Class CRUD endpoints
       devices.py      Device pairing (codes, pair), list and revoke paired devices
       files.py        File upload and listing
@@ -57,7 +57,9 @@ backend/            FastAPI Python backend
                       markdown), quiz_builder.py, grading.py, scheduler.py
                       (SM-2), llm_generator.py (AI cards/questions, short-
                       answer grading), jobs.py (background AI generation),
-                      service.py (scope, staleness, export)
+                      service.py (scope, staleness, export, points-weighted
+                      attempt scores), mistake_review.py (/review-quiz:
+                      tutoring prompt from an attempt's wrong answers)
       file_converter.py  MarkItDown-based document-to-markdown conversion
       video_processor.py ffmpeg + faster-whisper transcription pipeline
       storage_service.py Per-Class file storage with path-traversal-safe filenames
@@ -251,7 +253,7 @@ and attached to every log line for the duration of a request/operation.
 ## Error handling
 
 The backend uses a structured error catalog in `backend/app/errors.py`:
-- `ErrorCode` is a `StrEnum` with 26 codes across 6 groups: general, LLM,
+- `ErrorCode` is a `StrEnum` with 27 codes across 6 groups: general, LLM,
   chat commands, file/system, settings/provider, and auth.
 - `HypatiaError` is the base exception; subclasses include
   `LLMUnavailableError`, `LLMProviderError`, `ResourceNotFoundError`,

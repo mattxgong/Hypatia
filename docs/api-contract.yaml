@@ -1966,7 +1966,11 @@ components:
 
     # --- Chat WebSocket protocol -------------------------------------------
     ChatWsMessage:
-      description: Client -> server. A chat message or slash command.
+      description: >-
+        Client -> server. A chat message or slash command: /ask (the default),
+        /summarize, /remove, /lint, /rebuild, /export, /flashcards, /quiz,
+        /review-quiz <attempt_id> (streams a tutor's reply about that attempt's
+        wrong, partly wrong and skipped questions), /help.
       type: object
       properties:
         type:

@@ -60,6 +60,15 @@ Several pieces this phase builds on already exist. Don't rebuild them:
 
 ### 11.1 Review mistakes from quiz results
 
+**Done (2026-11-01).** `services/study/mistake_review.py` and `prompts/review_prompt.py`.
+Mistakes are questions scored below full marks, including skipped ones. Short answers still
+waiting for a self-check are left out, because they aren't graded yet. The tutor covers at
+most two mistakes per message. The student's replies go through `/ask`, which sees the
+last six messages, so the conversation carries on there. The button sends
+`/review-quiz <attempt_id>` and reveals the chat panel (`chatRevealRequestProvider`).
+Writing the e2e test turned up a v0.3.0 bug: `/ask` failed whenever it found pages
+(`_page_citations` called `dict()` on a SQLAlchemy Result), fixed in its own commit.
+
 After a submitted attempt, a **Review my mistakes** button on the results view opens chat
 with a tutoring session about the questions the user got wrong or partly wrong.
 

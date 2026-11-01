@@ -25,6 +25,7 @@ class ErrorCode(StrEnum):
     LINT_ERROR = "LINT_ERROR"
     EXPORT_ERROR = "EXPORT_ERROR"
     REBUILD_ERROR = "REBUILD_ERROR"
+    REVIEW_ERROR = "REVIEW_ERROR"
 
     INGEST_FAILED = "INGEST_FAILED"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
@@ -128,6 +129,11 @@ ERROR_CATALOG: dict[ErrorCode, ErrorDetail] = {
         ErrorCode.REBUILD_ERROR,
         500,
         "Failed to rebuild wiki",
+    ),
+    ErrorCode.REVIEW_ERROR: ErrorDetail(
+        ErrorCode.REVIEW_ERROR,
+        500,
+        "Failed to review quiz mistakes",
     ),
     ErrorCode.INGEST_FAILED: ErrorDetail(
         ErrorCode.INGEST_FAILED,

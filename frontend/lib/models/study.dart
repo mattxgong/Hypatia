@@ -287,6 +287,11 @@ class QuestionResult {
   bool get needsSelfReview => status == 'needs_self_review';
 }
 
+/// A question the student got wrong, partly wrong or skipped, as `/review-quiz`
+/// counts them. Short answers still waiting for a self-check don't count.
+bool isMistake(QuestionResult result) =>
+    !result.needsSelfReview && result.score < 1;
+
 class QuizAttempt {
   const QuizAttempt({
     required this.id,
