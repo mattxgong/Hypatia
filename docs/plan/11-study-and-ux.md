@@ -16,7 +16,7 @@ and study-material quality. Larger items (study modes, a per-page proficiency es
 retrieval tools, concept maps, per-task model selection, crash-safe jobs) are listed as
 options for later.
 
-**Status**: Planning only, not started. Drafted 2026-10-28.
+**Status**: Wave A (11.1-11.5) done 2026-11-01. Waves B and C not started. Drafted 2026-10-28.
 
 ---
 
@@ -164,6 +164,15 @@ Phase 10's) reads the same slots.
 and no `Color(0x...)` literals left in `widgets/` outside the theme (a grep in CI or a test).
 
 ### 11.5 Pane layout rules
+
+**Done (2026-11-01).** Pane widths and collapsed flags are in `providers/layout_provider.dart`,
+clamped when loaded. A divider double-click resets its pane. The sidebar and chat headers
+have Hide buttons; the centre top bar keeps only the activity strip. The collapsed sidebar
+is an icon strip (Wiki, Source files, Study, Search). Source files sets a flag that the wiki
+tree consumes once built, because the tree isn't mounted yet when the icon is tapped. The
+chat draft is in `chatDraftProvider`, per Class. The chat panel was already kept mounted
+across centre-view changes; the draft now also survives collapsing it. The quiz keyboard
+outlines the current question.
 
 Tidy the three-panel layout in `home_screen.dart` before 10.12 (W13) generalises it.
 

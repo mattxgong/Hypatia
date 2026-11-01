@@ -42,11 +42,15 @@ class _CommandInputState extends ConsumerState<CommandInput> {
   @override
   void initState() {
     super.initState();
+    _controller.text = ref.read(chatDraftProvider(_draftKey));
     _controller.addListener(_onTextChanged);
   }
 
+  String get _draftKey => ref.read(currentClassIdProvider) ?? '';
+
   void _onTextChanged() {
     final text = _controller.text;
+    ref.read(chatDraftProvider(_draftKey).notifier).state = text;
     final typingCommand = text.startsWith('/') && !text.contains(RegExp(r'\s'));
     final matches = typingCommand
         ? chatCommands
@@ -154,6 +158,10 @@ class _CommandInputState extends ConsumerState<CommandInput> {
       _controller.selection = TextSelection.collapsed(offset: draft.length);
       _focusNode.requestFocus();
       ref.read(chatInputProvider.notifier).state = '';
+    });
+    // Each Class keeps its own draft.
+    ref.listen(currentClassIdProvider, (_, classId) {
+      _controller.text = ref.read(chatDraftProvider(classId ?? ''));
     });
     ref.listen(chatInputFocusRequestProvider, (_, _) {
       _focusNode.requestFocus();

@@ -86,7 +86,8 @@ frontend/            Flutter application
   lib/
     main.dart          App entry point
     models/            Data models (task_status.dart, etc.)
-    providers/         Riverpod state providers (settings, search, tasks, etc.)
+    providers/         Riverpod state providers (settings, search, tasks, etc.; layout_provider:
+                       pane widths, collapsed panes, collapsed-sidebar sections)
     screens/           Full-screen views (home_screen, class_settings_screen)
     services/
       api_client.dart     HTTP/WebSocket client for backend API

@@ -35,6 +35,11 @@ final chatConnectionProvider = Provider<void>((ref) {
 
 final chatInputProvider = StateProvider<String>((ref) => '');
 
+/// Each Class's unsent chat text (keyed by Class ID, '' with none selected).
+/// Kept outside the input widget so it survives the chat panel collapsing,
+/// a layout change or a window resize.
+final chatDraftProvider = StateProvider.family<String, String>((ref, _) => '');
+
 /// Bumped to move keyboard focus to the chat input without changing its text.
 final chatInputFocusRequestProvider = StateProvider<int>((ref) => 0);
 

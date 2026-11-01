@@ -6,6 +6,7 @@ import '../../config/theme.dart';
 import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
+import '../../providers/layout_provider.dart';
 import '../../utils/shortcuts.dart';
 import '../common/error_card.dart';
 import '../sidebar/add_file_button.dart';
@@ -27,6 +28,8 @@ class ChatPanel extends ConsumerWidget {
       child: Column(
         children: [
           _ChatHeader(
+            onHide: () =>
+                ref.read(chatPanelCollapsedProvider.notifier).state = true,
             onClearHistory: classId == null
                 ? null
                 : () => _confirmClearHistory(context, ref, classId),
@@ -169,8 +172,9 @@ class _StreamingBubble extends ConsumerWidget {
 }
 
 class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({required this.onClearHistory});
+  const _ChatHeader({required this.onHide, required this.onClearHistory});
 
+  final VoidCallback onHide;
   final VoidCallback? onClearHistory;
 
   @override
@@ -197,6 +201,13 @@ class _ChatHeader extends StatelessWidget {
             icon: const Icon(Icons.delete_sweep_outlined, size: 18),
             onPressed: onClearHistory,
             tooltip: 'Clear chat history',
+            iconSize: 18,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+          ),
+          IconButton(
+            icon: const Icon(Icons.keyboard_double_arrow_right, size: 18),
+            onPressed: onHide,
+            tooltip: 'Hide chat ($shortcutModifierLabel+J)',
             iconSize: 18,
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),

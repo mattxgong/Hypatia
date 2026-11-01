@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../utils/shortcuts.dart';
 import '../study/study_panel.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
@@ -25,7 +27,24 @@ class Sidebar extends ConsumerWidget {
       color: theme.colorScheme.surfaceContainerLowest,
       child: Column(
         children: [
-          const Padding(padding: EdgeInsets.all(12), child: ClassDropdown()),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+            child: Row(
+              children: [
+                const Expanded(child: ClassDropdown()),
+                IconButton(
+                  icon: const Icon(Icons.keyboard_double_arrow_left, size: 18),
+                  tooltip: 'Hide sidebar ($shortcutModifierLabel+B)',
+                  onPressed: () =>
+                      ref.read(sidebarCollapsedProvider.notifier).state = true,
+                  constraints: const BoxConstraints(
+                    minWidth: 36,
+                    minHeight: 36,
+                  ),
+                ),
+              ],
+            ),
+          ),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
             child: SidebarSearchBar(),

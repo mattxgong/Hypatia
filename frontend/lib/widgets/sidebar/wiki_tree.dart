@@ -5,16 +5,45 @@ import '../../models/source_file.dart';
 import '../../models/wiki_page.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/file_provider.dart';
+import '../../providers/layout_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/error_card.dart';
 import '../source_viewer/source_viewer.dart';
 import 'source_file_actions.dart';
 
-class WikiTree extends ConsumerWidget {
+class WikiTree extends ConsumerStatefulWidget {
   const WikiTree({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WikiTree> createState() => _WikiTreeState();
+}
+
+class _WikiTreeState extends ConsumerState<WikiTree> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Opens Source Files, the last section, and scrolls down to it.
+  void _revealSources() {
+    ref.read(revealSourcesProvider.notifier).state = false;
+    final collapsed = ref.read(_collapsedSectionsProvider.notifier);
+    collapsed.state = {...collapsed.state}..remove(_sourceFiles);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ref.watch(revealSourcesProvider)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealSources();
+      });
+    }
     final classId = ref.watch(currentClassIdProvider);
     if (classId == null) {
       return const Center(child: Text('Select a class'));
@@ -87,13 +116,13 @@ class WikiTree extends ConsumerWidget {
                 ),
           ],
           () => _CategoryHeader(
-            title: 'Source Files',
+            title: _sourceFiles,
             icon: Icons.folder_outlined,
             count: files.length,
-            expanded: !collapsed.contains('Source Files'),
-            onToggle: () => _toggleSection(ref, 'Source Files'),
+            expanded: !collapsed.contains(_sourceFiles),
+            onToggle: () => _toggleSection(ref, _sourceFiles),
           ),
-          if (!collapsed.contains('Source Files'))
+          if (!collapsed.contains(_sourceFiles))
             for (final f in files)
               () => Padding(
                 padding: const EdgeInsets.only(left: 16),
@@ -109,6 +138,7 @@ class WikiTree extends ConsumerWidget {
         ];
 
         return ListView.builder(
+          controller: _scroll,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           itemCount: rows.length,
           itemBuilder: (context, index) => rows[index](),
@@ -124,6 +154,8 @@ class WikiTree extends ConsumerWidget {
         : {...notifier.state, title};
   }
 }
+
+const _sourceFiles = 'Source Files';
 
 /// Sidebar sections the user has collapsed.
 final _collapsedSectionsProvider = StateProvider<Set<String>>((ref) => {});

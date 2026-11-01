@@ -575,6 +575,68 @@ void main() {
     expect(container.read(chatRevealRequestProvider), 1);
   });
 
+  Future<void> pumpTwoQuestionQuiz(WidgetTester tester) async {
+    largeSurface(tester);
+    await tester.pumpWidget(
+      wrap(
+        const QuizView(quizId: 'quiz-1'),
+        overrides: [
+          quizProvider((
+            classId: _classId,
+            quizId: 'quiz-1',
+          )).overrideWith((ref) async => _quiz(twoQuestions: true)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('quiz keys move between questions and pick choices', (
+    tester,
+  ) async {
+    await pumpTwoQuestionQuiz(tester);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2 answered'), findsOneWidget);
+
+    // On the short answer, number keys pick nothing; back on question 1 they do.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    // A modifier means a shortcut, not an answer.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Submit anyway'));
+    await tester.pumpAndSettle();
+    expect(api.submitted.single['q1'], {'choice': 0});
+  });
+
+  testWidgets('quiz keys type into a focused answer field', (tester) async {
+    await pumpTwoQuestionQuiz(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(TextField));
+    await tester.enterText(find.byType(TextField), 'It finds the best path');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    expect(api.submitted.single, {
+      'q1': {'choice': 0},
+      'q2': {'text': 'It finds the best path'},
+    });
+  });
+
   testWidgets('a rating can be undone from its notice', (tester) async {
     largeSurface(tester);
     await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
@@ -37,6 +38,85 @@ class _QuizViewState extends ConsumerState<QuizView> {
   QuizAttempt? _attempt;
   bool _submitting = false;
   String? _grading;
+
+  /// The question the arrow and number keys act on.
+  int _current = 0;
+  final _focusNode = FocusNode();
+  final _cardKeys = <String, GlobalKey>{};
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  static const _digits = [
+    LogicalKeyboardKey.digit1,
+    LogicalKeyboardKey.digit2,
+    LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4,
+    LogicalKeyboardKey.digit5,
+    LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.digit7,
+    LogicalKeyboardKey.digit8,
+    LogicalKeyboardKey.digit9,
+  ];
+
+  /// Left/right move between questions; 1-9 pick a choice (1 = true, 2 = false
+  /// for true/false). Keys belong to a focused text field, and shortcuts with
+  /// a modifier to the app, so both are left alone.
+  KeyEventResult _onKey(Quiz quiz, KeyEvent event) {
+    if (event is! KeyDownEvent || quiz.questions.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isControlPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused?.findAncestorStateOfType<EditableTextState>() != null) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowLeft) {
+      final step = key == LogicalKeyboardKey.arrowRight ? 1 : -1;
+      _goTo(quiz, (_current + step).clamp(0, quiz.questions.length - 1));
+      return KeyEventResult.handled;
+    }
+    final digit = _digits.indexOf(key);
+    if (digit < 0 || _attempt != null) return KeyEventResult.ignored;
+    final question =
+        quiz.questions[_current.clamp(0, quiz.questions.length - 1)];
+    final response = switch (question.type) {
+      QuestionType.mcq when digit < question.options.length => {
+        'choice': digit,
+      },
+      QuestionType.trueFalse when digit < 2 => {'value': digit == 0},
+      _ => null,
+    };
+    if (response == null) return KeyEventResult.ignored;
+    _answer(question.id, response);
+    return KeyEventResult.handled;
+  }
+
+  void _goTo(Quiz quiz, int index) {
+    setState(() => _current = index);
+    final card = _cardKeys[quiz.questions[index].id]?.currentContext;
+    if (card != null) {
+      Scrollable.ensureVisible(
+        card,
+        alignment: 0.1,
+        duration: MediaQuery.of(context).disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 200),
+      );
+    }
+  }
 
   Future<void> _submit(String classId, Quiz quiz) async {
     final unanswered = quiz.questions
@@ -92,6 +172,7 @@ class _QuizViewState extends ConsumerState<QuizView> {
   void _retake() => setState(() {
     _answers.clear();
     _attempt = null;
+    _current = 0;
   });
 
   Future<void> _selfGrade(
@@ -157,7 +238,12 @@ class _QuizViewState extends ConsumerState<QuizView> {
           onRetry: () => ref.invalidate(quizProvider(key)),
         ),
       ),
-      data: (quiz) => _buildQuiz(context, classId, quiz),
+      data: (quiz) => Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: (_, event) => _onKey(quiz, event),
+        child: _buildQuiz(context, classId, quiz),
+      ),
     );
   }
 
@@ -265,11 +351,16 @@ class _QuizViewState extends ConsumerState<QuizView> {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 760),
                   child: _QuestionCard(
+                    key: _cardKeys.putIfAbsent(question.id, GlobalKey.new),
+                    current: index == _current,
                     number: index + 1,
                     question: question,
                     response: _answers[question.id],
                     result: results[question.id],
-                    onAnswer: (response) => _answer(question.id, response),
+                    onAnswer: (response) {
+                      _current = index;
+                      _answer(question.id, response);
+                    },
                     grading: _grading == question.id,
                     onSelfGrade: (correct) =>
                         _selfGrade(classId, quiz, question.id, correct),
@@ -286,6 +377,8 @@ class _QuizViewState extends ConsumerState<QuizView> {
 
 class _QuestionCard extends ConsumerWidget {
   const _QuestionCard({
+    super.key,
+    this.current = false,
     required this.number,
     required this.question,
     required this.response,
@@ -295,6 +388,8 @@ class _QuestionCard extends ConsumerWidget {
     this.grading = false,
   });
 
+  /// The question the keyboard acts on; outlined.
+  final bool current;
   final int number;
   final QuizQuestion question;
   final Map<String, dynamic>? response;
@@ -314,6 +409,14 @@ class _QuestionCard extends ConsumerWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: HypatiaTokens.corners,
+        side: current
+            ? BorderSide(
+                color: theme.colorScheme.primary.withValues(alpha: 0.6),
+              )
+            : BorderSide.none,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(

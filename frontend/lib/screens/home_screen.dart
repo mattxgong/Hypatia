@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/theme.dart';
 import '../providers/chat_provider.dart';
 import '../providers/class_provider.dart';
+import '../providers/layout_provider.dart';
 import '../providers/search_provider.dart';
 import '../providers/study_provider.dart';
 import '../providers/theme_provider.dart';
@@ -26,32 +27,7 @@ import '../widgets/study/flashcard_review.dart';
 import '../widgets/study/quiz_view.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
 
-// Panel layout is remembered across launches, like the theme.
-const _sidebarWidthKey = 'hypatia_layout_sidebar_width';
-const _chatWidthKey = 'hypatia_layout_chat_width';
-const _sidebarCollapsedKey = 'hypatia_layout_sidebar_collapsed';
-const _chatCollapsedKey = 'hypatia_layout_chat_collapsed';
-
-final _sidebarWidthProvider = StateProvider<double>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getDouble(_sidebarWidthKey) ?? 250,
-);
-final _chatPanelWidthProvider = StateProvider<double>(
-  (ref) => ref.read(sharedPreferencesProvider).getDouble(_chatWidthKey) ?? 350,
-);
-final _sidebarCollapsedProvider = StateProvider<bool>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getBool(_sidebarCollapsedKey) ??
-      false,
-);
-final _chatPanelCollapsedProvider = StateProvider<bool>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getBool(_chatCollapsedKey) ?? false,
-);
-
 const _minimumCenterWidth = 400.0;
-const _minimumSidebarWidth = 180.0;
-const _minimumChatWidth = 280.0;
 const _collapsedStripWidth = 32.0;
 
 /// Space a resize handle takes: a 1px line inside an easy-to-grab strip.
@@ -89,20 +65,19 @@ PanelWidths constrainPanelWidths({
     return PanelWidths(sidebar: math.min(sidebarWidth, sideBudget), chat: 0);
   }
 
-  final requestedSidebar = sidebarWidth.clamp(_minimumSidebarWidth, 400.0);
-  final requestedChat = chatWidth.clamp(_minimumChatWidth, 500.0);
-  const minimumTotal = _minimumSidebarWidth + _minimumChatWidth;
+  final requestedSidebar = sidebarWidth.clamp(minSidebarWidth, maxSidebarWidth);
+  final requestedChat = chatWidth.clamp(minChatWidth, maxChatWidth);
+  const minimumTotal = minSidebarWidth + minChatWidth;
   if (sideBudget < minimumTotal) {
     final scale = sideBudget / minimumTotal;
     return PanelWidths(
-      sidebar: _minimumSidebarWidth * scale,
-      chat: _minimumChatWidth * scale,
+      sidebar: minSidebarWidth * scale,
+      chat: minChatWidth * scale,
     );
   }
 
   final requestedExtra =
-      (requestedSidebar - _minimumSidebarWidth) +
-      (requestedChat - _minimumChatWidth);
+      (requestedSidebar - minSidebarWidth) + (requestedChat - minChatWidth);
   if (requestedSidebar + requestedChat <= sideBudget || requestedExtra == 0) {
     return PanelWidths(sidebar: requestedSidebar, chat: requestedChat);
   }
@@ -110,13 +85,11 @@ PanelWidths constrainPanelWidths({
   final availableExtra = sideBudget - minimumTotal;
   return PanelWidths(
     sidebar:
-        _minimumSidebarWidth +
-        availableExtra *
-            (requestedSidebar - _minimumSidebarWidth) /
-            requestedExtra,
+        minSidebarWidth +
+        availableExtra * (requestedSidebar - minSidebarWidth) / requestedExtra,
     chat:
-        _minimumChatWidth +
-        availableExtra * (requestedChat - _minimumChatWidth) / requestedExtra,
+        minChatWidth +
+        availableExtra * (requestedChat - minChatWidth) / requestedExtra,
   );
 }
 
@@ -141,30 +114,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _persistLayout() {
     final prefs = ref.read(sharedPreferencesProvider);
-    ref.listen(_sidebarCollapsedProvider, (_, collapsed) {
-      prefs.setBool(_sidebarCollapsedKey, collapsed);
+    ref.listen(sidebarCollapsedProvider, (_, collapsed) {
+      prefs.setBool(sidebarCollapsedKey, collapsed);
     });
-    ref.listen(_chatPanelCollapsedProvider, (_, collapsed) {
-      prefs.setBool(_chatCollapsedKey, collapsed);
+    ref.listen(chatPanelCollapsedProvider, (_, collapsed) {
+      prefs.setBool(chatCollapsedKey, collapsed);
     });
     // Widths change on every pointer move of a drag; save once it settles.
     void saveWidthsSoon() {
       _saveWidths?.cancel();
       _saveWidths = Timer(const Duration(milliseconds: 400), () {
-        prefs.setDouble(_sidebarWidthKey, ref.read(_sidebarWidthProvider));
-        prefs.setDouble(_chatWidthKey, ref.read(_chatPanelWidthProvider));
+        prefs.setDouble(sidebarWidthKey, ref.read(sidebarWidthProvider));
+        prefs.setDouble(chatWidthKey, ref.read(chatPanelWidthProvider));
       });
     }
 
-    ref.listen(_sidebarWidthProvider, (_, _) => saveWidthsSoon());
-    ref.listen(_chatPanelWidthProvider, (_, _) => saveWidthsSoon());
+    ref.listen(sidebarWidthProvider, (_, _) => saveWidthsSoon());
+    ref.listen(chatPanelWidthProvider, (_, _) => saveWidthsSoon());
   }
 
   @override
   Widget build(BuildContext context) {
     _persistLayout();
     ref.listen(chatRevealRequestProvider, (_, _) {
-      ref.read(_chatPanelCollapsedProvider.notifier).state = false;
+      ref.read(chatPanelCollapsedProvider.notifier).state = false;
     });
     ref.listen(sourceViewerRequestProvider, (prev, next) {
       if (next != null) {
@@ -183,16 +156,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ref.read(searchQueryProvider.notifier).state = '';
     });
     final studySelection = ref.watch(studySelectionProvider);
-    final sidebarWidth = ref.watch(_sidebarWidthProvider);
-    final chatWidth = ref.watch(_chatPanelWidthProvider);
-    final sidebarCollapsed = ref.watch(_sidebarCollapsedProvider);
-    final chatCollapsed = ref.watch(_chatPanelCollapsedProvider);
+    final sidebarWidth = ref.watch(sidebarWidthProvider);
+    final chatWidth = ref.watch(chatPanelWidthProvider);
+    final sidebarCollapsed = ref.watch(sidebarCollapsedProvider);
+    final chatCollapsed = ref.watch(chatPanelCollapsedProvider);
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         platformShortcut(LogicalKeyboardKey.keyK): () {
           if (sidebarCollapsed) {
-            ref.read(_sidebarCollapsedProvider.notifier).state = false;
+            ref.read(sidebarCollapsedProvider.notifier).state = false;
           }
           ref.read(searchBarFocusNodeProvider).requestFocus();
         },
@@ -200,11 +173,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           showCreateClassDialog(context, ref);
         },
         platformShortcut(LogicalKeyboardKey.keyB): () {
-          ref.read(_sidebarCollapsedProvider.notifier).state =
-              !sidebarCollapsed;
+          ref.read(sidebarCollapsedProvider.notifier).state = !sidebarCollapsed;
         },
         platformShortcut(LogicalKeyboardKey.keyJ): () {
-          ref.read(_chatPanelCollapsedProvider.notifier).state = !chatCollapsed;
+          ref.read(chatPanelCollapsedProvider.notifier).state = !chatCollapsed;
         },
         const SingleActivator(LogicalKeyboardKey.escape): () {
           final query = ref.read(searchQueryProvider);
@@ -231,15 +203,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         chatCollapsed: chatCollapsed,
                       );
                       void resizeSidebar(double delta) {
-                        final current = ref.read(_sidebarWidthProvider);
-                        ref.read(_sidebarWidthProvider.notifier).state =
-                            (current + delta).clamp(180, 400);
+                        final current = ref.read(sidebarWidthProvider);
+                        ref
+                            .read(sidebarWidthProvider.notifier)
+                            .state = (current + delta).clamp(
+                          minSidebarWidth,
+                          maxSidebarWidth,
+                        );
                       }
 
                       void resizeChat(double delta) {
-                        final current = ref.read(_chatPanelWidthProvider);
-                        ref.read(_chatPanelWidthProvider.notifier).state =
-                            (current + delta).clamp(280, 500);
+                        final current = ref.read(chatPanelWidthProvider);
+                        ref.read(chatPanelWidthProvider.notifier).state =
+                            (current + delta).clamp(minChatWidth, maxChatWidth);
                       }
 
                       return Row(
@@ -255,42 +231,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               onDrag: resizeSidebar,
                               onIncrease: () => resizeSidebar(16),
                               onDecrease: () => resizeSidebar(-16),
+                              onReset: () =>
+                                  ref
+                                          .read(sidebarWidthProvider.notifier)
+                                          .state =
+                                      defaultSidebarWidth,
                             ),
                           ] else
-                            _CollapsedPanelStrip(
-                              icon: Icons.menu,
-                              label: 'Show class sidebar',
-                              onTap: () =>
-                                  ref
-                                          .read(
-                                            _sidebarCollapsedProvider.notifier,
-                                          )
-                                          .state =
-                                      false,
-                            ),
+                            const _CollapsedSidebar(),
                           Expanded(
                             child: Column(
                               children: [
-                                _TopBar(
-                                  sidebarCollapsed: sidebarCollapsed,
-                                  chatCollapsed: chatCollapsed,
-                                  onToggleSidebar: () =>
-                                      ref
-                                              .read(
-                                                _sidebarCollapsedProvider
-                                                    .notifier,
-                                              )
-                                              .state =
-                                          !sidebarCollapsed,
-                                  onToggleChat: () =>
-                                      ref
-                                              .read(
-                                                _chatPanelCollapsedProvider
-                                                    .notifier,
-                                              )
-                                              .state =
-                                          !chatCollapsed,
-                                ),
+                                const _TopBar(),
                                 Expanded(
                                   child: switch (studySelection) {
                                     StudySelection(
@@ -323,6 +275,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               onDrag: (delta) => resizeChat(-delta),
                               onIncrease: () => resizeChat(16),
                               onDecrease: () => resizeChat(-16),
+                              onReset: () =>
+                                  ref
+                                          .read(chatPanelWidthProvider.notifier)
+                                          .state =
+                                      defaultChatWidth,
                             ),
                             SizedBox(
                               width: widths.chat,
@@ -335,8 +292,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               onTap: () =>
                                   ref
                                           .read(
-                                            _chatPanelCollapsedProvider
-                                                .notifier,
+                                            chatPanelCollapsedProvider.notifier,
                                           )
                                           .state =
                                       false,
@@ -449,17 +405,7 @@ class _DropOverlay extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.sidebarCollapsed,
-    required this.chatCollapsed,
-    required this.onToggleSidebar,
-    required this.onToggleChat,
-  });
-
-  final bool sidebarCollapsed;
-  final bool chatCollapsed;
-  final VoidCallback onToggleSidebar;
-  final VoidCallback onToggleChat;
+  const _TopBar();
 
   @override
   Widget build(BuildContext context) {
@@ -471,35 +417,7 @@ class _TopBar extends StatelessWidget {
         color: theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
         border: Border(bottom: BorderSide(color: theme.dividerColor)),
       ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(
-              sidebarCollapsed ? Icons.menu : Icons.menu_open,
-              size: 18,
-            ),
-            onPressed: onToggleSidebar,
-            tooltip: sidebarCollapsed
-                ? 'Show sidebar ($shortcutModifierLabel+B)'
-                : 'Hide sidebar ($shortcutModifierLabel+B)',
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          const Expanded(child: Center(child: ActivityStatus())),
-          IconButton(
-            icon: Icon(
-              chatCollapsed ? Icons.chat_bubble_outline : Icons.chat_bubble,
-              size: 18,
-            ),
-            onPressed: onToggleChat,
-            tooltip: chatCollapsed
-                ? 'Show chat ($shortcutModifierLabel+J)'
-                : 'Hide chat ($shortcutModifierLabel+J)',
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-        ],
-      ),
+      child: const Center(child: ActivityStatus()),
     );
   }
 }
@@ -511,6 +429,7 @@ class _DraggableDivider extends StatelessWidget {
     required this.onDrag,
     required this.onIncrease,
     required this.onDecrease,
+    required this.onReset,
     this.reverseKeyboardDirection = false,
   });
 
@@ -519,6 +438,9 @@ class _DraggableDivider extends StatelessWidget {
   final void Function(double dx) onDrag;
   final VoidCallback onIncrease;
   final VoidCallback onDecrease;
+
+  /// Back to the pane's default width (double-click).
+  final VoidCallback onReset;
   final bool reverseKeyboardDirection;
 
   @override
@@ -547,6 +469,7 @@ class _DraggableDivider extends StatelessWidget {
           cursor: SystemMouseCursors.resizeColumn,
           child: GestureDetector(
             onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+            onDoubleTap: onReset,
             child: Container(
               width: _dividerWidth,
               color: Colors.transparent,
@@ -587,6 +510,43 @@ class _CollapsedPanelStrip extends StatelessWidget {
               child: Center(child: Icon(icon, size: 18)),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CollapsedSidebar extends ConsumerWidget {
+  const _CollapsedSidebar();
+
+  static const _sections = [
+    (SidebarSection.wiki, Icons.menu_book_outlined, 'Wiki'),
+    (SidebarSection.sources, Icons.folder_outlined, 'Source files'),
+    (SidebarSection.study, Icons.school_outlined, 'Study'),
+    (SidebarSection.search, Icons.search, 'Search'),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: SizedBox(
+        width: _collapsedStripWidth,
+        child: Column(
+          children: [
+            const SizedBox(height: 4),
+            for (final (section, icon, label) in _sections)
+              IconButton(
+                icon: Icon(icon, size: 18),
+                tooltip: label,
+                onPressed: () => showSidebarSection(ref, section),
+                constraints: const BoxConstraints(
+                  minWidth: _collapsedStripWidth,
+                  minHeight: 40,
+                ),
+                padding: EdgeInsets.zero,
+              ),
+          ],
         ),
       ),
     );
