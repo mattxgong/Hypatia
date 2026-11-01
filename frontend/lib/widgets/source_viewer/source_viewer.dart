@@ -78,7 +78,6 @@ class SourceViewerDialog extends ConsumerWidget {
                       _formatLocation(request.location),
                       style: theme.textTheme.labelSmall,
                     ),
-                    visualDensity: VisualDensity.compact,
                     padding: EdgeInsets.zero,
                   ),
                 const SizedBox(width: 8),
@@ -139,7 +138,9 @@ class _SourceContent extends ConsumerWidget {
 
     return fileAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: ErrorCard(error: e)),
+      error: (e, _) => Center(
+        child: SingleChildScrollView(child: ErrorCard(error: e)),
+      ),
       data: (file) {
         if (file == null) {
           return const Center(child: Text('File not found'));
@@ -397,7 +398,11 @@ class _TextViewerState extends ConsumerState<_TextViewer> {
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: ErrorCard(error: snapshot.error!));
+          return Center(
+            child: SingleChildScrollView(
+              child: ErrorCard(error: snapshot.error!),
+            ),
+          );
         }
         final lines = (snapshot.data ?? '').split('\n');
         _target ??= citedLineIndex(lines, widget.location);
@@ -543,7 +548,11 @@ class _ConvertedSourceDialog extends ConsumerWidget {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: ErrorCard(error: snapshot.error!));
+                  return Center(
+                    child: SingleChildScrollView(
+                      child: ErrorCard(error: snapshot.error!),
+                    ),
+                  );
                 }
                 return Markdown(
                   data: stripFrontmatter(snapshot.data ?? ''),

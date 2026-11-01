@@ -61,6 +61,19 @@ class HypatiaTokens extends ThemeExtension<HypatiaTokens> {
   static final BorderRadius cornersLarge = BorderRadius.circular(radiusLarge);
   static final BorderRadius cornersPill = BorderRadius.circular(radiusPill);
 
+  /// Whether controls should be finger-sized: true on Android and iOS, where
+  /// the theme pads tap targets to 48 dp, and false on desktop, which keeps
+  /// the compact sizes a mouse can hit.
+  static bool touch(BuildContext context) =>
+      Theme.of(context).materialTapTargetSize == MaterialTapTargetSize.padded;
+
+  /// Minimum size for a small icon button: [desktop] with a mouse, 48 dp on a
+  /// touch screen.
+  static BoxConstraints iconButtonSize(BuildContext context, double desktop) {
+    final size = touch(context) ? kMinInteractiveDimension : desktop;
+    return BoxConstraints(minWidth: size, minHeight: size);
+  }
+
   /// Body text, headings.
   final Color textPrimary;
 

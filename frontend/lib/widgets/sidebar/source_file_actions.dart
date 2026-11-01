@@ -5,11 +5,13 @@ import '../../models/source_file.dart';
 import '../../providers/file_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../../services/api_client.dart';
+import '../common/action_menu.dart';
 import '../source_viewer/source_viewer.dart';
 
 enum _FileAction { open, retry, delete }
 
-/// The right-click (or long-press) menu of a source file in the sidebar.
+/// The right-click (or long-press) menu of a source file: a bottom sheet on a
+/// phone.
 Future<void> showSourceFileMenu(
   BuildContext context,
   WidgetRef ref,
@@ -17,39 +19,27 @@ Future<void> showSourceFileMenu(
   SourceFile file,
   Offset position,
 ) async {
-  final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
-  final action = await showMenu<_FileAction>(
-    context: context,
-    position: RelativeRect.fromRect(
-      position & const Size(1, 1),
-      Offset.zero & overlay.size,
-    ),
+  final action = await showActionMenu<_FileAction>(
+    context,
+    title: file.originalFilename,
+    position: position,
     items: [
-      PopupMenuItem(
+      ActionMenuItem(
         value: _FileAction.open,
+        icon: Icons.open_in_new,
+        label: 'Open',
         enabled: file.convertedPath != null,
-        child: const ListTile(
-          leading: Icon(Icons.open_in_new),
-          title: Text('Open'),
-          dense: true,
-        ),
       ),
       if (file.status == FileStatus.error)
-        const PopupMenuItem(
+        const ActionMenuItem(
           value: _FileAction.retry,
-          child: ListTile(
-            leading: Icon(Icons.refresh),
-            title: Text('Retry'),
-            dense: true,
-          ),
+          icon: Icons.refresh,
+          label: 'Retry',
         ),
-      const PopupMenuItem(
+      const ActionMenuItem(
         value: _FileAction.delete,
-        child: ListTile(
-          leading: Icon(Icons.delete_outline),
-          title: Text('Delete…'),
-          dense: true,
-        ),
+        icon: Icons.delete_outline,
+        label: 'Delete…',
       ),
     ],
   );

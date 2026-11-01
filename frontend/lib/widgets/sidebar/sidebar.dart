@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../providers/backend_provider.dart';
 import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
@@ -39,10 +40,7 @@ class Sidebar extends ConsumerWidget {
                   tooltip: 'Hide sidebar ($shortcutModifierLabel+B)',
                   onPressed: () =>
                       ref.read(sidebarCollapsedProvider.notifier).state = true,
-                  constraints: const BoxConstraints(
-                    minWidth: 36,
-                    minHeight: 36,
-                  ),
+                  constraints: HypatiaTokens.iconButtonSize(context, 36),
                 ),
               ],
             ),
@@ -63,10 +61,6 @@ class Sidebar extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: SegmentedButton<SidebarMode>(
                 showSelectedIcon: false,
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
                 segments: const [
                   ButtonSegment(
                     value: SidebarMode.wiki,
@@ -127,10 +121,7 @@ class Sidebar extends ConsumerWidget {
                   tooltip: 'Toggle theme',
                   iconSize: 18,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
+                  constraints: HypatiaTokens.iconButtonSize(context, 32),
                 ),
                 // Only the desktop app, which runs the backend, offers it.
                 if (ref.watch(backendLauncherProvider) != null)
@@ -140,10 +131,7 @@ class Sidebar extends ConsumerWidget {
                     tooltip: 'Remote access',
                     iconSize: 18,
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
+                    constraints: HypatiaTokens.iconButtonSize(context, 32),
                   ),
                 const Spacer(),
                 const TaskIndicator(),

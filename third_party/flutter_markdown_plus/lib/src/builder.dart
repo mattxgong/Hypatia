@@ -445,7 +445,11 @@ class MarkdownBuilder implements md.NodeVisitor {
           );
         }
       } else if (tag == 'table') {
-        if (styleSheet.tableColumnWidth is FixedColumnWidth || styleSheet.tableColumnWidth is IntrinsicColumnWidth) {
+        // Hypatia patch: MinColumnWidth (content width, capped) scrolls too, so
+        // a wide table scrolls sideways on a phone instead of crushing columns.
+        if (styleSheet.tableColumnWidth is FixedColumnWidth ||
+            styleSheet.tableColumnWidth is IntrinsicColumnWidth ||
+            styleSheet.tableColumnWidth is MinColumnWidth) {
           child = _ScrollControllerBuilder(
             builder: (BuildContext context, ScrollController tableScrollController, Widget? child) {
               return Scrollbar(

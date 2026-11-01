@@ -26,3 +26,8 @@ WindowSizeClass windowSizeClassFor(double width) {
 /// and a resized desktop window, change it while the app runs.
 WindowSizeClass windowSizeClassOf(BuildContext context) =>
     windowSizeClassFor(MediaQuery.sizeOf(context).width);
+
+/// Below this, a pane (not the window) is too narrow for a header's row of
+/// labelled buttons, which then fold into a menu. A medium layout's panes and
+/// a phone's screen both get there.
+const narrowPaneWidth = 480.0;

@@ -115,9 +115,11 @@ class _ChatBody extends ConsumerWidget {
     return messagesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: ErrorCard(
-          error: e,
-          onRetry: () => ref.invalidate(chatMessagesProvider(classId!)),
+        child: SingleChildScrollView(
+          child: ErrorCard(
+            error: e,
+            onRetry: () => ref.invalidate(chatMessagesProvider(classId!)),
+          ),
         ),
       ),
       data: (messages) {
@@ -129,6 +131,8 @@ class _ChatBody extends ConsumerWidget {
         return ListView.builder(
           padding: const EdgeInsets.all(12),
           reverse: true,
+          // Scrolling back through the chat puts the keyboard away.
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           itemCount: itemCount,
           itemBuilder: (context, index) {
             if (index == 0 && streaming) {
@@ -201,14 +205,14 @@ class _ChatHeader extends StatelessWidget {
             onPressed: () => _showCommandReference(context),
             tooltip: 'Command reference',
             iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            constraints: HypatiaTokens.iconButtonSize(context, 40),
           ),
           IconButton(
             icon: const Icon(Icons.delete_sweep_outlined, size: 18),
             onPressed: onClearHistory,
             tooltip: 'Clear chat history',
             iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            constraints: HypatiaTokens.iconButtonSize(context, 40),
           ),
           if (onHide != null)
             IconButton(
@@ -216,7 +220,7 @@ class _ChatHeader extends StatelessWidget {
               onPressed: onHide,
               tooltip: 'Hide chat ($shortcutModifierLabel+J)',
               iconSize: 18,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              constraints: HypatiaTokens.iconButtonSize(context, 40),
             ),
         ],
       ),

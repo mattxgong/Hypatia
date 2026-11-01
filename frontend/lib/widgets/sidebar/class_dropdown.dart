@@ -127,7 +127,6 @@ class ClassDropdown extends ConsumerWidget {
                 icon: const Icon(Icons.settings_outlined, size: 20),
                 tooltip: 'Class settings',
                 onPressed: () => openClassSettings(context, selectedId),
-                visualDensity: VisualDensity.compact,
               ),
             if (showActions) const HypatiaAboutButton(),
           ],

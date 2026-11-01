@@ -73,8 +73,11 @@ void main() {
   late _FakeApi api;
   late _FakeLauncher launcher;
 
-  Future<void> open(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1200, 1400);
+  Future<void> open(
+    WidgetTester tester, {
+    Size size = const Size(1200, 1400),
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -160,6 +163,15 @@ void main() {
     expect(find.byType(QrImageView), findsNothing);
     expect(find.text('Device paired.'), findsOneWidget);
     expect(find.text('Pixel 9'), findsOneWidget);
+  });
+
+  testWidgets('the pairing code and QR fit a phone screen', (tester) async {
+    api = _FakeApi(status: _on);
+    await open(tester, size: const Size(390, 844));
+    await tester.tap(find.text('Pair a device'));
+    await tester.pump();
+    expect(find.byType(QrImageView), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the toggle restarts the backend with the new setting', (

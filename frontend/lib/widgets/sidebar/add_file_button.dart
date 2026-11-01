@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/upload_provider.dart';
 
@@ -137,7 +138,7 @@ class _UploadProgressIndicator extends StatelessWidget {
                 onPressed: () =>
                     ref.read(uploadProgressProvider.notifier).cancel(),
                 tooltip: 'Cancel upload',
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                constraints: HypatiaTokens.iconButtonSize(context, 40),
               ),
             ],
           ),

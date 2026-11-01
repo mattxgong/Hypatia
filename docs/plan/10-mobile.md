@@ -541,6 +541,36 @@ and Back handling, and builds one of `screens/home/{compact,medium,expanded}_lay
   tables. Left for W15: touch-friendly expanded dividers, the side-by-side source viewer, and
   a physical or emulated tablet run.
 
+**Done (2026-11-01, W14: screen by screen).**
+- **Tap targets follow the platform.** The theme is left at its adaptive defaults (compact
+  density and shrink-wrapped targets on desktop, standard and padded on Android and iOS). The
+  hard-coded `VisualDensity.compact` and shrink-wraps are gone, so desktop looks the same and
+  phone rows reach 48 dp. Small icon buttons use `HypatiaTokens.iconButtonSize(context, n)`:
+  `n` with a mouse, 48 on touch. `HypatiaTokens.touch(context)` is the one check, read from
+  the theme, so a test picks the platform with `TargetPlatformVariant`.
+- **Flashcards:** on touch, four full-width 56 dp rating buttons without the keyboard hints,
+  a full-width Show answer button, and swipe-to-rate (left Again, right Good). The swipe reads
+  raw pointers, because the card's selectable text would otherwise win every horizontal drag.
+- **Headers fold in narrow panes** (`narrowPaneWidth`, 480, measured on the pane, since a
+  medium layout's panes get that narrow too). The deck header's actions go into a menu, the
+  graded quiz's buttons become icons, padding shrinks, and a quiz question's result badge
+  wraps under its title.
+- **Wide content:** tables size columns to content up to 320 dp and scroll sideways (a second
+  patch to the vendored markdown builder). Display math already scrolled.
+- **Chat:** scrolling the history dismisses the keyboard; the input stays above it (tested
+  with a 320 dp inset); on touch there's no "Enter to send" hint, since a phone's Enter makes
+  a new line, and sentences capitalise.
+- **Sheets:** a long-pressed source file opens a bottom sheet on a phone (`showActionMenu`
+  in `widgets/common/action_menu.dart`) and a menu elsewhere.
+- **Fixes the phone-size tests found:** centred error cards overflowed short panes and now
+  scroll; the AI provider dialog's title and Test Connection row overflowed; the class
+  settings usage stats now wrap.
+- No hover-only controls were found: every tooltip's control also works by tap, and file
+  actions have long-press.
+- Tests: `test/phone_screens_test.dart` (wide table, row heights on touch and desktop, sheet
+  vs menu, keyboard inset, every tab with content), plus phone cases in the study, provider
+  dialog and remote access tests. Two desktop review tests now pin `TargetPlatform.windows`.
+
 ### 10.13 Capture on mobile
 
 - **Files**: `file_picker` works on mobile. On iOS it copies the picked file into the app's

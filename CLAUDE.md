@@ -112,7 +112,8 @@ frontend/            Flutter application
       remote/          Remote access dialog (desktop): toggle, addresses, pairing
                        QR, paired devices; opened from the sidebar footer
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
-                       status strip + file finished/failed notices; pane_divider.dart)
+                       status strip + file finished/failed notices; pane_divider.dart;
+                       action_menu.dart: menu, or bottom sheet on a phone)
   android/, ios/       Mobile targets (Phase 10), app ID com.mattxgong.hypatia.
                        compileSdk is 37 for the app and, via android/build.gradle.kts,
                        for every plugin (some still declare older SDKs)
@@ -127,8 +128,9 @@ scripts/
   run_dev.sh          Runs backend (uvicorn --reload) and frontend (flutter run) together
 spikes/               Early technical spikes/prototypes (Phase 0.5), not part of the app
 third_party/
-  flutter_markdown_plus/  Vendored 1.0.12 (lib/ only) with a "Hypatia patch" in
-                      builder.dart so tall inline math grows its line; see its pubspec.yaml
+  flutter_markdown_plus/  Vendored 1.0.12 (lib/ only) with two "Hypatia patch"es in
+                      builder.dart: tall inline math grows its line, and MinColumnWidth
+                      tables scroll sideways; see its pubspec.yaml
 .github/workflows/    CI (ci.yml), nightly (nightly.yml), manual (manual.yml),
                       release (release.yml), shared desktop packaging (build-desktop.yml)
 ```
@@ -348,6 +350,11 @@ are persisted via `backend/app/services/settings_store.py` to
 **Dart (frontend)**:
 - Formatted with `dart format` and linted with `flutter analyze`, using the
   standard Flutter/Dart lint set (see `frontend/analysis_options.yaml`).
+- Don't hard-code `VisualDensity.compact` or small button constraints: the
+  theme's adaptive density keeps desktop compact and makes touch targets 48 dp.
+  Use `HypatiaTokens.iconButtonSize` / `HypatiaTokens.touch`. Widget tests run
+  as Android (touch) by default; pin desktop behaviour with
+  `TargetPlatformVariant.only(TargetPlatform.windows)`.
 
 ## Testing and quality checks
 

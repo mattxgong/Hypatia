@@ -137,7 +137,6 @@ class _JobTile extends ConsumerWidget {
     final progress = job.progress;
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       leading: error != null
           ? Icon(Icons.error_outline, size: 18, color: theme.colorScheme.error)
           : const SizedBox(
@@ -167,7 +166,6 @@ class _JobTile extends ConsumerWidget {
           size: 16,
         ),
         tooltip: error == null ? 'Cancel' : 'Dismiss',
-        visualDensity: VisualDensity.compact,
         onPressed: () => error == null
             ? notifier.cancel(job.taskId)
             : notifier.dismiss(job.taskId),
@@ -255,7 +253,6 @@ class _DeckTile extends ConsumerWidget {
     final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       selected: selected,
       selectedTileColor: theme.colorScheme.primaryContainer.withValues(
         alpha: 0.3,
@@ -315,7 +312,6 @@ class _QuizTile extends ConsumerWidget {
         : 'last ${formatScore(last)}/${formatScore(lastMax)}';
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       selected: selected,
       selectedTileColor: theme.colorScheme.primaryContainer.withValues(
         alpha: 0.3,
@@ -338,7 +334,6 @@ class _QuizTile extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.delete_outline, size: 16),
             tooltip: 'Delete quiz',
-            visualDensity: VisualDensity.compact,
             onPressed: () => deleteQuiz(context, ref, quiz),
           ),
         ],

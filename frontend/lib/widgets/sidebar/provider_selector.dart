@@ -95,7 +95,7 @@ class ProviderSelector extends ConsumerWidget {
           tooltip: 'Configure provider',
           iconSize: 18,
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          constraints: HypatiaTokens.iconButtonSize(context, 32),
         ),
       ],
     );
@@ -153,7 +153,7 @@ class ConnectionStatusIndicator extends ConsumerWidget {
           : () => ref.invalidate(llmConnectionStatusProvider),
       tooltip: tooltip,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      constraints: HypatiaTokens.iconButtonSize(context, 32),
     );
   }
 }

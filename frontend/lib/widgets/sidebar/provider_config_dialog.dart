@@ -322,7 +322,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
         children: [
           ProviderIcon(providerId: widget.providerId, size: 24),
           const SizedBox(width: 10),
-          Text(_title),
+          Flexible(child: Text(_title)),
         ],
       ),
       content: SizedBox(
@@ -464,16 +464,19 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: _testing ? null : _testConnection,
-                    icon: _testing
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.wifi_tethering, size: 16),
-                    label: const Text('Test Connection'),
+                  // Flexible: a phone's dialog is narrower than the button.
+                  Flexible(
+                    child: OutlinedButton.icon(
+                      onPressed: _testing ? null : _testConnection,
+                      icon: _testing
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi_tethering, size: 16),
+                      label: const Text('Test Connection'),
+                    ),
                   ),
                   if (_testResult != null) ...[
                     const SizedBox(width: 8),

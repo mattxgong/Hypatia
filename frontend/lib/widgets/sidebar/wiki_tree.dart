@@ -212,7 +212,6 @@ class _CategoryHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
       leading: Icon(icon, size: 18),
       title: Text(
@@ -244,7 +243,6 @@ class _PageTile extends StatelessWidget {
     final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       selected: isSelected,
       selectedTileColor: theme.colorScheme.primaryContainer.withValues(
         alpha: 0.3,
@@ -305,7 +303,6 @@ class _FileTile extends StatelessWidget {
     );
     final tile = ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       title: Text(
         file.originalFilename,
         style: theme.textTheme.bodySmall,

@@ -8,6 +8,7 @@ import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/window_size.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
 import 'flashcard_review.dart' show studyMarkdownStyle;
@@ -233,9 +234,11 @@ class _QuizViewState extends ConsumerState<QuizView> {
     return quizAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: ErrorCard(
-          error: e,
-          onRetry: () => ref.invalidate(quizProvider(key)),
+        child: SingleChildScrollView(
+          child: ErrorCard(
+            error: e,
+            onRetry: () => ref.invalidate(quizProvider(key)),
+          ),
         ),
       ),
       data: (quiz) => Focus(
@@ -266,111 +269,135 @@ class _QuizViewState extends ConsumerState<QuizView> {
         .where((q) => _isAnswered(_answers[q.id]))
         .length;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: theme.dividerColor)),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.quiz_outlined, size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(quiz.summary.name, style: theme.textTheme.titleMedium),
-                    Text(
-                      attempt == null
-                          ? '$answered of ${quiz.questions.length} answered'
-                          : 'Score: ${formatScore(attempt.score)} / '
-                                '${formatScore(attempt.maxScore)}',
-                      style: theme.textTheme.bodySmall,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A phone-width pane: icon buttons in the header, less padding.
+        final narrow = constraints.maxWidth < narrowPaneWidth;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: narrow ? 16 : 24,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: theme.dividerColor)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.quiz_outlined, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          quiz.summary.name,
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        Text(
+                          attempt == null
+                              ? '$answered of ${quiz.questions.length} answered'
+                              : 'Score: ${formatScore(attempt.score)} / '
+                                    '${formatScore(attempt.maxScore)}',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (attempt == null)
+                    FilledButton(
+                      onPressed: _submitting || answered == 0
+                          ? null
+                          : () => _submit(classId, quiz),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Submit'),
+                    )
+                  else if (narrow) ...[
+                    if (attempt.results.any(isMistake))
+                      IconButton.filledTonal(
+                        onPressed: () => _reviewMistakes(classId, attempt),
+                        icon: const Icon(Icons.school_outlined),
+                        tooltip: 'Review my mistakes',
+                      ),
+                    IconButton.outlined(
+                      onPressed: _retake,
+                      icon: const Icon(Icons.replay),
+                      tooltip: 'Retake',
+                    ),
+                  ] else ...[
+                    if (attempt.results.any(isMistake)) ...[
+                      FilledButton.tonalIcon(
+                        onPressed: () => _reviewMistakes(classId, attempt),
+                        icon: const Icon(Icons.school_outlined, size: 16),
+                        label: const Text('Review my mistakes'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    OutlinedButton.icon(
+                      onPressed: _retake,
+                      icon: const Icon(Icons.replay, size: 16),
+                      label: const Text('Retake'),
                     ),
                   ],
-                ),
-              ),
-              if (attempt == null)
-                FilledButton(
-                  onPressed: _submitting || answered == 0
-                      ? null
-                      : () => _submit(classId, quiz),
-                  child: _submitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Submit'),
-                )
-              else ...[
-                if (attempt.results.any(isMistake)) ...[
-                  FilledButton.tonalIcon(
-                    onPressed: () => _reviewMistakes(classId, attempt),
-                    icon: const Icon(Icons.school_outlined, size: 16),
-                    label: const Text('Review my mistakes'),
-                  ),
-                  const SizedBox(width: 8),
                 ],
-                OutlinedButton.icon(
-                  onPressed: _retake,
-                  icon: const Icon(Icons.replay, size: 16),
-                  label: const Text('Retake'),
-                ),
-              ],
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: quiz.questions.length + (attempt == null ? 0 : 1),
-            itemBuilder: (context, index) {
-              if (attempt != null) {
-                if (index == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    child: SessionSummary(
-                      score: attempt.score,
-                      maxScore: attempt.maxScore,
-                      weak: weakPages(
-                        quiz.questions
-                            .where((q) => (results[q.id]?.score ?? 0) < 0.5)
-                            .map((q) => q.pagePaths),
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.all(narrow ? 12 : 24),
+                itemCount: quiz.questions.length + (attempt == null ? 0 : 1),
+                itemBuilder: (context, index) {
+                  if (attempt != null) {
+                    if (index == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        child: SessionSummary(
+                          score: attempt.score,
+                          maxScore: attempt.maxScore,
+                          weak: weakPages(
+                            quiz.questions
+                                .where((q) => (results[q.id]?.score ?? 0) < 0.5)
+                                .map((q) => q.pagePaths),
+                          ),
+                        ),
+                      );
+                    }
+                    index--;
+                  }
+                  final question = quiz.questions[index];
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 760),
+                      child: _QuestionCard(
+                        key: _cardKeys.putIfAbsent(question.id, GlobalKey.new),
+                        current: index == _current,
+                        number: index + 1,
+                        question: question,
+                        response: _answers[question.id],
+                        result: results[question.id],
+                        onAnswer: (response) {
+                          _current = index;
+                          _answer(question.id, response);
+                        },
+                        grading: _grading == question.id,
+                        onSelfGrade: (correct) =>
+                            _selfGrade(classId, quiz, question.id, correct),
                       ),
                     ),
                   );
-                }
-                index--;
-              }
-              final question = quiz.questions[index];
-              return Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 760),
-                  child: _QuestionCard(
-                    key: _cardKeys.putIfAbsent(question.id, GlobalKey.new),
-                    current: index == _current,
-                    number: index + 1,
-                    question: question,
-                    response: _answers[question.id],
-                    result: results[question.id],
-                    onAnswer: (response) {
-                      _current = index;
-                      _answer(question.id, response);
-                    },
-                    grading: _grading == question.id,
-                    onSelfGrade: (correct) =>
-                        _selfGrade(classId, quiz, question.id, correct),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -422,24 +449,35 @@ class _QuestionCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
+            // The result goes under the title when a phone has no room
+            // beside it.
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: [
                 Text(
                   'Question $number · ${question.type.label} · '
                   '${question.points} ${question.points == 1 ? 'point' : 'points'}',
                   style: theme.textTheme.labelMedium,
                 ),
-                const Spacer(),
-                if (question.stale)
-                  Tooltip(
-                    message: 'The wiki page behind this question has changed',
-                    child: Icon(
-                      Icons.update,
-                      size: 16,
-                      color: theme.colorScheme.tertiary,
-                    ),
-                  ),
-                if (result != null) _ResultBadge(result: result),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (question.stale)
+                      Tooltip(
+                        message:
+                            'The wiki page behind this question has changed',
+                        child: Icon(
+                          Icons.update,
+                          size: 16,
+                          color: theme.colorScheme.tertiary,
+                        ),
+                      ),
+                    if (result != null) _ResultBadge(result: result),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 8),

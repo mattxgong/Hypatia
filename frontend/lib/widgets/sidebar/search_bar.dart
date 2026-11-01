@@ -87,7 +87,6 @@ class SearchModeSelector extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: SegmentedButton<String>(
         style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
           textStyle: WidgetStatePropertyAll(theme.textTheme.labelSmall),
           padding: const WidgetStatePropertyAll(
             EdgeInsets.symmetric(horizontal: 8),
@@ -138,7 +137,6 @@ class SearchCategoryFilter extends ConsumerWidget {
             onSelected: (_) {
               ref.read(searchCategoryProvider.notifier).state = value;
             },
-            visualDensity: VisualDensity.compact,
             labelStyle: const TextStyle(fontSize: 11),
             padding: EdgeInsets.zero,
           );
@@ -208,7 +206,6 @@ class SearchResults extends ConsumerWidget {
             final result = results[index];
             return ListTile(
               dense: true,
-              visualDensity: VisualDensity.compact,
               title: Row(
                 children: [
                   Expanded(

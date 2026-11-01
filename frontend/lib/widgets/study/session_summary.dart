@@ -123,7 +123,6 @@ class SessionSummary extends ConsumerWidget {
                 if ((ratings[rating] ?? 0) > 0)
                   Chip(
                     label: Text('${_ratingLabel(rating)}: ${ratings[rating]}'),
-                    visualDensity: VisualDensity.compact,
                   ),
             ],
           ),

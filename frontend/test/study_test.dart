@@ -26,6 +26,9 @@ import 'package:frontend/widgets/study/session_summary.dart';
 
 const _classId = 'class-1';
 
+/// Keyboard hints and compact controls: what a desktop shows.
+final _desktop = TargetPlatformVariant.only(TargetPlatform.windows);
+
 Flashcard _card(String id, String front, String back, {CardType? type}) =>
     Flashcard.fromJson({
       'id': id,
@@ -434,7 +437,7 @@ void main() {
     expect(find.text('No misses this time.'), findsOneWidget);
     expect(find.text('2 more cards are due now.'), findsOneWidget);
     expect(find.text('Keep studying'), findsOneWidget);
-  });
+  }, variant: _desktop);
 
   testWidgets('a session of misses points at the pages to revisit', (
     tester,
@@ -653,7 +656,7 @@ void main() {
     expect(api.reviews, [('c1', ReviewRating.good)]);
     expect(api.undos, ['c1']);
     expect(find.text('What is entropy?'), findsOneWidget);
-  });
+  }, variant: _desktop);
 
   Widget quizWrap({ValueNotifier<bool>? shown, bool twoQuestions = false}) =>
       wrap(
@@ -921,6 +924,98 @@ void main() {
     expect(shortApi.selfGrades.single, {'q1': true});
     expect(find.text('Score: 1 / 1'), findsOneWidget);
     expect(find.text('I got it right'), findsNothing);
+  });
+
+  group('on a phone', () {
+    void phoneSurface(WidgetTester tester) {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    testWidgets('ratings are large buttons, and a swipe rates too', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      final good = find.widgetWithText(OutlinedButton, 'Good');
+      expect(tester.getSize(good).height, greaterThanOrEqualTo(56));
+      await tester.tap(good);
+      await tester.pumpAndSettle();
+      expect(api.reviews, [('c1', ReviewRating.good)]);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      // A swipe that starts on the (selectable) card text.
+      await tester.fling(
+        find.text('The [...] algorithm decodes.'),
+        const Offset(-300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(api.reviews.last, ('c2', ReviewRating.again));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the deck header folds its actions into a menu', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Browse cards'), findsNothing);
+      await tester.tap(find.byTooltip('Deck actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Update from wiki'), findsOneWidget);
+      await tester.tap(find.text('Browse cards'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Deck actions'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a graded quiz fits, with icon buttons in its header', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      api.resultScore = 0;
+      await tester.pumpWidget(quizWrap());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('A tokenizer'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Submit'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Retake'), findsOneWidget);
+      expect(find.byTooltip('Review my mistakes'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the generate dialog fits a phone', (tester) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(
+        wrap(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showGenerateStudyDialog(
+                context,
+                kind: StudyMaterialKind.quiz,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+          aiConnected: true,
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 

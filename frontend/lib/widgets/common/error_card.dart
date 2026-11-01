@@ -65,7 +65,6 @@ class ErrorCard extends StatelessWidget {
               icon: const Icon(Icons.refresh, size: 16),
               onPressed: onRetry,
               tooltip: 'Retry',
-              visualDensity: VisualDensity.compact,
             ),
           ],
         ],

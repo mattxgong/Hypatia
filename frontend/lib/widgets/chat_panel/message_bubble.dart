@@ -100,7 +100,6 @@ class MessageBubble extends ConsumerWidget {
                             ),
                             label: Text(title),
                             tooltip: 'Open $title',
-                            visualDensity: VisualDensity.compact,
                             onPressed: () =>
                                 ref
                                         .read(
