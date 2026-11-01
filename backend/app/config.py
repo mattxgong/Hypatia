@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # connect (Phase 10). Requires api_token; any Host header is then accepted,
     # since LAN and Tailscale addresses vary and every request needs a token.
     remote_access_enabled: bool = False
+    # The HTTPS port phones use; set by `python -m app.serve`.
+    remote_port: int | None = None
     # Exit when stdin closes. The desktop app holds the other end of the pipe,
     # so the backend can't outlive it even if the app crashes or is killed.
     exit_on_stdin_close: bool = False

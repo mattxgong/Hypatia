@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -9,12 +10,19 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_session
 from app.errors import ErrorCode, HypatiaError, ResourceNotFoundError
 from app.models.db_models import Device
-from app.models.schemas import DeviceRead, PairingCodeRead, PairRequest, PairResponse
+from app.models.schemas import (
+    DeviceRead,
+    PairingCodeRead,
+    PairRequest,
+    PairResponse,
+    RemoteAccessRead,
+)
 from app.security import require_local_client
-from app.services import device_auth
+from app.services import device_auth, remote_access
 from app.utils.logging import get_logger
 
 logger = get_logger()
@@ -31,7 +39,35 @@ async def create_pairing_code() -> PairingCodeRead:
     """Only the desktop app may offer a code, so a lost phone can't pair others."""
     code, expires_at = device_auth.pairing_codes.issue()
     logger.info("pairing_code_issued")
-    return PairingCodeRead(code=code, expires_at=expires_at)
+    status = await _remote_status()
+    return PairingCodeRead(
+        code=code, expires_at=expires_at, urls=status.urls, cert_sha256=status.cert_sha256
+    )
+
+
+@router.get(
+    "/remote-access",
+    response_model=RemoteAccessRead,
+    dependencies=[Depends(require_local_client)],
+)
+async def get_remote_access() -> RemoteAccessRead:
+    """Whether phones can connect, and the addresses and fingerprint they'd use."""
+    return await _remote_status()
+
+
+async def _remote_status() -> RemoteAccessRead:
+    port = settings.remote_port
+    if not settings.remote_access_enabled or port is None:
+        return RemoteAccessRead(enabled=False, port=None, urls=[], cert_sha256=None)
+    cert_path, _ = remote_access.cert_paths(settings.data_dir)
+    # Address detection may run the Tailscale CLI.
+    urls = await asyncio.to_thread(remote_access.pairing_urls, port)
+    return RemoteAccessRead(
+        enabled=True,
+        port=port,
+        urls=urls,
+        cert_sha256=remote_access.fingerprint(cert_path) if cert_path.exists() else None,
+    )
 
 
 @router.post("/pair", response_model=PairResponse, status_code=status.HTTP_201_CREATED)

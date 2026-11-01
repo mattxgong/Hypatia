@@ -297,15 +297,25 @@ void main() {
   });
 
   group('Remote access', () {
-    test('binds to loopback unless remote access is on', () {
+    test('adds the phone listener only when remote access is on', () {
       expect(
-        BackendLauncher.uvicornArgs(8001, remote: false),
-        containsAllInOrder(['--host', '127.0.0.1', '--port', '8001']),
+        BackendLauncher.serverArgs(8001),
+        containsAllInOrder([
+          'uvicorn',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          '8001',
+        ]),
       );
-      expect(
-        BackendLauncher.uvicornArgs(8765, remote: true),
-        containsAllInOrder(['--host', '0.0.0.0', '--port', '8765']),
-      );
+      expect(BackendLauncher.serverArgs(8001, remotePort: 8765), [
+        '-m',
+        'app.serve',
+        '--port',
+        '8001',
+        '--remote-port',
+        '8765',
+      ]);
     });
 
     test('an unreadable setting means off, on the fixed port', () {

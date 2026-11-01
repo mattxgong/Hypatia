@@ -29,6 +29,7 @@ backend/            FastAPI Python backend
     dependencies.py  FastAPI dependency injection (session, LLM availability check)
     errors.py        Structured error catalog: ErrorCode enum, HypatiaError + subclasses
     security.py      LocalAccessMiddleware: Host/Origin checks, launch and device tokens
+    serve.py         Remote-access entry point: loopback HTTP + HTTPS for phones, one process
     exceptions.py    Legacy exception types (being consolidated into errors.py)
     models/
       db_models.py    SQLAlchemy ORM models (the DB schema)
@@ -47,6 +48,7 @@ backend/            FastAPI Python backend
     services/
       credential_store.py  Platform-native credential storage (keyring → file fallback)
       device_auth.py  Pairing codes (in memory) and device token checks
+      remote_access.py  Self-signed cert (pinned by phones), LAN/Tailscale pairing URLs
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
       wiki_store.py   DB-is-truth helpers: per-Class operation lock, index from rows,
                       mirror_to_disk (rewrites wiki files + git commit), log.md
@@ -288,9 +290,12 @@ therefore checks every HTTP request and WebSocket handshake:
   never bind beyond loopback unless one is set.
 - Remote access (Phase 10, off by default) is a launcher setting
   (`RemoteAccess` in `backend_launcher.json`; `setRemoteAccess` saves it and
-  restarts the backend). When on, uvicorn binds `0.0.0.0` on a fixed port
-  (8765), and `HYPATIA_REMOTE_ACCESS_ENABLED=1` makes the backend accept any
-  Host header. The backend refuses to start in that mode without a launch
+  restarts the backend). When on, the launcher runs `python -m app.serve`:
+  the usual loopback HTTP listener for the desktop, plus HTTPS on `0.0.0.0`
+  on a fixed port (8765) with a self-signed certificate in
+  `<data_dir>/remote/` that phones pin by SHA-256. Only the loopback server
+  runs the lifespan. `HYPATIA_REMOTE_ACCESS_ENABLED=1` makes the backend accept
+  any Host header, and it refuses to start in that mode without a launch
   token. A token that isn't the launch token is
   looked up in the database, so tests sending one need the schema migrated.
 

@@ -501,6 +501,17 @@ class DeviceRead(BaseModel):
 class PairingCodeRead(BaseModel):
     code: str
     expires_at: datetime
+    # For the pairing QR, when remote access is on: where to connect, and the
+    # certificate fingerprint to pin.
+    urls: list[str] = []
+    cert_sha256: str | None = None
+
+
+class RemoteAccessRead(BaseModel):
+    enabled: bool
+    port: int | None
+    urls: list[str]
+    cert_sha256: str | None
 
 
 class PairRequest(BaseModel):

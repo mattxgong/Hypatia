@@ -267,6 +267,22 @@ Options, roughly in order of preference:
 3. Plain HTTP on a trusted home LAN: allowed, with a warning. It needs Android cleartext
    config and an iOS ATS exception (`NSAllowsLocalNetworking`).
 
+**Backend and launcher done (2026-11-01, W7).** The QR itself is drawn in W8.
+- Two listeners in one process (`app/serve.py`), not one HTTPS port. The desktop keeps
+  plain HTTP on loopback, so Dio, the WebSocket, media_kit, pdfrx and image loading need
+  no certificate handling. Phones get HTTPS on `0.0.0.0` on the fixed remote port. The
+  follower server skips the lifespan and signal handling, waits for startup to finish,
+  and stops with the main server.
+- `services/remote_access.py` makes an EC P-256 certificate once, valid 10 years and kept,
+  because replacing it breaks every pin. It detects LAN addresses (the default route,
+  plus the host name's addresses) and Tailscale (`100.64.0.0/10`, plus `tailscale status
+  --json` for the IPs and MagicDNS name).
+- `POST /api/devices/pairing-code` now also returns `urls` and `cert_sha256`, and `GET
+  /api/devices/remote-access` reports the status; both are desktop-only. Virtual adapters
+  (WSL, Hyper-V, VPNs) show up as extra LAN URLs after the real one. They're harmless,
+  since phones try URLs in order, but W8 could let the user hide them.
+- Firewall advice is in `docs/troubleshooting.md`.
+
 **Decided (2026-10-19): support both LAN and Tailscale.** Concretely:
 
 - The backend binds `0.0.0.0` when remote access is on, so it's reachable on both the LAN

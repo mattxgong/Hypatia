@@ -764,6 +764,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/devices/remote-access:
+    get:
+      summary: Remote-access status (desktop app only)
+      description: >-
+        Whether phones can connect, and on which addresses and certificate.
+        Phones use HTTPS on a separate port with a self-signed certificate,
+        pinned by fingerprint; the desktop app stays on loopback HTTP.
+      operationId: getRemoteAccess
+      security:
+        - LaunchToken: []
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteAccessRead"
+        "403":
+          description: Called with a device token (LOCAL_CLIENT_REQUIRED)
+
   /api/devices/pair:
     post:
       summary: Pair a device with a code
@@ -1607,7 +1627,35 @@ components:
         expires_at:
           type: string
           format: date-time
-      required: [code, expires_at]
+        urls:
+          type: array
+          items:
+            type: string
+          description: >-
+            With remote access on, the HTTPS addresses a phone can try, LAN
+            first, then Tailscale. Empty otherwise.
+        cert_sha256:
+          type: string
+          nullable: true
+          description: SHA-256 (hex) of the certificate the phone should pin.
+      required: [code, expires_at, urls]
+
+    RemoteAccessRead:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        port:
+          type: integer
+          nullable: true
+        urls:
+          type: array
+          items:
+            type: string
+        cert_sha256:
+          type: string
+          nullable: true
+      required: [enabled, port, urls, cert_sha256]
 
     PairRequest:
       type: object

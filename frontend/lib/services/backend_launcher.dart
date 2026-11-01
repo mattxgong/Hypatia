@@ -85,16 +85,21 @@ class BackendLauncher {
   /// As of the last start; [setRemoteAccess] changes it.
   RemoteAccess get remoteAccess => _remoteAccess;
 
-  /// uvicorn's arguments: loopback only, unless remote access is on.
-  static List<String> uvicornArgs(int port, {required bool remote}) => [
-    '-m',
-    'uvicorn',
-    'app.main:app',
-    '--host',
-    remote ? '0.0.0.0' : '127.0.0.1',
-    '--port',
-    '$port',
-  ];
+  /// The backend's arguments. This app always talks to plain HTTP on
+  /// loopback [port]. With [remotePort], `app.serve` also listens there over
+  /// HTTPS on every interface, for paired phones.
+  static List<String> serverArgs(int port, {int? remotePort}) =>
+      remotePort == null
+      ? [
+          '-m',
+          'uvicorn',
+          'app.main:app',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          '$port',
+        ]
+      : ['-m', 'app.serve', '--port', '$port', '--remote-port', '$remotePort'];
 
   /// Saves [access] and restarts the backend so the new binding takes effect.
   /// An external backend is started by someone else, so only the setting changes.
@@ -221,20 +226,22 @@ class BackendLauncher {
     _remoteAccess = RemoteAccess.fromJson(
       (await _readLauncherConfig())['remoteAccess'],
     );
+    _port = await _selectPort();
     if (_remoteAccess.enabled) {
       // Phones saved this port, so don't fall back to another one.
-      _port = _remoteAccess.port;
-      if (!await _isPortAvailable(_port, InternetAddress.anyIPv4)) {
+      final remotePort = _remoteAccess.port;
+      if (remotePort == _port ||
+          !await _isPortAvailable(remotePort, InternetAddress.anyIPv4)) {
         _log(
-          'ERROR: port $_port, which remote access uses, is taken. Free it, '
-          'or turn remote access off.',
+          'ERROR: port $remotePort, which remote access uses, is taken. Free '
+          'it, or turn remote access off.',
         );
         _setStatus(BackendStatus.error);
         return;
       }
-      _log('Remote access is on: listening on all interfaces, port $_port.');
-    } else {
-      _port = await _selectPort();
+      _log(
+        'Remote access is on: phones connect over HTTPS on port $remotePort.',
+      );
     }
 
     _setStatus(BackendStatus.starting);
@@ -610,7 +617,10 @@ class BackendLauncher {
     try {
       _process = await Process.start(
         venvPython,
-        uvicornArgs(_port, remote: _remoteAccess.enabled),
+        serverArgs(
+          _port,
+          remotePort: _remoteAccess.enabled ? _remoteAccess.port : null,
+        ),
         workingDirectory: backendDir.path,
         // Writing __pycache__ into a signed macOS bundle would invalidate it.
         environment: {
