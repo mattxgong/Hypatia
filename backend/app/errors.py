@@ -35,6 +35,11 @@ class ErrorCode(StrEnum):
     INVALID_PROVIDER = "INVALID_PROVIDER"
     INVALID_SETTING = "INVALID_SETTING"
 
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    AUTH_INVALID = "AUTH_INVALID"
+    LOCAL_CLIENT_REQUIRED = "LOCAL_CLIENT_REQUIRED"
+    PAIRING_CODE_INVALID = "PAIRING_CODE_INVALID"
+
 
 @dataclass(frozen=True)
 class ErrorDetail:
@@ -161,6 +166,30 @@ ERROR_CATALOG: dict[ErrorCode, ErrorDetail] = {
         ErrorCode.INVALID_SETTING,
         400,
         "Invalid setting value",
+    ),
+    ErrorCode.AUTH_REQUIRED: ErrorDetail(
+        ErrorCode.AUTH_REQUIRED,
+        401,
+        "Authentication required",
+        "Pair this device with Hypatia on your computer.",
+    ),
+    ErrorCode.AUTH_INVALID: ErrorDetail(
+        ErrorCode.AUTH_INVALID,
+        401,
+        "This device's access was revoked or is not recognized",
+        "Pair this device with Hypatia on your computer again.",
+    ),
+    ErrorCode.LOCAL_CLIENT_REQUIRED: ErrorDetail(
+        ErrorCode.LOCAL_CLIENT_REQUIRED,
+        403,
+        "Only the desktop app can do this",
+        "Use Hypatia on your computer.",
+    ),
+    ErrorCode.PAIRING_CODE_INVALID: ErrorDetail(
+        ErrorCode.PAIRING_CODE_INVALID,
+        400,
+        "The pairing code is wrong or has expired",
+        "Show a new pairing code in Hypatia on your computer and try again.",
     ),
 }
 

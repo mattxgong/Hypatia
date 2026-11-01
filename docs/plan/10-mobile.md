@@ -188,6 +188,23 @@ It's worth considering only if store distribution is unwanted (§10).
 
 ### 10.2 Authentication: device pairing tokens (not OAuth/JWT)
 
+**Backend done (2026-11-01, W5).** The device list/revoke UI is W8. Notes:
+- The per-launch local token already existed (`security.py`, `BackendLauncher`, `ApiClient`),
+  so W5 extended `LocalAccessMiddleware` to accept device tokens too, rather than adding a
+  per-route dependency. It sets `request.state.principal` to `"local"` or the device ID.
+- Only `POST /api/devices/pairing-code` is local-only (`require_local_client`). A phone that
+  can mint codes could pair a device that outlives the phone's own revocation. Revoking is
+  open to devices, including revoking themselves.
+- Pairing codes live in memory: 8 characters from an alphabet without look-alikes, single
+  use, 5 minutes, one at a time, used up after 5 wrong guesses. That is the rate limit; a
+  restart clears them. The QR payload (`url`, `cert_sha256`) comes with W7/W8.
+- `devices` also stores `last_seen_ip`, updated at most once a minute unless the IP changes.
+  Backups are per-Class, so they leave the table out.
+- Without a launch token (dev, tests) every request counts as local, as before. W6 must
+  refuse to bind beyond loopback unless a token is set.
+- Test fixtures didn't change: tests run without a launch token. Tests that send a token
+  other than the launch token migrate the schema, because it gets looked up in `devices`.
+
 There's one user and no accounts, so OAuth and JWT refresh flows add complexity with no benefit.
 Use opaque, revocable per-device tokens:
 

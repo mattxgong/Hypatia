@@ -28,6 +28,7 @@ backend/            FastAPI Python backend
     database.py      Async SQLAlchemy engine/session, Alembic migration runner
     dependencies.py  FastAPI dependency injection (session, LLM availability check)
     errors.py        Structured error catalog: ErrorCode enum, HypatiaError + subclasses
+    security.py      LocalAccessMiddleware: Host/Origin checks, launch and device tokens
     exceptions.py    Legacy exception types (being consolidated into errors.py)
     models/
       db_models.py    SQLAlchemy ORM models (the DB schema)
@@ -37,6 +38,7 @@ backend/            FastAPI Python backend
       chat.py         WebSocket chat with /ask, /summarize, /remove, /lint, /rebuild, /export,
                       /flashcards, /quiz
       classes.py      Class CRUD endpoints
+      devices.py      Device pairing (codes, pair), list and revoke paired devices
       files.py        File upload and listing
       settings.py     Settings get/put and usage stats
       study.py        Flashcard decks, SM-2 review, practice quizzes, deck export
@@ -44,6 +46,7 @@ backend/            FastAPI Python backend
       wiki.py         Wiki tree, page retrieval, search, export
     services/
       credential_store.py  Platform-native credential storage (keyring → file fallback)
+      device_auth.py  Pairing codes (in memory) and device token checks
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
       wiki_store.py   DB-is-truth helpers: per-Class operation lock, index from rows,
                       mirror_to_disk (rewrites wiki files + git commit), log.md
@@ -193,6 +196,8 @@ cd backend
   questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
   the current page body marks them out of date (computed on read, frontmatter
   ignored).
+- `devices` (Phase 10): paired phones/tablets (`name`, `token_hash`,
+  `last_seen_at`, `last_seen_ip`, `revoked_at`). Not per-Class, so not in backups.
 - Timestamp columns use `UTCDateTime` (`db_models.py`): SQLite drops
   tzinfo, so values are stored as UTC and always come back timezone-aware,
   and the API sends them with an offset. The Flutter models call `.toLocal()`.
@@ -246,8 +251,8 @@ and attached to every log line for the duration of a request/operation.
 ## Error handling
 
 The backend uses a structured error catalog in `backend/app/errors.py`:
-- `ErrorCode` is a `StrEnum` with 21 codes across 5 groups: general, LLM,
-  chat commands, file/system, and settings/provider.
+- `ErrorCode` is a `StrEnum` with 26 codes across 6 groups: general, LLM,
+  chat commands, file/system, settings/provider, and auth.
 - `HypatiaError` is the base exception; subclasses include
   `LLMUnavailableError`, `LLMProviderError`, `ResourceNotFoundError`,
   `FileProcessingError`, and `SettingsError`.
@@ -270,6 +275,14 @@ therefore checks every HTTP request and WebSocket handshake:
   it, and exposes `authHeaders` for loaders that fetch backend URLs themselves
   (WebSocket, media, PDF, image). `scripts/run_dev.sh` makes one per run and
   passes it to Flutter as `--dart-define=HYPATIA_API_TOKEN`.
+- A paired device's token works too (Phase 10, `devices` table). The desktop
+  shows a single-use code from `POST /api/devices/pairing-code` (launch token
+  only, via `require_local_client`), and the phone redeems it at the open
+  `POST /api/devices/pair`. Only token SHA-256s are stored; revoked devices get
+  401 `AUTH_INVALID`. `request.state.principal` is `"local"` or the device ID.
+  Without a launch token every request counts as local, so remote access must
+  never bind beyond loopback unless one is set. A token that isn't the launch token is
+  looked up in the database, so tests sending one need the schema migrated.
 
 Wiki page paths from LLM output, `PUT /wiki/pages/...` and backups go through
 `wiki_parser.normalize_page_path`. It accepts only `pages/**/*.md` with no `..`

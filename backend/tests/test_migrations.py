@@ -43,6 +43,7 @@ async def test_run_migrations_creates_all_tables(isolated_data_dir: Path) -> Non
         "quizzes",
         "quiz_questions",
         "quiz_attempts",
+        "devices",
     }.issubset(table_names)
 
 

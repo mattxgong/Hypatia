@@ -350,3 +350,20 @@ class QuizAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
     quiz: Mapped[Quiz] = relationship(back_populates="attempts")
+
+
+class Device(Base):
+    """A phone or tablet paired for remote access (Phase 10).
+
+    Only a hash of its token is stored. Not per-Class, so backups leave it out.
+    """
+
+    __tablename__ = "devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_seen_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

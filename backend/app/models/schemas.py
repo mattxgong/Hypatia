@@ -21,6 +21,7 @@ from app.models.db_models import (
 
 ClassName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 ClassDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+DeviceName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 ProviderName = Literal["copilot", "copilot-ollama", "anthropic", "openai", "ollama"]
 WhisperModelSize = Literal[
     "tiny",
@@ -473,3 +474,29 @@ class QuizAttemptRead(BaseModel):
     max_score: float
     results: list[QuestionResultRead]
     created_at: datetime
+
+
+class DeviceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    created_at: datetime
+    last_seen_at: datetime | None
+    last_seen_ip: str | None
+
+
+class PairingCodeRead(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+class PairRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    device_name: DeviceName
+
+
+class PairResponse(BaseModel):
+    device: DeviceRead
+    # Shown once; only its hash is stored.
+    token: str
