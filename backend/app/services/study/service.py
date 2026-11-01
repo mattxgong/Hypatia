@@ -10,7 +10,7 @@ import re
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -20,6 +20,7 @@ from app.config import settings
 from app.errors import ErrorCode, HypatiaError, ResourceNotFoundError
 from app.models.db_models import (
     CardOrigin,
+    CardReview,
     CardType,
     Class,
     Deck,
@@ -55,6 +56,9 @@ from app.services.study.quiz_builder import QuestionDraft, build_quiz, cloze_pro
 from app.services.study.scheduler import Rating, ReviewState, review
 from app.services.task_manager import task_manager
 from app.services.wiki_search import hybrid_search
+from app.utils.logging import get_logger
+
+logger = get_logger()
 
 #: Short answers sent to the LLM for grading at the same time, and how long
 #: each may take before it is left for the student to self-grade.
@@ -355,6 +359,104 @@ async def _save_quiz(
     await session.commit()
     await session.refresh(quiz)
     return quiz
+
+
+#: Oldest a replayed review may claim to be; older ones count as this old.
+MAX_REVIEW_AGE = timedelta(days=30)
+_SCHEDULE_FIELDS = (
+    "ease",
+    "interval_days",
+    "repetitions",
+    "lapses",
+    "learning_step",
+    "due_at",
+    "last_reviewed_at",
+    "first_reviewed_at",
+)
+_DATETIME_FIELDS = {"due_at", "last_reviewed_at", "first_reviewed_at"}
+
+
+def clamp_reviewed_at(reviewed_at: datetime | None, now: datetime) -> datetime:
+    if reviewed_at is None:
+        return now
+    if reviewed_at.tzinfo is None:
+        reviewed_at = reviewed_at.replace(tzinfo=UTC)
+    return min(max(reviewed_at, now - MAX_REVIEW_AGE), now)
+
+
+def _schedule(card: Flashcard) -> dict[str, Any]:
+    state = {}
+    for name in _SCHEDULE_FIELDS:
+        value = getattr(card, name)
+        state[name] = value.isoformat() if isinstance(value, datetime) else value
+    return state
+
+
+async def record_review(
+    session: AsyncSession,
+    card: Flashcard,
+    rating: Rating,
+    *,
+    reviewed_at: datetime | None,
+    client_review_id: str | None,
+    now: datetime,
+) -> bool:
+    """Apply and log a rating. False if this ``client_review_id`` was already applied.
+
+    Reviews apply in arrival order. One older than the card's last review
+    (another device got there first) still applies, and is logged.
+    """
+    if client_review_id is not None:
+        seen = await session.scalar(
+            select(CardReview.id).where(
+                CardReview.card_id == card.id, CardReview.client_review_id == client_review_id
+            )
+        )
+        if seen is not None:
+            return False
+    at = clamp_reviewed_at(reviewed_at, now)
+    if card.last_reviewed_at is not None and at < card.last_reviewed_at:
+        logger.warning(
+            "review_out_of_order",
+            card_id=str(card.id),
+            reviewed_at=at.isoformat(),
+            last_reviewed_at=card.last_reviewed_at.isoformat(),
+        )
+    previous = _schedule(card)
+    apply_review(card, rating, at)
+    session.add(
+        CardReview(
+            card_id=card.id,
+            client_review_id=client_review_id,
+            rating=rating,
+            reviewed_at=at,
+            received_at=now,
+            previous_state=previous,
+        )
+    )
+    return True
+
+
+async def undo_last_review(session: AsyncSession, card: Flashcard) -> bool:
+    """Restore the schedule from before the card's latest review and forget it.
+
+    False when there is nothing to undo: no review, or only ones restored from
+    a backup, which don't carry the earlier schedule.
+    """
+    latest = await session.scalar(
+        select(CardReview)
+        .where(CardReview.card_id == card.id)
+        .order_by(CardReview.received_at.desc(), CardReview.reviewed_at.desc())
+        .limit(1)
+    )
+    if latest is None or latest.previous_state is None:
+        return False
+    for name, value in latest.previous_state.items():
+        if name in _DATETIME_FIELDS and value is not None:
+            value = datetime.fromisoformat(value)
+        setattr(card, name, value)
+    await session.delete(latest)
+    return True
 
 
 def apply_review(card: Flashcard, rating: Rating, now: datetime) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -285,6 +286,36 @@ class Flashcard(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     deck: Mapped[Deck] = relationship(back_populates="cards")
+    reviews: Mapped[list[CardReview]] = relationship(
+        back_populates="card", cascade="all, delete-orphan"
+    )
+
+
+class CardReview(Base):
+    """One rating of a flashcard (Phase 10.6).
+
+    ``client_review_id`` makes a queued review from an offline device apply
+    once however often it is replayed. ``previous_state`` is the card's
+    schedule just before this review, so Undo can restore it; reviews
+    restored from a backup have none.
+    """
+
+    __tablename__ = "flashcard_reviews"
+    __table_args__ = (
+        UniqueConstraint("card_id", "client_review_id", name="uq_flashcard_reviews_client_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    card_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("flashcards.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    client_review_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rating: Mapped[str] = mapped_column(String(8), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    previous_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    card: Mapped[Flashcard] = relationship(back_populates="reviews")
 
 
 class Quiz(Base):

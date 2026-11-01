@@ -19,11 +19,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_session
 from app.models.db_models import (
     CardOrigin,
+    CardReview,
     CardType,
     ChatMessage,
     ChatRole,
@@ -115,6 +117,13 @@ class _ChatMessageManifest(_ManifestModel):
     updated_at: datetime | None = None
 
 
+class _CardReviewManifest(_ManifestModel):
+    client_review_id: str | None = Field(default=None, max_length=64)
+    rating: Literal["again", "hard", "good", "easy"]
+    reviewed_at: datetime
+    received_at: datetime | None = None
+
+
 class _FlashcardManifest(_ManifestModel):
     card_type: CardType
     front: str
@@ -132,6 +141,10 @@ class _FlashcardManifest(_ManifestModel):
     learning_step: int | None = Field(default=None, ge=0)
     first_reviewed_at: datetime | None = None
     created_at: datetime | None = None
+    # Absent from backups made before the review log.
+    reviews: list[_CardReviewManifest] = Field(
+        default_factory=list, max_length=_MAX_ARCHIVE_ENTRIES
+    )
 
 
 class _DeckManifest(_ManifestModel):
@@ -381,6 +394,15 @@ def _serialize_deck(deck: Deck, cards: list[Flashcard]) -> dict:
                 "learning_step": c.learning_step,
                 "first_reviewed_at": _iso(c.first_reviewed_at),
                 "created_at": _iso(c.created_at),
+                "reviews": [
+                    {
+                        "client_review_id": r.client_review_id,
+                        "rating": r.rating,
+                        "reviewed_at": _iso(r.reviewed_at),
+                        "received_at": _iso(r.received_at),
+                    }
+                    for r in sorted(c.reviews, key=lambda r: r.reviewed_at)
+                ],
             }
             for c in cards
         ],
@@ -426,7 +448,11 @@ async def _serialize_study(session: AsyncSession, class_id: uuid.UUID) -> tuple[
     decks = (await session.execute(select(Deck).where(Deck.class_id == class_id))).scalars()
     deck_data = []
     for deck in decks.all():
-        cards = await session.execute(select(Flashcard).where(Flashcard.deck_id == deck.id))
+        cards = await session.execute(
+            select(Flashcard)
+            .where(Flashcard.deck_id == deck.id)
+            .options(selectinload(Flashcard.reviews))
+        )
         deck_data.append(_serialize_deck(deck, list(cards.scalars().all())))
 
     quizzes = (await session.execute(select(Quiz).where(Quiz.class_id == class_id))).scalars()
@@ -523,6 +549,15 @@ def _restore_study(
                     if "learning_step" in card.model_fields_set
                     else (0 if card.repetitions == 0 else None),
                     first_reviewed_at=card.first_reviewed_at or card.last_reviewed_at,
+                    reviews=[
+                        CardReview(
+                            client_review_id=r.client_review_id,
+                            rating=r.rating,
+                            reviewed_at=r.reviewed_at,
+                            **_timestamps(received_at=r.received_at),
+                        )
+                        for r in card.reviews
+                    ],
                     **_timestamps(due_at=card.due_at, created_at=card.created_at),
                 )
             )

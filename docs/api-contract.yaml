@@ -1077,6 +1077,11 @@ paths:
       - $ref: "#/components/parameters/CardId"
     post:
       summary: Record a review and reschedule the card (SM-2)
+      description: >-
+        Each review is logged. Offline clients replay queued reviews with
+        reviewed_at and client_review_id: a client_review_id the card has
+        already seen returns the card unchanged. Reviews apply in arrival
+        order, so a client should send a card's reviews oldest first.
       operationId: reviewCard
       requestBody:
         required: true
@@ -1088,6 +1093,19 @@ paths:
                 rating:
                   type: string
                   enum: [again, hard, good, easy]
+                reviewed_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: >-
+                    When the card was rated; defaults to now. A future time
+                    counts as now, one older than 30 days as 30 days ago.
+                client_review_id:
+                  type: string
+                  nullable: true
+                  maxLength: 64
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                  description: Idempotency key, unique per card.
               required: [rating]
       responses:
         "200":
@@ -1105,8 +1123,9 @@ paths:
     post:
       summary: Undo the card's last review, restoring its previous schedule
       description: >
-        The previous schedule is held in memory for the most recent reviews
-        only, so undo is available until the backend restarts.
+        Restores the schedule saved with the card's latest logged review and
+        deletes that review, so repeating it walks further back. Reviews
+        restored from a backup carry no earlier schedule and can't be undone.
       operationId: undoReview
       responses:
         "200":

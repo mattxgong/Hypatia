@@ -6,6 +6,7 @@ import csv
 import io
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +24,7 @@ from app.errors import LLMUnavailableError
 from app.main import app
 from app.models.db_models import (
     Base,
+    CardReview,
     Class,
     Deck,
     Flashcard,
@@ -675,3 +677,126 @@ async def test_undo_restores_the_schedule_before_the_last_review(
     assert card["id"] in {c["id"] for c in (await client.get(f"{base}/due")).json()}
     again = await client.post(f"{base}/cards/{card['id']}/review/undo")
     assert again.status_code == 409
+
+
+class TestReviewLog:
+    """Offline-safe reviews (Phase 10.6): replays apply once, at the time given."""
+
+    async def _card(self, client: AsyncClient, class_id: uuid.UUID) -> tuple[str, dict]:
+        deck = await _generate_deck(client, class_id)
+        base = f"/api/classes/{class_id}/decks/{deck['id']}"
+        [card] = (await client.get(f"{base}/due", params={"limit": 1})).json()
+        return f"{base}/cards/{card['id']}", card
+
+    async def _reviews(
+        self, session_factory: async_sessionmaker[AsyncSession], card_id: str
+    ) -> list[CardReview]:
+        async with session_factory() as session:
+            rows = await session.scalars(
+                select(CardReview)
+                .where(CardReview.card_id == uuid.UUID(card_id))
+                .order_by(CardReview.received_at)
+            )
+            return list(rows)
+
+    async def test_a_replayed_review_applies_once(
+        self,
+        client: AsyncClient,
+        class_id: uuid.UUID,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        url, card = await self._card(client, class_id)
+        body = {"rating": "easy", "client_review_id": "phone-1:42"}
+
+        first = (await client.post(f"{url}/review", json=body)).json()
+        second = await client.post(f"{url}/review", json=body)
+
+        assert second.status_code == 200
+        assert second.json()["due_at"] == first["due_at"]
+        assert second.json()["repetitions"] == first["repetitions"] == 1
+        [review] = await self._reviews(session_factory, card["id"])
+        assert (review.rating, review.client_review_id) == ("easy", "phone-1:42")
+
+    async def test_the_review_time_schedules_the_card(
+        self, client: AsyncClient, class_id: uuid.UUID
+    ) -> None:
+        url, _ = await self._card(client, class_id)
+        reviewed_at = datetime.now(UTC) - timedelta(days=2)
+
+        reviewed = (
+            await client.post(
+                f"{url}/review", json={"rating": "easy", "reviewed_at": reviewed_at.isoformat()}
+            )
+        ).json()
+
+        # Easy graduates a new card to 4 days, counted from when it was rated.
+        due = datetime.fromisoformat(reviewed["due_at"])
+        assert abs(due - (reviewed_at + timedelta(days=4))) < timedelta(seconds=1)
+        assert datetime.fromisoformat(reviewed["last_reviewed_at"]) < datetime.now(UTC)
+
+    async def test_review_times_are_clamped(
+        self,
+        client: AsyncClient,
+        class_id: uuid.UUID,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        url, card = await self._card(client, class_id)
+        now = datetime.now(UTC)
+        for offset, rid in [(timedelta(days=3), "future"), (-timedelta(days=90), "ancient")]:
+            body = {"rating": "good", "reviewed_at": (now + offset).isoformat()}
+            await client.post(f"{url}/review", json={**body, "client_review_id": rid})
+
+        future, ancient = await self._reviews(session_factory, card["id"])
+        assert future.reviewed_at <= datetime.now(UTC)
+        assert abs(ancient.reviewed_at - (now - timedelta(days=30))) < timedelta(minutes=1)
+
+    async def test_an_out_of_order_review_still_applies(
+        self, client: AsyncClient, class_id: uuid.UUID
+    ) -> None:
+        url, _ = await self._card(client, class_id)
+        await client.post(f"{url}/review", json={"rating": "easy"})
+        earlier = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+
+        late = await client.post(f"{url}/review", json={"rating": "again", "reviewed_at": earlier})
+
+        assert late.status_code == 200
+        assert late.json()["lapses"] == 1
+
+    async def test_undo_walks_back_through_the_log(
+        self,
+        client: AsyncClient,
+        class_id: uuid.UUID,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        url, card = await self._card(client, class_id)
+        await client.post(f"{url}/review", json={"rating": "good"})
+        await client.post(f"{url}/review", json={"rating": "good"})
+
+        once = (await client.post(f"{url}/review/undo")).json()
+        assert once["learning_step"] == 1
+        twice = (await client.post(f"{url}/review/undo")).json()
+        assert (twice["learning_step"], twice["last_reviewed_at"]) == (0, None)
+        assert await self._reviews(session_factory, card["id"]) == []
+        assert (await client.post(f"{url}/review/undo")).status_code == 409
+
+    async def test_deleting_a_card_deletes_its_reviews(
+        self,
+        client: AsyncClient,
+        class_id: uuid.UUID,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        url, card = await self._card(client, class_id)
+        await client.post(f"{url}/review", json={"rating": "good"})
+
+        assert (await client.delete(url)).status_code == 204
+
+        assert await self._reviews(session_factory, card["id"]) == []
+
+    async def test_bad_client_review_ids_are_rejected(
+        self, client: AsyncClient, class_id: uuid.UUID
+    ) -> None:
+        url, _ = await self._card(client, class_id)
+        resp = await client.post(
+            f"{url}/review", json={"rating": "good", "client_review_id": "has spaces"}
+        )
+        assert resp.status_code == 422

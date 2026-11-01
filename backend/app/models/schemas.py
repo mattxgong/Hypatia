@@ -379,6 +379,13 @@ class FlashcardRead(BaseModel):
 
 class FlashcardReview(BaseModel):
     rating: ReviewRating
+    # When the student rated the card, for reviews queued offline. Defaults to
+    # now; a future time is treated as now, and one older than 30 days as 30 days ago.
+    reviewed_at: datetime | None = None
+    # Makes a replayed review apply once. Unique per card.
+    client_review_id: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$"
+    )
 
 
 class DeckRefreshResponse(BaseModel):

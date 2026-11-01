@@ -195,7 +195,8 @@ cd backend
     `metadata_json`).
 - Study tables (Phase 9, DB-only, included in backups): `decks` →
   `flashcards` (SM-2 state: `ease`, `interval_days`, `repetitions`, `lapses`,
-  `due_at`), and `quizzes` → `quiz_questions` / `quiz_attempts`. Cards and
+  `due_at`) → `flashcard_reviews` (one row per rating; `client_review_id`
+  makes offline replays idempotent, `previous_state` backs Undo), and `quizzes` → `quiz_questions` / `quiz_attempts`. Cards and
   questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
   the current page body marks them out of date (computed on read, frontmatter
   ignored).

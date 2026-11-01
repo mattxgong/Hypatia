@@ -299,6 +299,15 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
 
 ### 10.6 Offline-safe study endpoints
 
+**Backend done (2026-11-01, W2).** `flashcard_reviews` (ORM `CardReview`) logs every
+rating with `client_review_id` (unique per card), `reviewed_at`, `received_at`, and the
+card's schedule just before the review. Undo now restores from that log instead of an
+in-memory dict, so it survives restarts and works from any device; repeating it walks
+back further. Old `reviewed_at` values are clamped to 30 days rather than rejected.
+Backups carry the log without the earlier schedules. Not done: the snapshot endpoint (the
+existing endpoints are enough for W18) and offline quiz grading, which is client-side
+work in W18.
+
 - `FlashcardReview` currently only takes `rating`, and the scheduler uses "now". Add
   optional `reviewed_at` (clamped: not in the future, not older than some limit such as
   30 days) and `client_review_id` (idempotency key, unique per card) so queued reviews can be
