@@ -211,15 +211,13 @@ async def _page_citations(
 ) -> list[dict[str, str]]:
     if not paths:
         return []
-    titles = dict(
-        (
-            await session.execute(
-                select(WikiPage.path, WikiPage.title).where(
-                    WikiPage.class_id == class_id, WikiPage.path.in_(paths)
-                )
-            )
-        ).tuples()
+    rows = await session.execute(
+        select(WikiPage.path, WikiPage.title).where(
+            WikiPage.class_id == class_id, WikiPage.path.in_(paths)
+        )
     )
+    # Not dict(rows): a Result has .keys(), so dict() reads it as a mapping and fails.
+    titles = {path: title for path, title in rows.tuples()}
     return [{"path": p, "title": titles.get(p, p)} for p in paths]
 
 
