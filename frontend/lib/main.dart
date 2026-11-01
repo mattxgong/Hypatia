@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'providers/backend_provider.dart';
+import 'providers/connection_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/backend_launcher.dart';
 import 'services/desktop_window.dart';
@@ -49,6 +50,8 @@ Future<void> main() async {
     overrides: [
       sharedPreferencesProvider.overrideWithValue(prefs),
       backendLauncherProvider.overrideWithValue(launcher),
+      // Phones and tablets reach a paired desktop's backend instead.
+      remoteClientProvider.overrideWithValue(launcher == null),
     ],
   );
   // Subscribe to the launcher before it starts so no status or log line is

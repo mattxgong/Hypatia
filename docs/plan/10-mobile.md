@@ -468,6 +468,49 @@ work in W18.
   polling while the app is in the background.
 - Show a clear "Desktop offline" banner while keeping cached study content usable.
 
+**Done (2026-11-01, W16: the connection layer).** W17 adds the pairing UI on top.
+- `connectionProvider` (`providers/connection_provider.dart`) owns the pairing and the
+  status (checking / unpaired / connecting / connected / desktopUnreachable /
+  unauthorized). Like the desktop launcher, it sets `backendBaseUrlProvider` and
+  `backendApiTokenProvider` (token first), so the rest of the app needed no changes.
+  `remoteClientProvider` (set in `main()` when there's no launcher) switches it on.
+- **Addresses:** the last address that answered is tried first, then the rest in the QR's
+  order (LAN, then Tailscale). The check is `GET /api/classes` with the token, so one
+  pass proves the address, the certificate and the token. A connection error on any
+  request while connected re-checks the addresses, which moves to Tailscale when the LAN
+  drops (tested). An unreachable desktop is retried at 5 s, doubling up to 60 s.
+- **Pairing:** `pair()` redeems the code at the first address that answers, then stores
+  the URLs, token, pin and device in `flutter_secure_storage` (`SecureConnectionStore`). A
+  refused code fails at once instead of trying the other addresses. `forget()` unpairs.
+- **Pinning:** `PinnedCertificateOverrides` sets `HttpOverrides.global` with a
+  `badCertificateCallback` that accepts only the certificate whose SHA-256 the QR
+  carried. It covers Dio and the image loader. `WebSocket.connect`'s own client ignores
+  `HttpOverrides`, so the chat socket is handed a pinned client explicitly.
+- **401:** `ApiClient` takes `onUnauthorized` / `onUnreachable`. On a phone, any 401 moves
+  to "unauthorized", which asks to pair again.
+- **Lifecycle:** `ConnectionGate` (in place of the desktop's startup screens) pauses polling
+  while the app is hidden (`appInForegroundProvider`, checked by the task, file and study
+  job polls). On resume it re-checks the route and reconnects the chat socket at once
+  (`WebSocketService.reconnectNow`); chat history reloads on reconnect as before.
+- **Gate:** before the first connection it shows connecting / unreachable (with Try again
+  and Forget) / unpaired / pair-again screens. After that the app stays mounted and a
+  banner shows while the desktop is out of reach, so nothing open is lost (tested).
+  "Desktop offline" with cached study content waits for 10.14.
+- iOS: `NSLocalNetworkUsageDescription` is in `Info.plist`. Android already had `INTERNET`.
+- **Tested against the real backend** (`python -m app.serve`, throwaway Dart test, not
+  committed):
+  - Without the pin, and with a wrong pin, the self-signed certificate is refused.
+  - Pairing over the LAN URL stores the token, and API calls and the chat WebSocket work.
+  - After the desktop revokes the device, the next check reports "unauthorized".
+  - That run found the WebSocket ignoring the global pin; it's fixed.
+- **Known gaps:**
+  - Video playback on a phone: media_kit's libmpv does its own TLS and won't accept the
+    self-signed certificate.
+  - pdfrx's downloader hasn't been checked.
+  - Flutter's image loader keeps one shared `HttpClient`, so after re-pairing with a
+    different computer, images need an app restart.
+  - All three belong with W20/W21, where sources open on a phone.
+
 ### 10.12 Responsive layout
 
 The 3-panel `Row` stays for expanded widths. Add Material 3 window-size classes:

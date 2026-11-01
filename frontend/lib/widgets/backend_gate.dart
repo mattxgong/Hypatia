@@ -9,7 +9,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../config/theme.dart';
 import '../providers/backend_provider.dart';
+import '../providers/connection_provider.dart';
 import '../services/backend_launcher.dart';
+import 'remote/connection_gate.dart';
 
 /// Shows [child] (the app's router) once the backend is ready, and the
 /// startup or problem screen until then. Used as `MaterialApp.builder`, so the
@@ -22,6 +24,8 @@ class BackendGate extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // A phone doesn't run a backend; it waits for its paired desktop instead.
+    if (ref.watch(remoteClientProvider)) return ConnectionGate(child: child);
     final status = ref.watch(backendStatusProvider);
     switch (status) {
       case BackendStatus.ready:

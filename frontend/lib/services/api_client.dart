@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/chat_message.dart';
@@ -10,6 +11,7 @@ import '../models/study.dart';
 import '../models/task_status.dart';
 import '../models/wiki_page.dart';
 import '../models/hypatia_class.dart';
+import '../providers/connection_provider.dart';
 
 final backendBaseUrlProvider = StateProvider<String>(
   (ref) => 'http://127.0.0.1:8000',
@@ -22,7 +24,18 @@ final backendApiTokenProvider = StateProvider<String?>((ref) => null);
 final apiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(backendBaseUrlProvider);
   final apiToken = ref.watch(backendApiTokenProvider);
-  return ApiClient(baseUrl: baseUrl, apiToken: apiToken);
+  // On a phone, failed requests tell the connection layer: a 401 means the
+  // pairing is gone, and an unreachable desktop may have a working address.
+  if (!ref.watch(remoteClientProvider)) {
+    return ApiClient(baseUrl: baseUrl, apiToken: apiToken);
+  }
+  final connection = ref.read(connectionProvider.notifier);
+  return ApiClient(
+    baseUrl: baseUrl,
+    apiToken: apiToken,
+    onUnauthorized: connection.reportUnauthorized,
+    onUnreachable: connection.reportUnreachable,
+  );
 });
 
 class ApiException implements Exception {
@@ -43,19 +56,38 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({required String baseUrl, String? apiToken})
-    : authHeaders = Map.unmodifiable({
-        if (apiToken != null && apiToken.isNotEmpty)
-          'Authorization': 'Bearer $apiToken',
-      }),
-      _dio = Dio(
-        BaseOptions(
-          baseUrl: baseUrl,
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 30),
-        ),
-      ) {
+  ApiClient({
+    required String baseUrl,
+    String? apiToken,
+    void Function()? onUnauthorized,
+    void Function()? onUnreachable,
+  }) : authHeaders = Map.unmodifiable({
+         if (apiToken != null && apiToken.isNotEmpty)
+           'Authorization': 'Bearer $apiToken',
+       }),
+       _dio = Dio(
+         BaseOptions(
+           baseUrl: baseUrl,
+           connectTimeout: const Duration(seconds: 10),
+           receiveTimeout: const Duration(seconds: 30),
+         ),
+       ) {
     _dio.options.headers.addAll(authHeaders);
+    if (onUnauthorized != null || onUnreachable != null) {
+      _dio.interceptors.add(
+        InterceptorsWrapper(
+          onError: (e, handler) {
+            if (e.response?.statusCode == 401) {
+              onUnauthorized?.call();
+            } else if (e.type == DioExceptionType.connectionError ||
+                e.type == DioExceptionType.connectionTimeout) {
+              onUnreachable?.call();
+            }
+            handler.next(e);
+          },
+        ),
+      );
+    }
   }
 
   /// Headers for loaders that fetch backend URLs themselves (WebSocket,
@@ -63,6 +95,10 @@ class ApiClient {
   final Map<String, String> authHeaders;
 
   final Dio _dio;
+
+  /// For tests that swap the transport.
+  @visibleForTesting
+  Dio get debugDio => _dio;
 
   Never _handleError(DioException e) {
     if (e.response?.data is Map<String, dynamic>) {

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/study.dart';
 import '../services/api_client.dart';
+import 'foreground_provider.dart';
 import 'wiki_provider.dart';
 
 enum SidebarMode { wiki, study }
@@ -129,7 +130,7 @@ class StudyJobsNotifier extends Notifier<List<StudyJob>> {
   Future<void> poll() async {
     // Timer.periodic doesn't wait for the previous tick: a slow backend would
     // otherwise have several polls racing to update the same jobs.
-    if (_polling) return;
+    if (_polling || !ref.read(appInForegroundProvider)) return;
     _polling = true;
     try {
       await _poll();

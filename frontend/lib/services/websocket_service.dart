@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'api_client.dart';
+import 'connection_store.dart';
 
 enum WsConnectionState { disconnected, connecting, connected, reconnecting }
 
@@ -123,6 +125,12 @@ class WebSocketService {
       final channel = IOWebSocketChannel.connect(
         Uri.parse(url),
         headers: apiClient.authHeaders,
+        // WebSocket.connect's own client ignores `HttpOverrides`, so on a
+        // phone it gets one that trusts the paired desktop's certificate.
+        customClient: switch (HttpOverrides.current) {
+          final PinnedCertificateOverrides pin => pin.createHttpClient(null),
+          _ => null,
+        },
       );
       _channel = channel;
       await channel.ready;
@@ -214,6 +222,16 @@ class WebSocketService {
           ),
         );
     }
+  }
+
+  /// Skips the backoff wait: the app is back in the foreground, where the
+  /// socket the OS closed in the background should come back at once.
+  void reconnectNow() {
+    final classId = _currentClassId;
+    if (classId == null || _state == WsConnectionState.connected) return;
+    _reconnectTimer?.cancel();
+    _reconnectAttempts = 0;
+    unawaited(connect(classId));
   }
 
   void _handleDisconnect() {

@@ -89,7 +89,8 @@ frontend/            Flutter application
     main.dart          App entry point
     models/            Data models (task_status.dart, etc.)
     providers/         Riverpod state providers (settings, search, tasks, etc.; layout_provider:
-                       pane widths, collapsed panes, collapsed-sidebar sections)
+                       pane widths, collapsed panes, collapsed-sidebar sections;
+                       connection_provider: a phone's link to its paired desktop)
     screens/           Full-screen views (home_screen, class_settings_screen)
       home/            Home screen layouts by window size class: compact (phones, bottom
                        nav), medium (rail + 2 panes), expanded (3 panes); home_panes.dart
@@ -100,6 +101,8 @@ frontend/            Flutter application
       backend_launcher.dart   Launches/manages the backend subprocess
       desktop_window.dart     Window close/quit (stops the backend), system tray while
                               remote access is on
+      connection_store.dart   Phone side: pairing kept in flutter_secure_storage, and the
+                              pinned-certificate HttpOverrides for the desktop's cert
     utils/
       platform.dart      isDesktop
       window_size.dart   WindowSizeClass (compact < 600 <= medium < 840 <= expanded), from the window
@@ -111,7 +114,9 @@ frontend/            Flutter application
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
       remote/          Remote access dialog (desktop): toggle, addresses, pairing
-                       QR, paired devices; opened from the sidebar footer
+                       QR, paired devices; opened from the sidebar footer.
+                       connection_gate.dart (phone): connection screens, offline
+                       banner, pause polling in the background, reconnect on resume
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
                        status strip + file finished/failed notices; pane_divider.dart;
                        action_menu.dart: menu, or bottom sheet on a phone)
@@ -304,6 +309,12 @@ therefore checks every HTTP request and WebSocket handshake:
   401 `AUTH_INVALID`. `request.state.principal` is `"local"` or the device ID.
   Without a launch token every request counts as local, so remote access must
   never bind beyond loopback unless one is set.
+- On a phone (`remoteClientProvider`), `connectionProvider` replaces the launcher:
+  it tries the paired desktop's URLs (last good first), pins its certificate via
+  `HttpOverrides.global`, and sets the same base URL and token providers. Any
+  `HttpClient` made outside Dio must come after the pin is installed;
+  `WebSocket.connect` ignores `HttpOverrides`, so the chat socket gets a pinned
+  client explicitly.
 - Remote access (Phase 10, off by default) is a launcher setting
   (`RemoteAccess` in `backend_launcher.json`; `setRemoteAccess` saves it and
   restarts the backend). When on, the launcher runs `python -m app.serve`:
