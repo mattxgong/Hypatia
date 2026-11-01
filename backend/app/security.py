@@ -5,7 +5,8 @@ still reach it: WebSockets ignore CORS, simple cross-origin POSTs run before
 CORS can block the response, and DNS rebinding makes a foreign page look
 same-origin. Each check below closes one of those gaps:
 
-- ``Host`` must be in ``settings.allowed_hosts`` (defeats DNS rebinding).
+- ``Host`` must be in ``settings.allowed_hosts`` (defeats DNS rebinding),
+  unless remote access is on, which requires the token on every request.
 - A browser ``Origin``, when sent, must match the CORS settings.
 - When ``settings.api_token`` is set (the desktop app sets a fresh one per
   launch), every request except ``/health`` and pairing needs
@@ -47,6 +48,8 @@ def _host_name(host_header: str) -> str:
 
 
 def _host_allowed(headers: Headers) -> bool:
+    if settings.remote_access_enabled:
+        return True  # reached by LAN/Tailscale address; the token check still applies
     allowed = settings.allowed_hosts
     return "*" in allowed or _host_name(headers.get("host", "")).lower() in allowed
 

@@ -155,6 +155,18 @@ It's worth considering only if store distribution is unwanted (§10).
 
 ### 10.1 Remote-access mode and process lifetime
 
+**Remote-access setting done (2026-11-01, W6).** The tray (W9) and settings UI (W8) are not.
+- The setting is the launcher's, not `settings_store.py`'s: the launcher picks the bind
+  address before the backend runs. It is stored as `remoteAccess` in
+  `backend_launcher.json`. `BackendLauncher.setRemoteAccess` saves it and restarts the
+  backend. An unreadable value means off.
+- When on, uvicorn binds `0.0.0.0` on a fixed port (8765 by default), because phones save
+  the address. If the port is taken, startup fails with a message instead of moving to
+  another port. The desktop client still talks to `127.0.0.1`.
+- The backend gets `HYPATIA_REMOTE_ACCESS_ENABLED=1`. It then skips the Host check, since
+  LAN and Tailscale addresses vary and every request needs a token. It refuses to start if
+  there's no launch token.
+
 - Add `remote_access_enabled: bool = False`, `bind_host`, and `remote_port` to
   `app/config.py`. Persist them via `settings_store.py`.
 - `backend_launcher.dart` passes `--host 0.0.0.0` (or a chosen interface) only when remote

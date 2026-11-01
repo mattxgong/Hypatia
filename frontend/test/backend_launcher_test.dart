@@ -295,4 +295,40 @@ void main() {
       expect(resolved?.path, backend.path);
     });
   });
+
+  group('Remote access', () {
+    test('binds to loopback unless remote access is on', () {
+      expect(
+        BackendLauncher.uvicornArgs(8001, remote: false),
+        containsAllInOrder(['--host', '127.0.0.1', '--port', '8001']),
+      );
+      expect(
+        BackendLauncher.uvicornArgs(8765, remote: true),
+        containsAllInOrder(['--host', '0.0.0.0', '--port', '8765']),
+      );
+    });
+
+    test('an unreadable setting means off, on the fixed port', () {
+      for (final json in [
+        null,
+        'yes',
+        <String, dynamic>{},
+        {'enabled': 'true'},
+      ]) {
+        final access = RemoteAccess.fromJson(json);
+        expect(access.enabled, isFalse, reason: '$json');
+        expect(access.port, BackendLauncher.defaultRemotePort);
+      }
+      expect(
+        RemoteAccess.fromJson({'enabled': true, 'port': 70000}).port,
+        BackendLauncher.defaultRemotePort,
+      );
+    });
+
+    test('round-trips through JSON', () {
+      const access = RemoteAccess(enabled: true, port: 9000);
+      final back = RemoteAccess.fromJson(access.toJson());
+      expect((back.enabled, back.port), (true, 9000));
+    });
+  });
 }

@@ -68,6 +68,9 @@ def _watch_stdin_for_parent_exit() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    if settings.remote_access_enabled and not settings.api_token:
+        # Without a token every request counts as the desktop app's.
+        raise RuntimeError("Remote access needs HYPATIA_API_TOKEN; refusing to start.")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     if settings.exit_on_stdin_close:
         _watch_stdin_for_parent_exit()

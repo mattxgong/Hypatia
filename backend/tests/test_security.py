@@ -47,6 +47,27 @@ class TestHost:
         assert resp.status_code == 400
 
 
+class TestRemoteAccess:
+    @pytest.mark.usefixtures("real_hosts")
+    async def test_any_host_is_accepted_but_the_token_still_applies(
+        self, client: AsyncClient
+    ) -> None:
+        settings.remote_access_enabled = True
+        settings.api_token = TOKEN
+        lan = {"host": "192.168.1.20:8765"}
+
+        assert (await client.get("/health", headers=lan)).status_code == 200
+        assert (await client.get("/api/tasks", headers=lan)).status_code == 401
+        authed = {**lan, "authorization": f"Bearer {TOKEN}"}
+        assert (await client.get("/api/tasks", headers=authed)).status_code == 200
+
+    def test_the_backend_refuses_to_start_without_a_token(self) -> None:
+        settings.remote_access_enabled = True
+        settings.api_token = None
+        with pytest.raises(RuntimeError, match="HYPATIA_API_TOKEN"), TestClient(app):
+            pass
+
+
 class TestOrigin:
     async def test_foreign_origin_rejected(self, client: AsyncClient) -> None:
         resp = await client.post(

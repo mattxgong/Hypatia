@@ -285,7 +285,13 @@ therefore checks every HTTP request and WebSocket handshake:
   `POST /api/devices/pair`. Only token SHA-256s are stored; revoked devices get
   401 `AUTH_INVALID`. `request.state.principal` is `"local"` or the device ID.
   Without a launch token every request counts as local, so remote access must
-  never bind beyond loopback unless one is set. A token that isn't the launch token is
+  never bind beyond loopback unless one is set.
+- Remote access (Phase 10, off by default) is a launcher setting
+  (`RemoteAccess` in `backend_launcher.json`; `setRemoteAccess` saves it and
+  restarts the backend). When on, uvicorn binds `0.0.0.0` on a fixed port
+  (8765), and `HYPATIA_REMOTE_ACCESS_ENABLED=1` makes the backend accept any
+  Host header. The backend refuses to start in that mode without a launch
+  token. A token that isn't the launch token is
   looked up in the database, so tests sending one need the schema migrated.
 
 Wiki page paths from LLM output, `PUT /wiki/pages/...` and backups go through

@@ -44,6 +44,10 @@ class BackendLauncher {
   };
 
   static const _defaultPort = 8000;
+
+  /// Remote access uses one fixed port, so the address a phone saved when it
+  /// paired keeps working across restarts.
+  static const defaultRemotePort = 8765;
   static const _maxPortAttempts = 11;
   static const _lockFileName = 'requirements.lock';
   static const _installedLockFileName = '.hypatia-installed-requirements.lock';
@@ -75,6 +79,31 @@ class BackendLauncher {
 
   BackendStatus get status => _status;
   int get port => _port;
+
+  RemoteAccess _remoteAccess = const RemoteAccess();
+
+  /// As of the last start; [setRemoteAccess] changes it.
+  RemoteAccess get remoteAccess => _remoteAccess;
+
+  /// uvicorn's arguments: loopback only, unless remote access is on.
+  static List<String> uvicornArgs(int port, {required bool remote}) => [
+    '-m',
+    'uvicorn',
+    'app.main:app',
+    '--host',
+    remote ? '0.0.0.0' : '127.0.0.1',
+    '--port',
+    '$port',
+  ];
+
+  /// Saves [access] and restarts the backend so the new binding takes effect.
+  /// An external backend is started by someone else, so only the setting changes.
+  Future<void> setRemoteAccess(RemoteAccess access) async {
+    await _updateLauncherConfig({'remoteAccess': access.toJson()});
+    _remoteAccess = access;
+    if (externalBaseUrl == null) await retryBackend();
+  }
+
   String get baseUrl => externalBaseUrl ?? 'http://127.0.0.1:$_port';
 
   static String? normalizeExternalBaseUrl(String? value) {
@@ -189,7 +218,24 @@ class BackendLauncher {
       return;
     }
 
-    _port = await _selectPort();
+    _remoteAccess = RemoteAccess.fromJson(
+      (await _readLauncherConfig())['remoteAccess'],
+    );
+    if (_remoteAccess.enabled) {
+      // Phones saved this port, so don't fall back to another one.
+      _port = _remoteAccess.port;
+      if (!await _isPortAvailable(_port, InternetAddress.anyIPv4)) {
+        _log(
+          'ERROR: port $_port, which remote access uses, is taken. Free it, '
+          'or turn remote access off.',
+        );
+        _setStatus(BackendStatus.error);
+        return;
+      }
+      _log('Remote access is on: listening on all interfaces, port $_port.');
+    } else {
+      _port = await _selectPort();
+    }
 
     _setStatus(BackendStatus.starting);
     final started = await _spawnProcess(venvPython, backendDir, appSupportDir);
@@ -394,12 +440,28 @@ class BackendLauncher {
     return File('${dir.path}${Platform.pathSeparator}backend_launcher.json');
   }
 
-  Future<String?> _loadCachedPythonPath() async {
+  Future<Map<String, dynamic>> _readLauncherConfig() async {
     try {
       final file = await _launcherConfigFile();
-      if (!await file.exists()) return null;
-      final config =
-          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      if (await file.exists()) {
+        return jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  /// Merges [values] into the config file, keeping the other keys.
+  Future<void> _updateLauncherConfig(Map<String, dynamic> values) async {
+    try {
+      final file = await _launcherConfigFile();
+      final config = {...await _readLauncherConfig(), ...values};
+      await file.writeAsString(jsonEncode(config));
+    } catch (_) {}
+  }
+
+  Future<String?> _loadCachedPythonPath() async {
+    try {
+      final config = await _readLauncherConfig();
       final cached = config['pythonPath'] as String?;
       if (cached == null) return null;
       final parts = splitPythonCommand(cached);
@@ -410,12 +472,8 @@ class BackendLauncher {
     return null;
   }
 
-  Future<void> _cachePythonPath(String pythonPath) async {
-    try {
-      final file = await _launcherConfigFile();
-      await file.writeAsString(jsonEncode({'pythonPath': pythonPath}));
-    } catch (_) {}
-  }
+  Future<void> _cachePythonPath(String pythonPath) =>
+      _updateLauncherConfig({'pythonPath': pythonPath});
 
   static Directory? resolveBackendDirectory({
     Directory? workingDirectory,
@@ -522,10 +580,10 @@ class BackendLauncher {
     return venvPython;
   }
 
-  Future<bool> _isPortAvailable(int port) async {
+  Future<bool> _isPortAvailable(int port, [InternetAddress? address]) async {
     try {
       final server = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
+        address ?? InternetAddress.loopbackIPv4,
         port,
       );
       await server.close();
@@ -552,19 +610,12 @@ class BackendLauncher {
     try {
       _process = await Process.start(
         venvPython,
-        [
-          '-m',
-          'uvicorn',
-          'app.main:app',
-          '--host',
-          '127.0.0.1',
-          '--port',
-          '$_port',
-        ],
+        uvicornArgs(_port, remote: _remoteAccess.enabled),
         workingDirectory: backendDir.path,
         // Writing __pycache__ into a signed macOS bundle would invalidate it.
         environment: {
           'HYPATIA_API_TOKEN': ?apiToken,
+          if (_remoteAccess.enabled) 'HYPATIA_REMOTE_ACCESS_ENABLED': '1',
           // The backend exits when this pipe closes, so it can't outlive the
           // app even if the app crashes or is killed before stopBackend().
           'HYPATIA_EXIT_ON_STDIN_CLOSE': '1',
@@ -626,4 +677,30 @@ class BackendLauncher {
     _statusController.close();
     _logController.close();
   }
+}
+
+/// Whether phones may reach the backend (Phase 10), and on which port.
+/// Stored with the launcher's other settings; changing it restarts the backend.
+class RemoteAccess {
+  const RemoteAccess({
+    this.enabled = false,
+    this.port = BackendLauncher.defaultRemotePort,
+  });
+
+  /// Anything unreadable means off, so a bad file never opens the backend up.
+  factory RemoteAccess.fromJson(Object? json) {
+    if (json is! Map) return const RemoteAccess();
+    final port = json['port'];
+    return RemoteAccess(
+      enabled: json['enabled'] == true,
+      port: port is int && port > 0 && port < 65536
+          ? port
+          : BackendLauncher.defaultRemotePort,
+    );
+  }
+
+  final bool enabled;
+  final int port;
+
+  Map<String, dynamic> toJson() => {'enabled': enabled, 'port': port};
 }
