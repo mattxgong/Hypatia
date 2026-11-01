@@ -51,7 +51,9 @@ class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/class/${currentClass.id}'),
+          onPressed: () => context.canPop()
+              ? context.pop()
+              : context.go('/class/${currentClass.id}'),
         ),
         title: const Text('Class Settings'),
       ),

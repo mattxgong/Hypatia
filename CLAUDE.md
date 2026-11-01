@@ -91,11 +91,18 @@ frontend/            Flutter application
     providers/         Riverpod state providers (settings, search, tasks, etc.; layout_provider:
                        pane widths, collapsed panes, collapsed-sidebar sections)
     screens/           Full-screen views (home_screen, class_settings_screen)
+      home/            Home screen layouts by window size class: compact (phones, bottom
+                       nav), medium (rail + 2 panes), expanded (3 panes); home_panes.dart
+                       has the shared panes, app bar, and GlobalKeys that keep pane state
+                       when the size class changes
     services/
       api_client.dart     HTTP/WebSocket client for backend API
       backend_launcher.dart   Launches/manages the backend subprocess
       desktop_window.dart     Window close/quit (stops the backend), system tray while
                               remote access is on
+    utils/
+      platform.dart      isDesktop
+      window_size.dart   WindowSizeClass (compact < 600 <= medium < 840 <= expanded), from the window
     widgets/
       chat_panel/      Chat UI (message list, input, streaming)
       sidebar/         Sidebar (class dropdown, wiki tree, search bar, task indicator)
@@ -105,7 +112,7 @@ frontend/            Flutter application
       remote/          Remote access dialog (desktop): toggle, addresses, pairing
                        QR, paired devices; opened from the sidebar footer
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
-                       status strip + file finished/failed notices)
+                       status strip + file finished/failed notices; pane_divider.dart)
   android/, ios/       Mobile targets (Phase 10), app ID com.mattxgong.hypatia.
                        compileSdk is 37 for the app and, via android/build.gradle.kts,
                        for every plugin (some still declare older SDKs)

@@ -10,6 +10,7 @@ import '../../providers/class_provider.dart';
 import '../../providers/file_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/frontmatter.dart';
+import '../../utils/window_size.dart';
 import '../common/error_card.dart';
 import '../wiki_viewer/wiki_viewer.dart';
 
@@ -38,7 +39,6 @@ class SourceViewerDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final screenSize = MediaQuery.of(context).size;
     final classId = ref.watch(currentClassIdProvider);
     // Citations name files by ID; show the file's name once it's known.
     final file = classId == null
@@ -53,50 +53,45 @@ class SourceViewerDialog extends ConsumerWidget {
               .valueOrNull;
     final title = file?.originalFilename ?? request.fileRef;
 
-    return Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      child: SizedBox(
-        width: screenSize.width * 0.8,
-        height: screenSize.height * 0.8,
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: theme.dividerColor)),
-              ),
-              child: Row(
-                children: [
-                  Icon(_fileTypeIcon(title), size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: theme.textTheme.titleSmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (request.location.isNotEmpty)
-                    Chip(
-                      label: Text(
-                        _formatLocation(request.location),
-                        style: theme.textTheme.labelSmall,
-                      ),
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                    ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => Navigator.pop(context),
-                    tooltip: 'Close',
-                  ),
-                ],
-              ),
+    return _SourceDialogFrame(
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: theme.dividerColor)),
             ),
-            Expanded(child: _SourceContent(request: request)),
-          ],
-        ),
+            child: Row(
+              children: [
+                Icon(_fileTypeIcon(title), size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleSmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (request.location.isNotEmpty)
+                  Chip(
+                    label: Text(
+                      _formatLocation(request.location),
+                      style: theme.textTheme.labelSmall,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                  ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.pop(context),
+                  tooltip: 'Close',
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: _SourceContent(request: request)),
+        ],
       ),
     );
   }
@@ -459,6 +454,30 @@ String _slug(String text) => text
     .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
     .replaceAll(RegExp(r'^-+|-+$'), '');
 
+/// A source opened over the app: full-screen on a phone, a large dialog
+/// elsewhere.
+class _SourceDialogFrame extends StatelessWidget {
+  const _SourceDialogFrame({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (windowSizeClassOf(context) == WindowSizeClass.compact) {
+      return Dialog.fullscreen(child: SafeArea(child: child));
+    }
+    final screenSize = MediaQuery.sizeOf(context);
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: SizedBox(
+        width: screenSize.width * 0.8,
+        height: screenSize.height * 0.8,
+        child: child,
+      ),
+    );
+  }
+}
+
 void showSourceViewer(BuildContext context, SourceViewerRequest request) {
   showDialog<void>(
     context: context,
@@ -486,62 +505,56 @@ class _ConvertedSourceDialog extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final screenSize = MediaQuery.of(context).size;
 
-    return Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      child: SizedBox(
-        width: screenSize.width * 0.8,
-        height: screenSize.height * 0.8,
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: theme.dividerColor)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.description_outlined, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      file.originalFilename,
-                      style: theme.textTheme.titleSmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => Navigator.pop(context),
-                    tooltip: 'Close',
-                  ),
-                ],
-              ),
+    return _SourceDialogFrame(
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: theme.dividerColor)),
             ),
-            Expanded(
-              child: FutureBuilder<String>(
-                future: ref
-                    .read(apiClientProvider)
-                    .getFileConverted(classId, file.id),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (snapshot.hasError) {
-                    return Center(child: ErrorCard(error: snapshot.error!));
-                  }
-                  return Markdown(
-                    data: stripFrontmatter(snapshot.data ?? ''),
-                    selectable: true,
-                    padding: const EdgeInsets.all(16),
-                    styleSheet: MarkdownStyleSheet.fromTheme(theme),
-                  );
-                },
-              ),
+            child: Row(
+              children: [
+                const Icon(Icons.description_outlined, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    file.originalFilename,
+                    style: theme.textTheme.titleSmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.pop(context),
+                  tooltip: 'Close',
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          Expanded(
+            child: FutureBuilder<String>(
+              future: ref
+                  .read(apiClientProvider)
+                  .getFileConverted(classId, file.id),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: ErrorCard(error: snapshot.error!));
+                }
+                return Markdown(
+                  data: stripFrontmatter(snapshot.data ?? ''),
+                  selectable: true,
+                  padding: const EdgeInsets.all(16),
+                  styleSheet: MarkdownStyleSheet.fromTheme(theme),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

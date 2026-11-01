@@ -15,7 +15,11 @@ import 'message_bubble.dart';
 import 'starter_cards.dart';
 
 class ChatPanel extends ConsumerWidget {
-  const ChatPanel({super.key});
+  const ChatPanel({super.key, this.canHide = true});
+
+  /// Whether the header has a Hide button: only the expanded layout's chat is
+  /// a pane that collapses.
+  final bool canHide;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -28,8 +32,10 @@ class ChatPanel extends ConsumerWidget {
       child: Column(
         children: [
           _ChatHeader(
-            onHide: () =>
-                ref.read(chatPanelCollapsedProvider.notifier).state = true,
+            onHide: canHide
+                ? () =>
+                      ref.read(chatPanelCollapsedProvider.notifier).state = true
+                : null,
             onClearHistory: classId == null
                 ? null
                 : () => _confirmClearHistory(context, ref, classId),
@@ -174,7 +180,7 @@ class _StreamingBubble extends ConsumerWidget {
 class _ChatHeader extends StatelessWidget {
   const _ChatHeader({required this.onHide, required this.onClearHistory});
 
-  final VoidCallback onHide;
+  final VoidCallback? onHide;
   final VoidCallback? onClearHistory;
 
   @override
@@ -204,13 +210,14 @@ class _ChatHeader extends StatelessWidget {
             iconSize: 18,
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
-          IconButton(
-            icon: const Icon(Icons.keyboard_double_arrow_right, size: 18),
-            onPressed: onHide,
-            tooltip: 'Hide chat ($shortcutModifierLabel+J)',
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
+          if (onHide != null)
+            IconButton(
+              icon: const Icon(Icons.keyboard_double_arrow_right, size: 18),
+              onPressed: onHide,
+              tooltip: 'Hide chat ($shortcutModifierLabel+J)',
+              iconSize: 18,
+              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            ),
         ],
       ),
     );

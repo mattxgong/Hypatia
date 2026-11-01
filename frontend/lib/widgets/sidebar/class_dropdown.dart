@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +13,11 @@ import '../common/error_card.dart';
 import '../common/hypatia_about_button.dart';
 
 class ClassDropdown extends ConsumerWidget {
-  const ClassDropdown({super.key});
+  const ClassDropdown({super.key, this.showActions = true});
+
+  /// The add, settings and about buttons beside the list. The compact and
+  /// medium layouts' app bar has no room for them and puts them in its menu.
+  final bool showActions;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -90,45 +96,51 @@ class ClassDropdown extends ConsumerWidget {
             ),
             // Separate from the list: as list items, picking one and then
             // cancelling left the field showing "New Class".
-            PopupMenuButton<String>(
-              tooltip: 'Add a class',
-              icon: const Icon(Icons.add, size: 20),
-              onSelected: (action) => action == 'new'
-                  ? showCreateClassDialog(context, ref)
-                  : importClassFromBackup(context, ref),
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'new',
-                  child: ListTile(
-                    leading: Icon(Icons.add),
-                    title: Text('New class…'),
-                    dense: true,
+            if (showActions)
+              PopupMenuButton<String>(
+                tooltip: 'Add a class',
+                icon: const Icon(Icons.add, size: 20),
+                onSelected: (action) => action == 'new'
+                    ? showCreateClassDialog(context, ref)
+                    : importClassFromBackup(context, ref),
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'new',
+                    child: ListTile(
+                      leading: Icon(Icons.add),
+                      title: Text('New class…'),
+                      dense: true,
+                    ),
                   ),
-                ),
-                PopupMenuItem(
-                  value: 'import',
-                  child: ListTile(
-                    leading: Icon(Icons.file_upload_outlined),
-                    title: Text('Import from backup…'),
-                    dense: true,
+                  PopupMenuItem(
+                    value: 'import',
+                    child: ListTile(
+                      leading: Icon(Icons.file_upload_outlined),
+                      title: Text('Import from backup…'),
+                      dense: true,
+                    ),
                   ),
-                ),
-              ],
-            ),
-            if (selectedId != null)
+                ],
+              ),
+            if (showActions && selectedId != null)
               IconButton(
                 icon: const Icon(Icons.settings_outlined, size: 20),
                 tooltip: 'Class settings',
-                onPressed: () => context.go('/class/$selectedId/settings'),
+                onPressed: () => openClassSettings(context, selectedId),
                 visualDensity: VisualDensity.compact,
               ),
-            const HypatiaAboutButton(),
+            if (showActions) const HypatiaAboutButton(),
           ],
         );
       },
     );
   }
 }
+
+/// Pushed, not gone to, so Back (and the Android back gesture) returns to the
+/// Class instead of leaving the app.
+void openClassSettings(BuildContext context, String classId) =>
+    unawaited(context.push('/class/$classId/settings'));
 
 void showCreateClassDialog(BuildContext context, WidgetRef ref) {
   final nameController = TextEditingController();

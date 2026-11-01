@@ -16,7 +16,11 @@ class SidebarSearchBar extends ConsumerStatefulWidget {
 }
 
 class _SidebarSearchBarState extends ConsumerState<SidebarSearchBar> {
-  final _controller = TextEditingController();
+  // From the query, which outlives this box: the compact and expanded
+  // layouts each build their own.
+  late final _controller = TextEditingController(
+    text: ref.read(searchQueryProvider),
+  );
   Timer? _debounce;
 
   @override

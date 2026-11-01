@@ -506,6 +506,41 @@ The 3-panel `Row` stays for expanded widths. Add Material 3 window-size classes:
   large rating buttons, with swipe-to-rate as an optional extra.
 - Widget tests at phone sizes (e.g. 390x844) and tablet sizes using `tester.view.physicalSize`.
 
+**Done (2026-11-01, W13: the shell).** `utils/window_size.dart` picks the size class from
+`MediaQuery.sizeOf` (the window). `HomeScreen` keeps the listeners, shortcuts, drop target
+and Back handling, and builds one of `screens/home/{compact,medium,expanded}_layout.dart`.
+- **Navigation state is in providers, not routes.** The page, the open deck or quiz and the
+  search were already providers. W13 added `compactDestinationProvider` (the bottom bar),
+  `secondaryPaneProvider` (the rail) and `searchOpenProvider`. A page "pushed" from the list
+  is the list replaced while `currentWikiPagePathProvider` is set. That makes a size-class
+  change a rebuild over the same state, with no route stack to translate between layouts.
+  go_router still owns `/class/:id` and its settings, which are now pushed (`openClassSettings`),
+  so Back returns to the Class.
+- **Back** (`_BackHandler`, a `PopScope` on the home route) steps out one level at a time:
+  search, then the open deck or quiz, then the open page, then (compact) back to the Wiki
+  tab. Only after that does it leave the app.
+- **Panes keep their state across size classes.** `HomePaneKeys` gives chat, the wiki page and
+  the open deck or quiz a GlobalKey each, so a rotation moves them rather than rebuilding them.
+  A review session, the quiz in progress and the chat scroll survive (tested). The compact tabs
+  sit in an `IndexedStack`, so switching tabs keeps them too. On a phone, opening a wiki page
+  no longer closes a review: each has its own tab.
+- **Compact:** app bar with the Class list, search and a menu (new/import class, class
+  settings, AI provider, theme, remote access on desktop, about); tabs Wiki / Chat / Study /
+  Sources; sources opened from a citation or the list are full-screen.
+- **Medium:** the rail picks Chat / Study / Sources for the secondary pane. The primary pane
+  holds the wiki, or the open deck or quiz beside the study list. The split has a 24 dp
+  handle with a visible grip and is saved like the expanded widths.
+- **Expanded:** unchanged, moved to `expanded_layout.dart`. The divider widget is now
+  `widgets/common/pane_divider.dart`, shared with the medium split.
+- The desktop window's minimum size dropped from 900x600 to 360x560, so all three layouts
+  can be tried by resizing it.
+- Tests: `test/responsive_layout_test.dart` covers the 4-size matrix, Back, rotation mid-review,
+  and the smallest window. That test found the chat starter cards overflowing a short screen;
+  they scroll now.
+- Left for W14: tap-target sizes in the lists, keyboard insets in chat, sheets, wide math and
+  tables. Left for W15: touch-friendly expanded dividers, the side-by-side source viewer, and
+  a physical or emulated tablet run.
+
 ### 10.13 Capture on mobile
 
 - **Files**: `file_picker` works on mobile. On iOS it copies the picked file into the app's

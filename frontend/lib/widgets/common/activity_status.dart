@@ -22,7 +22,10 @@ String describeOperation(String operation) => switch (operation) {
 /// What the backend is working on for the open Class, shown in the top bar
 /// where it stays visible with the sidebar collapsed. Click for details.
 class ActivityStatus extends ConsumerWidget {
-  const ActivityStatus({super.key});
+  const ActivityStatus({super.key, this.showIdleTitle = true});
+
+  /// Shows "Hypatia" when nothing is running; otherwise shows nothing.
+  final bool showIdleTitle;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -35,7 +38,9 @@ class ActivityStatus extends ConsumerWidget {
 
     final summary = _summary(tasks, files);
     if (summary == null) {
-      return Text('Hypatia', style: theme.textTheme.titleSmall);
+      return showIdleTitle
+          ? Text('Hypatia', style: theme.textTheme.titleSmall)
+          : const SizedBox.shrink();
     }
 
     return Semantics(

@@ -29,7 +29,9 @@ Future<void> main() async {
     await windowManager.ensureInitialized();
     const windowOptions = WindowOptions(
       size: Size(1280, 800),
-      minimumSize: Size(900, 600),
+      // Narrow enough for the phone and tablet layouts, which a narrowed
+      // window switches to.
+      minimumSize: Size(360, 560),
       center: true,
       title: 'Hypatia',
     );
