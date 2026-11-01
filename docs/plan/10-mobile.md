@@ -571,6 +571,29 @@ and Back handling, and builds one of `screens/home/{compact,medium,expanded}_lay
   vs menu, keyboard inset, every tab with content), plus phone cases in the study, provider
   dialog and remote access tests. Two desktop review tests now pin `TargetPlatform.windows`.
 
+**Done (2026-11-01, W15: tablet polish), except the device run.**
+- **Expanded dividers on touch:** 24 dp handles with a visible grip, and 48 dp collapsed
+  strips (`constrainPanelWidths` takes the divider and strip widths). Desktop keeps 12 and 32.
+  The collapse buttons and shortcuts stay.
+- **Source beside the page:** on a touch screen in the expanded layout, a tapped citation
+  (from the page or from chat) opens in a `SourcePanel` beside the page or open deck, held in
+  `sideSourceProvider`. The dialog's body is the same `SourcePanel`. Close or Back shuts it.
+  Turning to portrait (or entering split-screen) moves an open side source into the dialog.
+  Desktop still opens citations in a dialog.
+- **Rotation and resize:** the reading position survives a layout change (tested). The
+  review session, the quiz in progress and the chat already did (W13). Android's
+  `configChanges` already lists orientation, screenSize, smallestScreenSize and
+  screenLayout, so rotation, split-screen and folding don't restart the activity.
+  `resizeableActivity` is at its default, and nothing locks orientation. iPad allows every
+  orientation, without `UIRequiresFullScreen`, so Split View and Slide Over work.
+- **Keyboards and trackpads:** shortcuts use Cmd on iPadOS as on macOS (tested). A mouse on a
+  tablet keeps right-click file menus and hover tooltips. Swipe-to-rate ignores the mouse.
+- **Test matrix:** the 4 sizes from 10.12 in `responsive_layout_test.dart`, phone screens in
+  `phone_screens_test.dart`, tablet behaviour in `tablet_test.dart`. Touch vs desktop is
+  picked with `TargetPlatformVariant`.
+- **Not done: the run on a physical or emulated Android tablet.** This machine has the
+  Android SDK but no system image or AVD, and its SDK licenses aren't accepted. Still to do.
+
 ### 10.13 Capture on mobile
 
 - **Files**: `file_picker` works on mobile. On iOS it copies the picked file into the app's

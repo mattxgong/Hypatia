@@ -3,18 +3,25 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../providers/layout_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../widgets/common/activity_status.dart';
 import '../../widgets/common/pane_divider.dart';
 import '../../widgets/sidebar/sidebar.dart';
+import '../../widgets/source_viewer/source_viewer.dart';
+import '../../widgets/wiki_viewer/wiki_viewer.dart';
 import 'home_panes.dart';
 
 const _minimumCenterWidth = 400.0;
-const _collapsedStripWidth = 32.0;
 
-/// Space a resize handle takes: a 1px line inside an easy-to-grab strip.
+/// A collapsed pane's strip, and the space a resize handle takes (a 1px line
+/// inside an easy-to-grab strip): mouse-sized on desktop, finger-sized on a
+/// tablet, where the handle also shows a grip.
+const _collapsedStripWidth = 32.0;
 const _dividerWidth = 12.0;
+const _touchStripWidth = 48.0;
+const _touchDividerWidth = 24.0;
 
 class PanelWidths {
   const PanelWidths({required this.sidebar, required this.chat});
@@ -29,10 +36,12 @@ PanelWidths constrainPanelWidths({
   required double chatWidth,
   required bool sidebarCollapsed,
   required bool chatCollapsed,
+  double dividerWidth = _dividerWidth,
+  double stripWidth = _collapsedStripWidth,
 }) {
   final fixedWidth =
-      (sidebarCollapsed ? _collapsedStripWidth : _dividerWidth) +
-      (chatCollapsed ? _collapsedStripWidth : _dividerWidth);
+      (sidebarCollapsed ? stripWidth : dividerWidth) +
+      (chatCollapsed ? stripWidth : dividerWidth);
   final sideBudget = math.max(
     0.0,
     availableWidth - fixedWidth - _minimumCenterWidth,
@@ -84,10 +93,14 @@ class ExpandedLayout extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final studySelection = ref.watch(studySelectionProvider);
+    final sideSource = ref.watch(sideSourceProvider);
     final sidebarWidth = ref.watch(sidebarWidthProvider);
     final chatWidth = ref.watch(chatPanelWidthProvider);
     final sidebarCollapsed = ref.watch(sidebarCollapsedProvider);
     final chatCollapsed = ref.watch(chatPanelCollapsedProvider);
+    final touch = HypatiaTokens.touch(context);
+    final dividerWidth = touch ? _touchDividerWidth : _dividerWidth;
+    final stripWidth = touch ? _touchStripWidth : _collapsedStripWidth;
 
     return Scaffold(
       body: LayoutBuilder(
@@ -98,6 +111,8 @@ class ExpandedLayout extends ConsumerWidget {
             chatWidth: chatWidth,
             sidebarCollapsed: sidebarCollapsed,
             chatCollapsed: chatCollapsed,
+            dividerWidth: dividerWidth,
+            stripWidth: stripWidth,
           );
           void resizeSidebar(double delta) {
             final current = ref.read(sidebarWidthProvider);
@@ -118,7 +133,8 @@ class ExpandedLayout extends ConsumerWidget {
                 PaneDivider(
                   label: 'Resize class sidebar',
                   value: widths.sidebar,
-                  width: _dividerWidth,
+                  width: dividerWidth,
+                  showGrip: touch,
                   onDrag: resizeSidebar,
                   onIncrease: () => resizeSidebar(16),
                   onDecrease: () => resizeSidebar(-16),
@@ -126,15 +142,35 @@ class ExpandedLayout extends ConsumerWidget {
                       defaultSidebarWidth,
                 ),
               ] else
-                const _CollapsedSidebar(),
+                _CollapsedSidebar(width: stripWidth),
               Expanded(
                 child: Column(
                   children: [
                     const _TopBar(),
                     Expanded(
-                      child: studySelection == null
-                          ? const WikiPagePane()
-                          : StudyPane(selection: studySelection),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: studySelection == null
+                                ? const WikiPagePane()
+                                : StudyPane(selection: studySelection),
+                          ),
+                          if (sideSource != null) ...[
+                            const VerticalDivider(width: 1),
+                            Expanded(
+                              child: SourcePanel(
+                                request: sideSource,
+                                onClose: () =>
+                                    ref
+                                            .read(sideSourceProvider.notifier)
+                                            .state =
+                                        null,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -143,7 +179,8 @@ class ExpandedLayout extends ConsumerWidget {
                 PaneDivider(
                   label: 'Resize chat panel',
                   value: widths.chat,
-                  width: _dividerWidth,
+                  width: dividerWidth,
+                  showGrip: touch,
                   reverseKeyboardDirection: true,
                   onDrag: (delta) => resizeChat(-delta),
                   onIncrease: () => resizeChat(16),
@@ -155,6 +192,7 @@ class ExpandedLayout extends ConsumerWidget {
                 SizedBox(width: widths.chat, child: const ChatPane()),
               ] else
                 _CollapsedPanelStrip(
+                  width: stripWidth,
                   icon: Icons.chat_bubble_outline,
                   label: 'Show chat panel',
                   onTap: () =>
@@ -189,11 +227,13 @@ class _TopBar extends StatelessWidget {
 
 class _CollapsedPanelStrip extends StatelessWidget {
   const _CollapsedPanelStrip({
+    required this.width,
     required this.icon,
     required this.label,
     required this.onTap,
   });
 
+  final double width;
   final IconData icon;
   final String label;
   final VoidCallback onTap;
@@ -210,7 +250,7 @@ class _CollapsedPanelStrip extends StatelessWidget {
           child: InkWell(
             onTap: onTap,
             child: SizedBox(
-              width: _collapsedStripWidth,
+              width: width,
               child: Center(child: Icon(icon, size: 18)),
             ),
           ),
@@ -221,7 +261,9 @@ class _CollapsedPanelStrip extends StatelessWidget {
 }
 
 class _CollapsedSidebar extends ConsumerWidget {
-  const _CollapsedSidebar();
+  const _CollapsedSidebar({required this.width});
+
+  final double width;
 
   static const _sections = [
     (SidebarSection.wiki, Icons.menu_book_outlined, 'Wiki'),
@@ -235,7 +277,7 @@ class _CollapsedSidebar extends ConsumerWidget {
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: SizedBox(
-        width: _collapsedStripWidth,
+        width: width,
         child: Column(
           children: [
             const SizedBox(height: 4),
@@ -244,9 +286,9 @@ class _CollapsedSidebar extends ConsumerWidget {
                 icon: Icon(icon, size: 18),
                 tooltip: label,
                 onPressed: () => showSidebarSection(ref, section),
-                constraints: const BoxConstraints(
-                  minWidth: _collapsedStripWidth,
-                  minHeight: 40,
+                constraints: BoxConstraints(
+                  minWidth: width,
+                  minHeight: HypatiaTokens.touch(context) ? 48 : 40,
                 ),
                 padding: EdgeInsets.zero,
               ),

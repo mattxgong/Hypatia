@@ -13,6 +13,10 @@ final sourceViewerRequestProvider = StateProvider<SourceViewerRequest?>(
   (ref) => null,
 );
 
+/// The source shown beside the wiki page on a tablet in landscape, where a
+/// tapped citation opens next to the text instead of over it.
+final sideSourceProvider = StateProvider<SourceViewerRequest?>((ref) => null);
+
 class SourceViewerRequest {
   const SourceViewerRequest({required this.fileRef, required this.location});
   final String fileRef;

@@ -31,10 +31,24 @@ final _sourceFileProvider = FutureProvider.autoDispose
       return null;
     });
 
-class SourceViewerDialog extends ConsumerWidget {
+class SourceViewerDialog extends StatelessWidget {
   const SourceViewerDialog({super.key, required this.request});
 
   final SourceViewerRequest request;
+
+  @override
+  Widget build(BuildContext context) => _SourceDialogFrame(
+    child: SourcePanel(request: request, onClose: () => Navigator.pop(context)),
+  );
+}
+
+/// A cited source at its location, with a title bar and a close button: in a
+/// dialog, or in a pane beside the wiki page on a tablet.
+class SourcePanel extends ConsumerWidget {
+  const SourcePanel({super.key, required this.request, required this.onClose});
+
+  final SourceViewerRequest request;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -53,7 +67,8 @@ class SourceViewerDialog extends ConsumerWidget {
               .valueOrNull;
     final title = file?.originalFilename ?? request.fileRef;
 
-    return _SourceDialogFrame(
+    return Material(
+      color: theme.colorScheme.surface,
       child: Column(
         children: [
           Container(
@@ -83,13 +98,19 @@ class SourceViewerDialog extends ConsumerWidget {
                 const SizedBox(width: 8),
                 IconButton(
                   icon: const Icon(Icons.close, size: 18),
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: onClose,
                   tooltip: 'Close',
                 ),
               ],
             ),
           ),
-          Expanded(child: _SourceContent(request: request)),
+          Expanded(
+            // A new citation in the same pane loads afresh.
+            child: _SourceContent(
+              key: ValueKey((request.fileRef, request.location)),
+              request: request,
+            ),
+          ),
         ],
       ),
     );
@@ -121,7 +142,7 @@ class SourceViewerDialog extends ConsumerWidget {
 }
 
 class _SourceContent extends ConsumerWidget {
-  const _SourceContent({required this.request});
+  const _SourceContent({super.key, required this.request});
 
   final SourceViewerRequest request;
 

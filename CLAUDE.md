@@ -106,7 +106,8 @@ frontend/            Flutter application
     widgets/
       chat_panel/      Chat UI (message list, input, streaming)
       sidebar/         Sidebar (class dropdown, wiki tree, search bar, task indicator)
-      source_viewer/   Source file viewer (PDF, video, images, text)
+      source_viewer/   Source file viewer (PDF, video, images, text): SourcePanel, shown in
+                       a dialog (full-screen on phones) or beside the page on a tablet
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
       remote/          Remote access dialog (desktop): toggle, addresses, pairing

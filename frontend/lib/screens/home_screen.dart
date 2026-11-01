@@ -89,11 +89,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       showDestination(ref, HomeDestination.chat);
     });
     ref.listen(sourceViewerRequestProvider, (prev, next) {
-      if (next != null) {
+      if (next == null) return;
+      ref.read(sourceViewerRequestProvider.notifier).state = null;
+      // A tablet in landscape has room to show the source beside the text.
+      if (windowSizeClassOf(context) == WindowSizeClass.expanded &&
+          HypatiaTokens.touch(context)) {
+        ref.read(sideSourceProvider.notifier).state = next;
+      } else {
         showSourceViewer(context, next);
-        ref.read(sourceViewerRequestProvider.notifier).state = null;
       }
     });
+    // Turned to portrait (or split-screen) with a source open beside the
+    // page: there's no room for it there, so it carries on in a dialog.
+    final sideSource = ref.watch(sideSourceProvider);
+    if (!expanded && sideSource != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || ref.read(sideSourceProvider) != sideSource) return;
+        ref.read(sideSourceProvider.notifier).state = null;
+        showSourceViewer(context, sideSource);
+      });
+    }
     ref.listen(currentWikiPagePathProvider, (_, path) {
       // Opening a wiki page leaves the study view where the two share a
       // pane. On a phone each has its own tab, so a review stays open on the
@@ -119,6 +134,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ref.read(currentWikiPagePathProvider.notifier).state = null;
       ref.read(searchQueryProvider.notifier).state = '';
       ref.read(searchOpenProvider.notifier).state = false;
+      ref.read(sideSourceProvider.notifier).state = null;
     });
 
     return CallbackShortcuts(
@@ -230,8 +246,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 }
 
 /// Back (the Android back gesture or button) steps out of what's open, one
-/// step at a time, before it leaves the Class: search, then the open deck,
-/// quiz or page, then (on a phone) back to the Wiki tab.
+/// step at a time, before it leaves the Class: search, then a source open
+/// beside the page, then the open deck, quiz or page, then (on a phone) back
+/// to the Wiki tab.
 class _BackHandler extends ConsumerWidget {
   const _BackHandler({required this.sizeClass, required this.child});
 
@@ -247,6 +264,7 @@ class _BackHandler extends ConsumerWidget {
     final selection = ref.watch(studySelectionProvider);
     final page = ref.watch(currentWikiPagePathProvider);
     final tab = ref.watch(compactDestinationProvider);
+    final sideSource = ref.watch(sideSourceProvider);
 
     void closeStudy() => ref.read(studySelectionProvider.notifier).state = null;
     void closePage() =>
@@ -267,7 +285,12 @@ class _BackHandler extends ConsumerWidget {
                   : page != null
                   ? closePage
                   : null,
-            WindowSizeClass.expanded => selection != null ? closeStudy : null,
+            WindowSizeClass.expanded =>
+              sideSource != null
+                  ? () => ref.read(sideSourceProvider.notifier).state = null
+                  : selection != null
+                  ? closeStudy
+                  : null,
           };
 
     return PopScope(
