@@ -12,8 +12,13 @@ import 'widgets/common/hypatia_about_button.dart';
 import 'widgets/common/provider_setup_prompt.dart';
 import 'widgets/sidebar/class_dropdown.dart' show showCreateClassDialog;
 
+/// The router's navigator, for dialogs opened from outside the widget tree
+/// (the system tray menu).
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/',
     routes: [
       GoRoute(

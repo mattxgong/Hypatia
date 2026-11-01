@@ -46,7 +46,8 @@ jobs:
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev desktop-file-utils
+          # libayatana-appindicator3: the system tray (tray_manager).
+          sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev libayatana-appindicator3-dev desktop-file-utils
 
       - name: Read app version
         shell: pwsh

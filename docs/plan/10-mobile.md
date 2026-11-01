@@ -155,7 +155,20 @@ It's worth considering only if store distribution is unwanted (§10).
 
 ### 10.1 Remote-access mode and process lifetime
 
-**Remote-access setting done (2026-11-01, W6).** The tray (W9) and settings UI (W8) are not.
+**Remote-access setting done (2026-11-01, W6). Tray done (2026-11-01, W9).**
+- `services/desktop_window.dart` (`DesktopWindow`, previously `_BackendShutdown` in
+  `main.dart`) shows the tray icon only while remote access is on, refreshed after each
+  backend start. Closing then hides the window on Windows and macOS. On Linux it
+  minimizes instead, because GNOME without the AppIndicator extension draws no tray icon
+  and a hidden window couldn't be brought back. If the icon can't be created, closing
+  quits. A first-close dialog explains the behaviour once.
+- Tray menu: Open Hypatia, Pair a device... (opens the window and the Remote access
+  dialog), a status line with the port, and Quit Hypatia (the usual stop-the-backend path).
+- macOS keeps its Dock icon. Clicking the Dock icon while the window is hidden doesn't
+  reopen it yet; use the menu-bar icon.
+- Linux: `libayatana-appindicator3-dev` is in `build-desktop.yml`. The AppImage relies on
+  the system library, as it already does for libmpv, and the README lists it. Login
+  start (`launch_at_startup`) and "prevent sleep" are still deferred.
 - The setting is the launcher's, not `settings_store.py`'s: the launcher picks the bind
   address before the backend runs. It is stored as `remoteAccess` in
   `backend_launcher.json`. `BackendLauncher.setRemoteAccess` saves it and restarts the

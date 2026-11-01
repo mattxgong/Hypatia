@@ -291,6 +291,16 @@ flutter run -d windows
 
 ---
 
+## Hypatia keeps running after closing the window
+
+**Symptom**: Closing the window doesn't quit Hypatia, or you can't find the window again.
+
+**Cause**: While remote access is on, closing the window keeps Hypatia running so paired phones stay connected. On Windows and macOS it goes to the system tray (menu bar); on Linux the window minimizes instead, because GNOME shows no tray icons without the AppIndicator extension.
+
+**Solution**: Click the Hypatia tray icon to open it, or right-click it and choose **Quit Hypatia**. On Linux, restore it from the taskbar or dock; to see the tray icon on GNOME, install the "AppIndicator and KStatusNotifierItem Support" extension. To make closing quit again, turn remote access off. If Linux reports a missing `libayatana-appindicator3` library at startup, install `libayatana-appindicator3-1` (see the README).
+
+---
+
 ## Logs location
 
 Backend logs are written to `~/.hypatia/logs/hypatia.log` (rotating, JSON-structured). Override with `HYPATIA_LOGS_DIR` in `.env`.

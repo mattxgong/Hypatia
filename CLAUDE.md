@@ -94,6 +94,8 @@ frontend/            Flutter application
     services/
       api_client.dart     HTTP/WebSocket client for backend API
       backend_launcher.dart   Launches/manages the backend subprocess
+      desktop_window.dart     Window close/quit (stops the backend), system tray while
+                              remote access is on
     widgets/
       chat_panel/      Chat UI (message list, input, streaming)
       sidebar/         Sidebar (class dropdown, wiki tree, search bar, task indicator)
@@ -154,7 +156,9 @@ itself (see `frontend/lib/services/backend_launcher.dart` and Task 1.9).
 `providers/backend_provider.dart`. There is a single `MaterialApp.router`, whose
 `builder` (`widgets/backend_gate.dart`) shows the startup and error screens
 until the backend is ready. Closing the window or quitting (Cmd+Q) awaits
-`stopBackend()` first (`_BackendShutdown` in `main.dart`). As a backstop, the
+`stopBackend()` first (`DesktopWindow` in `services/desktop_window.dart`);
+while remote access is on, closing instead keeps Hypatia running in the
+system tray (minimized on Linux). As a backstop, the
 launcher sets `HYPATIA_EXIT_ON_STDIN_CLOSE=1`, so the backend shuts itself down
 when the app's stdin pipe closes, even if the app crashed.
 
