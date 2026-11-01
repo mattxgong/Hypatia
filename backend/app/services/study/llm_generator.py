@@ -211,12 +211,22 @@ def _mcq(body: str, rng: random.Random) -> tuple[dict, dict] | None:
 def _matching(body: str, rng: random.Random) -> tuple[dict, dict] | None:
     pairs = [(_tag(p, "term"), _tag(p, "definition")) for p in _PAIR_RE.findall(body)]
     pairs = [(t, d) for t, d in pairs if _fits(t) and _fits(d)]
-    if not 3 <= len(pairs) <= 6 or len({normalize_text(t) for t, _ in pairs}) != len(pairs):
+    if not 3 <= len(pairs) <= 6:
+        return None
+    # One-to-one: a repeated term or definition makes two answers equally right.
+    terms = {normalize_text(t) for t, _ in pairs}
+    definitions = {normalize_text(d) for _, d in pairs}
+    if len(terms) != len(pairs) or len(definitions) != len(pairs):
         return None
     order = list(range(len(pairs)))
     rng.shuffle(order)
     choices = {"left": [t for t, _ in pairs], "right": [pairs[i][1] for i in order]}
     return choices, {"pairs": [order.index(i) for i in range(len(pairs))]}
+
+
+def _points(raw: str) -> int:
+    """1-3 by difficulty; anything else counts as 1."""
+    return int(raw) if raw.strip() in ("1", "2", "3") else 1
 
 
 def parse_questions(
@@ -276,6 +286,7 @@ def parse_questions(
                 answer=answer_json,
                 choices=choices,
                 explanation=_tag(body, "explanation") or None,
+                points=_points(attrs.get("points", "")),
                 page_paths=[doc.path],
                 source_file_ids=list(doc.source_file_ids),
             )

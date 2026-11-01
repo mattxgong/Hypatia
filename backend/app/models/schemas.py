@@ -422,6 +422,7 @@ class QuizQuestionRead(BaseModel):
     question_type: QuestionType
     prompt: str
     choices: dict | None
+    points: int
     page_paths: list[str]
     stale: bool
 
@@ -452,7 +453,9 @@ class QuizAttemptCreate(BaseModel):
 
 class QuestionResultRead(BaseModel):
     question_id: uuid.UUID
+    # 0-1; the question is worth `points` of the attempt's max_score.
     score: float
+    points: int
     correct: bool | None
     status: str
     response: dict[str, Any] | None

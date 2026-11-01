@@ -2348,13 +2348,18 @@ components:
         choices:
           type: object
           nullable: true
+        points:
+          type: integer
+          minimum: 1
+          maximum: 3
+          description: Weight in the attempt score.
         page_paths:
           type: array
           items:
             type: string
         stale:
           type: boolean
-      required: [id, position, question_type, prompt, stale]
+      required: [id, position, question_type, prompt, points, stale]
 
     QuizSummaryRead:
       type: object
@@ -2417,8 +2422,10 @@ components:
           format: uuid
         score:
           type: number
+          description: Sum of each question's 0-1 score times its points.
         max_score:
           type: number
+          description: Sum of the questions' points.
         created_at:
           type: string
           format: date-time
@@ -2433,6 +2440,9 @@ components:
               score:
                 type: number
                 description: 0-1; matching gives partial credit.
+              points:
+                type: integer
+                description: What the question is worth; it earned score x points.
               correct:
                 type: boolean
                 nullable: true

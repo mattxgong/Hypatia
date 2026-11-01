@@ -82,6 +82,11 @@ reply saved to history.
 
 ### 11.2 Weighted questions and partial credit display
 
+**Done (2026-11-01).** The LLM sets `points="1|2|3"` on each `<question>` (open question 1:
+LLM-assigned, no per-quiz difficulty). Anything else counts as 1. True/false already
+required a `true`/`false` answer; matching now also rejects repeated definitions. Backups
+made before this import with every question at 1 point.
+
 **Implementation details:**
 - Add `points` (int, default 1) to `quiz_questions` with an Alembic migration, and include it
   in backups. The LLM prompt may assign 1-3 points by difficulty. Heuristic questions stay at 1.

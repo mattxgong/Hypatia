@@ -61,7 +61,7 @@ QuizSummary _quizSummary() => QuizSummary.fromJson({
   'created_at': '2026-10-01T00:00:00',
 });
 
-Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
+Quiz _quiz({bool twoQuestions = false, int points = 1}) => Quiz.fromJson({
   'id': 'quiz-1',
   'class_id': _classId,
   'name': 'NLP quiz',
@@ -80,6 +80,7 @@ Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
       'choices': {
         'options': ['A power law', 'A tokenizer'],
       },
+      'points': points,
       'page_paths': <String>[],
       'stale': false,
     },
@@ -142,6 +143,10 @@ class _FakeApi extends ApiClient {
     return due.firstWhere((c) => c.id == cardId);
   }
 
+  /// What the next submitted attempt scores on q1.
+  double resultScore = 1;
+  int resultPoints = 1;
+
   @override
   Future<QuizAttempt> submitQuizAttempt(
     String classId,
@@ -151,14 +156,15 @@ class _FakeApi extends ApiClient {
     submitted.add(answers);
     return QuizAttempt.fromJson({
       'id': 'a1',
-      'score': 1,
-      'max_score': 1,
+      'score': resultScore * resultPoints,
+      'max_score': resultPoints,
       'created_at': '2026-10-01T00:00:00',
       'results': [
         {
           'question_id': 'q1',
-          'score': 1,
-          'correct': true,
+          'score': resultScore,
+          'points': resultPoints,
+          'correct': resultScore == 1,
           'status': 'graded',
           'response': {'choice': 0},
           'expected': {'choice': 0},
@@ -436,9 +442,47 @@ void main() {
       'q1': {'choice': 0},
     });
     expect(find.text('Score: 1 / 1'), findsOneWidget);
-    expect(find.text('Correct'), findsOneWidget);
+    expect(find.text('Correct · 1 / 1'), findsOneWidget);
     expect(find.text('Rank and frequency follow a power law.'), findsOneWidget);
     expect(find.text('Retake'), findsOneWidget);
+  });
+
+  testWidgets('weighted questions show points and partial credit', (
+    tester,
+  ) async {
+    largeSurface(tester);
+    api
+      ..resultScore = 0.5
+      ..resultPoints = 3;
+    await tester.pumpWidget(
+      wrap(
+        const QuizView(quizId: 'quiz-1'),
+        overrides: [
+          quizProvider((
+            classId: _classId,
+            quizId: 'quiz-1',
+          )).overrideWith((ref) async => _quiz(points: 3)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Question 1 · Multiple choice · 3 points'),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.ancestor(
+        of: find.text('A power law'),
+        matching: find.byType(InkWell),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Score: 1.5 / 3'), findsOneWidget);
+    expect(find.text('50% · 1.5 / 3'), findsOneWidget);
   });
 
   testWidgets('a rating can be undone from its notice', (tester) async {

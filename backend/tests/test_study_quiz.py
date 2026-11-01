@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from app.models.db_models import CardType, QuestionType
+import uuid
+from typing import Any
+
+from app.models.db_models import CardType, QuestionType, Quiz, QuizQuestion
 from app.services.study.extractors import CardCandidate
 from app.services.study.grading import grade, normalize_answer
 from app.services.study.quiz_builder import BLANK, build_quiz, cloze_prompt, redact
+from app.services.study.service import apply_self_grades, grade_attempt
 
 ALL_TYPES = [QuestionType.MCQ, QuestionType.TRUE_FALSE, QuestionType.MATCHING, QuestionType.FILL]
 
@@ -148,3 +152,47 @@ class TestGrading:
         short = grade(QuestionType.SHORT, {"reference": "x"}, {"text": "an answer"})
         assert (short.status, short.correct) == ("needs_self_review", None)
         assert grade(QuestionType.SHORT, {}, {"self_grade": True}).correct is True
+
+
+def _question(qtype: QuestionType, answer: dict[str, Any], points: int) -> QuizQuestion:
+    return QuizQuestion(
+        id=uuid.uuid4(),
+        position=0,
+        question_type=qtype,
+        prompt="Q",
+        answer_json=answer,
+        points=points,
+    )
+
+
+class TestWeightedScore:
+    async def test_score_is_points_weighted(self) -> None:
+        tf = _question(QuestionType.TRUE_FALSE, {"value": True}, 1)
+        matching = _question(QuestionType.MATCHING, {"pairs": [0, 1, 2, 3]}, 2)
+        mcq = _question(QuestionType.MCQ, {"choice": 1}, 3)
+        quiz = Quiz(id=uuid.uuid4(), settings_json={"ai_grading": False})
+        answers: dict[uuid.UUID, dict[str, Any]] = {
+            tf.id: {"value": True},
+            matching.id: {"pairs": [0, 1, 3, 2]},  # half right: 0.5 x 2 points
+            mcq.id: {"choice": 0},
+        }
+
+        attempt = await grade_attempt(quiz, [tf, matching, mcq], answers)
+
+        assert attempt.max_score == 6
+        assert attempt.score == 2.0
+        assert attempt.grading_json[str(matching.id)]["score"] == 0.5
+
+    async def test_self_grades_keep_the_weighting(self) -> None:
+        short = _question(QuestionType.SHORT, {"reference": "r"}, 3)
+        tf = _question(QuestionType.TRUE_FALSE, {"value": True}, 1)
+        quiz = Quiz(id=uuid.uuid4(), settings_json={"ai_grading": False})
+        attempt = await grade_attempt(
+            quiz, [short, tf], {short.id: {"text": "answer"}, tf.id: {"value": True}}
+        )
+        assert attempt.score == 1.0
+
+        apply_self_grades(attempt, [short, tf], {short.id: True})
+
+        assert attempt.score == 4.0
+        assert attempt.max_score == 4

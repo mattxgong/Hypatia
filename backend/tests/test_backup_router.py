@@ -479,6 +479,7 @@ class TestStudyRoundTrip:
                     prompt="Pick",
                     choices_json={"options": ["a", "b"]},
                     answer_json={"choice": 1},
+                    points=3,
                 )
             )
             session.add(
@@ -535,6 +536,7 @@ class TestStudyRoundTrip:
             )
             assert new_question is not None and attempt is not None
             assert new_question.id != question_id
+            assert new_question.points == 3
             assert attempt.answers_json == {str(new_question.id): {"choice": 1}}
             assert attempt.grading_json == {str(new_question.id): {"score": 1.0}}
 

@@ -169,6 +169,7 @@ async def _quiz_read(session: AsyncSession, class_id: uuid.UUID, quiz: Quiz) -> 
                 question_type=q.question_type,
                 prompt=q.prompt,
                 choices=q.choices_json,
+                points=q.points,
                 page_paths=list(q.page_hashes or {}),
                 stale=service.is_stale(q.page_hashes, current),
             )
@@ -186,6 +187,7 @@ def _attempt_read(attempt: QuizAttempt, questions: list[QuizQuestion]) -> QuizAt
             QuestionResultRead(
                 question_id=question.id,
                 score=graded.get("score", 0.0),
+                points=question.points,
                 correct=graded.get("correct"),
                 status=graded.get("status", "unanswered"),
                 response=attempt.answers_json.get(key),

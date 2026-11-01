@@ -287,7 +287,8 @@ class _QuestionCard extends ConsumerWidget {
             Row(
               children: [
                 Text(
-                  'Question $number · ${question.type.label}',
+                  'Question $number · ${question.type.label} · '
+                  '${question.points} ${question.points == 1 ? 'point' : 'points'}',
                   style: theme.textTheme.labelMedium,
                 ),
                 const Spacer(),
@@ -402,15 +403,17 @@ class _ResultBadge extends StatelessWidget {
       ),
       _ => (Icons.cancel, scheme.error, 'Incorrect'),
     };
+    final graded = result.grader == 'ai' ? '$label (AI graded)' : label;
+    // Partial credit in points, e.g. "1.5 / 3"; nothing until a short answer is checked.
+    final earned = result.needsSelfReview
+        ? ''
+        : ' · ${formatScore(result.score * result.points)} / ${result.points}';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 4),
-        Text(
-          result.grader == 'ai' ? '$label (AI graded)' : label,
-          style: TextStyle(color: color),
-        ),
+        Text('$graded$earned', style: TextStyle(color: color)),
       ],
     );
   }

@@ -159,6 +159,32 @@ class TestParseQuestions:
             "rubric": "Mentions uncertainty.",
         }
 
+    def test_points_come_from_the_question_tag(self) -> None:
+        raw = "".join(
+            f'<question type="tf" page="{ENTROPY.path}"{attr}><prompt>Entropy is {i}.</prompt>'
+            "<answer>true</answer></question>"
+            for i, attr in enumerate(
+                ["", ' points="3"', ' points="2"', ' points="7"', ' points="x"']
+            )
+        )
+        assert [q.points for q in self._parse(raw)] == [1, 3, 2, 1, 1]
+
+    def test_true_false_needs_a_boolean_answer(self) -> None:
+        raw = f"""<question type="tf" page="{ENTROPY.path}"><prompt>Entropy is high.</prompt>
+<answer>sometimes</answer></question>"""
+        assert self._parse(raw) == []
+
+    def test_matching_must_be_one_to_one(self) -> None:
+        def matching(pairs: list[tuple[str, str]]) -> str:
+            body = "".join(
+                f"<pair><term>{t}</term><definition>{d}</definition></pair>" for t, d in pairs
+            )
+            return f'<question type="matching" page="{ENTROPY.path}">{body}</question>'
+
+        repeated_definition = matching([("A", "same"), ("B", "Same"), ("C", "c")])
+        repeated_term = matching([("A", "a"), ("a", "b"), ("C", "c")])
+        assert self._parse(repeated_definition + repeated_term) == []
+
     def test_disallowed_types_are_dropped(self) -> None:
         raw = f'<question type="tf" page="{ENTROPY.path}"><prompt>X.</prompt><answer>true</answer></question>'
         assert self._parse(raw, [QuestionType.MCQ]) == []

@@ -151,6 +151,8 @@ class _QuizQuestionManifest(_ManifestModel):
     choices_json: dict[str, object] | None = None
     answer_json: dict[str, object]
     explanation: str | None = None
+    # Absent in backups made before weighted questions.
+    points: int = Field(default=1, ge=1, le=3)
     page_hashes: dict[str, str] | None = None
     source_file_ids: list[uuid.UUID] | None = None
 
@@ -401,6 +403,7 @@ def _serialize_quiz(quiz: Quiz, questions: list[QuizQuestion], attempts: list[Qu
                 "choices_json": q.choices_json,
                 "answer_json": q.answer_json,
                 "explanation": q.explanation,
+                "points": q.points,
                 "page_hashes": q.page_hashes,
                 "source_file_ids": q.source_file_ids,
             }
@@ -549,6 +552,7 @@ def _restore_study(
                     choices_json=question.choices_json,
                     answer_json=question.answer_json,
                     explanation=question.explanation,
+                    points=question.points,
                     page_hashes=question.page_hashes,
                     source_file_ids=_mapped_file_ids(question.source_file_ids, file_id_map),
                 )

@@ -347,6 +347,7 @@ async def _save_quiz(
                 choices_json=draft.choices,
                 answer_json=draft.answer,
                 explanation=draft.explanation,
+                points=draft.points,
                 page_hashes={path: hashes[path] for path in draft.page_paths},
                 source_file_ids=draft.source_file_ids or None,
             )
@@ -638,9 +639,14 @@ async def grade_attempt(
         quiz_id=quiz.id,
         answers_json=answers_json,
         grading_json=grading,
-        score=sum(g["score"] for g in grading.values()),
-        max_score=float(len(questions)),
+        score=weighted_score(questions, grading),
+        max_score=float(sum(q.points for q in questions)),
     )
+
+
+def weighted_score(questions: Sequence[QuizQuestion], grading: dict[str, Any]) -> float:
+    """Each question's 0-1 score times its points, summed."""
+    return sum(grading.get(str(q.id), {}).get("score", 0.0) * q.points for q in questions)
 
 
 def apply_self_grades(
@@ -662,4 +668,4 @@ def apply_self_grades(
             "feedback": previous.get("feedback"),
         }
     attempt.grading_json = grading
-    attempt.score = sum(g.get("score", 0.0) for g in grading.values())
+    attempt.score = weighted_score(questions, grading)

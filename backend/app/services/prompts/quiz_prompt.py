@@ -54,4 +54,6 @@ Wrong choices must be plausible to someone who has not studied, never jokes.
 4. Keep math in the same TeX notation as the pages (\\( \\), \\[ \\], $ $).
 5. Only write the requested types, spread evenly, and no more than the requested count.
 6. If key facts are given, base questions on them first.
+7. Optionally add `points="1"`, `"2"` or `"3"` to a <question> by difficulty: 1 for \
+recall, 2 for applying an idea, 3 for multi-step reasoning. Omitted means 1.
 """

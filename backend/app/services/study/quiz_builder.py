@@ -46,6 +46,7 @@ class QuestionDraft:
     answer: dict
     choices: dict | None = None
     explanation: str | None = None
+    points: int = 1
     page_paths: list[str] = field(default_factory=list)
     source_file_ids: list[str] = field(default_factory=list)
 
