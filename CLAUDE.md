@@ -100,6 +100,8 @@ frontend/            Flutter application
       source_viewer/   Source file viewer (PDF, video, images, text)
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
+      remote/          Remote access dialog (desktop): toggle, addresses, pairing
+                       QR, paired devices; opened from the sidebar footer
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
                        status strip + file finished/failed notices)
   android/, ios/       Mobile targets (Phase 10), app ID com.mattxgong.hypatia.

@@ -305,6 +305,13 @@ Options, roughly in order of preference:
   recommend allowing it on public networks.
 - Desktop UI: Settings > Remote access shows the toggle, the port, the detected LAN and
   Tailscale URLs, "Pair a device" (QR), and the paired-device list.
+  **Done (2026-11-01, W8)** as a dialog from the sidebar footer (there is no app-wide
+  settings screen), shown only when this app runs the backend. Turning the toggle on or off
+  asks first, closes the dialog and restarts the backend. "Pair a device" shows the QR
+  (JSON `{urls, code, cert_sha256}`, dark on white in either theme) and the code as
+  `XXXX-XXXX` with a countdown. While a code is shown, the dialog checks for the new
+  device every 3 s, then hides the code. Each device shows when it was last seen, from
+  which IP, and a Revoke button.
 
 ### 10.4 Discovery (optional)
 

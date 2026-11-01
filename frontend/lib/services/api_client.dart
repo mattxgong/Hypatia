@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/chat_message.dart';
+import '../models/device.dart';
 import '../models/source_file.dart';
 import '../models/study.dart';
 import '../models/task_status.dart';
@@ -137,6 +138,49 @@ class ApiClient {
   Future<void> deleteClass(String classId) async {
     try {
       await _dio.delete<void>('/api/classes/$classId');
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  // --- Remote access and paired devices ---
+
+  Future<RemoteAccessStatus> getRemoteAccess() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/api/devices/remote-access',
+      );
+      return RemoteAccessStatus.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<PairingCode> createPairingCode() async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/api/devices/pairing-code',
+      );
+      return PairingCode.fromJson(response.data!);
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<List<Device>> listDevices() async {
+    try {
+      final response = await _dio.get<List<dynamic>>('/api/devices');
+      return response.data!
+          .map((e) => Device.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<void> revokeDevice(String deviceId) async {
+    try {
+      await _dio.delete<void>('/api/devices/$deviceId');
     } on DioException catch (e) {
       _handleError(e);
     }

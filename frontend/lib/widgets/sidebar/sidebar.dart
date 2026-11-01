@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../providers/backend_provider.dart';
 import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../utils/shortcuts.dart';
+import '../remote/remote_access_dialog.dart';
 import '../study/study_panel.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
@@ -130,6 +132,19 @@ class Sidebar extends ConsumerWidget {
                     minHeight: 32,
                   ),
                 ),
+                // Only the desktop app, which runs the backend, offers it.
+                if (ref.watch(backendLauncherProvider) != null)
+                  IconButton(
+                    icon: const Icon(Icons.phonelink_outlined, size: 18),
+                    onPressed: () => showRemoteAccessDialog(context),
+                    tooltip: 'Remote access',
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
                 const Spacer(),
                 const TaskIndicator(),
               ],
