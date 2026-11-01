@@ -2207,6 +2207,14 @@ components:
         stale_count:
           type: integer
           description: Cards whose source wiki pages changed since generation.
+        next_due_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the next already-studied card falls due, if later than now. New
+            cards are left out, since the daily new-card limit decides when they
+            appear.
         created_at:
           type: string
           format: date-time

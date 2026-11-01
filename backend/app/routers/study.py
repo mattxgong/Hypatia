@@ -114,7 +114,9 @@ async def _card_reads(
 async def _deck_reads(
     session: AsyncSession, class_id: uuid.UUID, decks: list[Deck]
 ) -> list[DeckRead]:
-    counts = await service.deck_counts(session, class_id, [d.id for d in decks], _now())
+    now = _now()
+    counts = await service.deck_counts(session, class_id, [d.id for d in decks], now)
+    next_due = await service.next_due(session, [d.id for d in decks], now)
     return [
         DeckRead(
             id=d.id,
@@ -126,6 +128,7 @@ async def _deck_reads(
             card_count=counts[d.id][0],
             due_count=counts[d.id][1],
             stale_count=counts[d.id][2],
+            next_due_at=next_due.get(d.id),
             created_at=d.created_at,
             updated_at=d.updated_at,
         )

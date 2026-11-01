@@ -330,6 +330,8 @@ class DeckRead(BaseModel):
     card_count: int
     due_count: int
     stale_count: int
+    # The earliest future due time among cards already studied; None if there is none.
+    next_due_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

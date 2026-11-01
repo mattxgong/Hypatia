@@ -9,6 +9,7 @@ import '../../providers/study_provider.dart';
 import '../../services/api_client.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
+import 'session_summary.dart';
 import 'study_actions.dart';
 
 const _sessionSize = 100;
@@ -42,6 +43,9 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
   final _focusNode = FocusNode();
   List<Flashcard> _queue = [];
   int _reviewed = 0;
+
+  /// This session's ratings in order, for the summary at the end.
+  final List<(Flashcard, ReviewRating)> _session = [];
   bool _revealed = false;
   bool _loading = true;
   bool _browsing = false;
@@ -76,6 +80,7 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       setState(() {
         _queue = [...cards]; // reordered as cards are rated
         _reviewed = 0;
+        _session.clear();
         _revealed = false;
       });
     } on ApiException catch (e) {
@@ -101,6 +106,7 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       // Missed cards come back at the end of this session.
       if (rating == ReviewRating.again) _queue.add(card);
       _reviewed++;
+      _session.add((card, rating));
       _revealed = false;
     });
     final messenger = ScaffoldMessenger.of(context);
@@ -143,6 +149,8 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
   }
 
   void _putBack(Flashcard card, ReviewRating rating) {
+    final index = _session.lastIndexWhere((r) => r.$1.id == card.id);
+    if (index >= 0) _session.removeAt(index);
     if (rating == ReviewRating.again) _queue.remove(card);
     _queue.insert(0, card);
     _reviewed = (_reviewed - 1).clamp(0, _reviewed);
@@ -180,6 +188,44 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       }
     });
     _afterChange();
+  }
+
+  Widget _summary() {
+    final classId = _classId;
+    final decks = classId == null
+        ? null
+        : ref.watch(deckListProvider(classId)).valueOrNull;
+    final deck = decks?.where((d) => d.id == widget.deckId).firstOrNull;
+    final ratings = <ReviewRating, int>{};
+    for (final (_, rating) in _session) {
+      ratings[rating] = (ratings[rating] ?? 0) + 1;
+    }
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: SessionSummary(
+          ratings: ratings,
+          weak: weakPages(
+            _session
+                .where((r) => r.$2 == ReviewRating.again)
+                .map((r) => r.$1.pagePaths),
+          ),
+          dueNow: deck?.dueCount ?? 0,
+          nextDue: deck?.nextDueAt,
+          actions: [
+            if ((deck?.dueCount ?? 0) > 0)
+              FilledButton(
+                onPressed: _loadDue,
+                child: const Text('Keep studying'),
+              ),
+            OutlinedButton(
+              onPressed: () => setState(() => _browsing = true),
+              child: const Text('Browse cards'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -249,6 +295,7 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
         child: ErrorCard(error: _error!, onRetry: _loadDue),
       );
     }
+    if (_queue.isEmpty && _session.isNotEmpty) return _summary();
     if (_queue.isEmpty) {
       return _AllCaughtUp(
         reviewed: _reviewed,

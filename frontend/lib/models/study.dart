@@ -74,6 +74,7 @@ class Deck {
     required this.cardCount,
     required this.dueCount,
     required this.staleCount,
+    this.nextDueAt,
     required this.createdAt,
   });
 
@@ -86,6 +87,10 @@ class Deck {
     cardCount: json['card_count'] as int,
     dueCount: json['due_count'] as int,
     staleCount: json['stale_count'] as int,
+    nextDueAt: switch (json['next_due_at']) {
+      final String at => DateTime.parse(at).toLocal(),
+      _ => null,
+    },
     createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
   );
 
@@ -97,6 +102,9 @@ class Deck {
   final int cardCount;
   final int dueCount;
   final int staleCount;
+
+  /// When the next already-studied card falls due, if later than now.
+  final DateTime? nextDueAt;
   final DateTime createdAt;
 }
 

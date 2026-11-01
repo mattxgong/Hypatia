@@ -110,6 +110,12 @@ tests for malformed matching and true/false output.
 
 ### 11.3 Session summary screen
 
+**Done (2026-11-01).** `widgets/study/session_summary.dart`, shared by the flashcard
+session's end and the top of quiz results. `DeckRead.next_due_at` is the earliest future
+`due_at` among cards already studied; new cards are left out, because the daily limit
+decides when they appear. Undo removes a rating from the summary too. The icon pops in,
+unless `MediaQuery.disableAnimations` is set.
+
 When a flashcard review session or quiz ends, replace the bare "done" state with a summary:
 cards reviewed per rating, quiz score, the wiki pages with the most misses (links), and when
 the next cards are due.

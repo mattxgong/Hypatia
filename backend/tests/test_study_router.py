@@ -240,7 +240,10 @@ class TestReview:
 
         remaining = (await client.get(f"{base}/due", params={"limit": 500})).json()
         assert due[0]["id"] not in {c["id"] for c in remaining}
-        assert (await client.get(base)).json()["due_count"] == deck["card_count"] - 1
+        after = (await client.get(base)).json()
+        assert after["due_count"] == deck["card_count"] - 1
+        assert deck["next_due_at"] is None  # nothing studied yet
+        assert after["next_due_at"] == reviewed["due_at"]
 
     async def test_invalid_rating(self, client: AsyncClient, class_id: uuid.UUID) -> None:
         deck = await _generate_deck(client, class_id)

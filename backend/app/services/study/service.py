@@ -491,6 +491,27 @@ async def deck_counts(
     }
 
 
+async def next_due(
+    session: AsyncSession, deck_ids: Sequence[uuid.UUID], now: datetime
+) -> dict[uuid.UUID, datetime]:
+    """When each deck's next studied card falls due, for decks with one in the future.
+
+    New cards are left out: when they appear depends on the daily new-card limit.
+    """
+    if not deck_ids:
+        return {}
+    rows = await session.execute(
+        select(Flashcard.deck_id, func.min(Flashcard.due_at))
+        .where(
+            Flashcard.deck_id.in_(deck_ids),
+            Flashcard.first_reviewed_at.is_not(None),
+            Flashcard.due_at > now,
+        )
+        .group_by(Flashcard.deck_id)
+    )
+    return {deck_id: due_at for deck_id, due_at in rows.tuples()}
+
+
 async def refresh_stale_cards(
     session: AsyncSession, class_id: uuid.UUID, deck: Deck
 ) -> RefreshResult:

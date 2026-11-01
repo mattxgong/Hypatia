@@ -22,6 +22,7 @@ import 'package:frontend/widgets/sidebar/sidebar.dart';
 import 'package:frontend/widgets/study/flashcard_review.dart';
 import 'package:frontend/widgets/study/generate_study_dialog.dart';
 import 'package:frontend/widgets/study/quiz_view.dart';
+import 'package:frontend/widgets/study/session_summary.dart';
 
 const _classId = 'class-1';
 
@@ -39,15 +40,16 @@ Flashcard _card(String id, String front, String back, {CardType? type}) =>
       'interval_days': 0,
     });
 
-Deck _deck() => Deck.fromJson({
+Deck _deck({int due = 2, String? nextDue}) => Deck.fromJson({
   'id': 'deck-1',
   'class_id': _classId,
   'name': 'NLP flashcards',
   'description': null,
   'generation_method': 'heuristic',
   'card_count': 2,
-  'due_count': 2,
+  'due_count': due,
   'stale_count': 1,
+  'next_due_at': nextDue,
   'created_at': '2026-10-01T00:00:00',
 });
 
@@ -280,11 +282,13 @@ class _MockClassListNotifier extends ClassListNotifier {
 void main() {
   late SharedPreferences prefs;
   late _FakeApi api;
+  late Deck deck;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     api = _FakeApi();
+    deck = _deck();
   });
 
   Widget wrap(
@@ -312,7 +316,7 @@ void main() {
         fileListProvider(
           _classId,
         ).overrideWith((ref) async => const <SourceFile>[]),
-        deckListProvider(_classId).overrideWith((ref) async => [_deck()]),
+        deckListProvider(_classId).overrideWith((ref) async => [deck]),
         quizListProvider(
           _classId,
         ).overrideWith((ref) async => [_quizSummary()]),
@@ -424,7 +428,59 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.digit4);
     await tester.pumpAndSettle();
     expect(api.reviews.last, ('c2', ReviewRating.easy));
-    expect(find.text('All caught up'), findsOneWidget);
+    expect(find.text('Reviewed 2 cards'), findsOneWidget);
+    expect(find.text('Good: 1'), findsOneWidget);
+    expect(find.text('Easy: 1'), findsOneWidget);
+    expect(find.text('No misses this time.'), findsOneWidget);
+    expect(find.text('2 more cards are due now.'), findsOneWidget);
+    expect(find.text('Keep studying'), findsOneWidget);
+  });
+
+  testWidgets('a session of misses points at the pages to revisit', (
+    tester,
+  ) async {
+    largeSurface(tester);
+    final soon = DateTime.now().add(const Duration(minutes: 10, seconds: 30));
+    deck = _deck(due: 0, nextDue: soon.toUtc().toIso8601String());
+    api.due = [_card('c1', 'What is entropy?', 'Uncertainty.')];
+    await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+    await tester.pumpAndSettle();
+
+    // Again sends the card to the back of this session; Easy then finishes it.
+    for (final rating in [
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit4,
+    ]) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(rating);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('Reviewed 2 cards'), findsOneWidget);
+    expect(find.text('Again: 1'), findsOneWidget);
+    expect(find.text('Worth another look:'), findsOneWidget);
+    expect(find.text('x.md (1 miss)'), findsOneWidget);
+    expect(find.text('Next review in 10 minutes.'), findsOneWidget);
+    expect(find.text('Keep studying'), findsNothing);
+  });
+
+  testWidgets('summaries skip the pop-in when animations are off', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        const MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: SessionSummary(score: 0, maxScore: 2),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(TweenAnimationBuilder<double>), findsNothing);
+    expect(find.text('You earned 0 of 2 points'), findsOneWidget);
+    expect(find.text('No wiki pages to revisit.'), findsOneWidget);
   });
 
   testWidgets('quiz answers are submitted and graded', (tester) async {
@@ -460,6 +516,8 @@ void main() {
     expect(find.text('Score: 1 / 1'), findsOneWidget);
     expect(find.text('Correct · 1 / 1'), findsOneWidget);
     expect(find.text('Review my mistakes'), findsNothing);
+    expect(find.text('You earned 1 of 1 point'), findsOneWidget);
+    expect(find.text('No misses this time.'), findsOneWidget);
     expect(find.text('Rank and frequency follow a power law.'), findsOneWidget);
     expect(find.text('Retake'), findsOneWidget);
   });
@@ -508,6 +566,8 @@ void main() {
 
     expect(find.text('Score: 1.5 / 3'), findsOneWidget);
     expect(find.text('50% · 1.5 / 3'), findsOneWidget);
+    // The question cites no wiki page, so there is nothing to point at.
+    expect(find.text('No wiki pages to revisit.'), findsOneWidget);
 
     await tester.tap(find.text('Review my mistakes'));
     await tester.pumpAndSettle();

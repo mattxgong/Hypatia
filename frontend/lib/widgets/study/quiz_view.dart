@@ -11,6 +11,7 @@ import '../../services/api_client.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
 import 'flashcard_review.dart' show studyMarkdownStyle;
+import 'session_summary.dart';
 
 /// Center-panel practice quiz: answer every question, submit, review results.
 class QuizView extends ConsumerStatefulWidget {
@@ -241,8 +242,25 @@ class _QuizViewState extends ConsumerState<QuizView> {
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(24),
-            itemCount: quiz.questions.length,
+            itemCount: quiz.questions.length + (attempt == null ? 0 : 1),
             itemBuilder: (context, index) {
+              if (attempt != null) {
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 24),
+                    child: SessionSummary(
+                      score: attempt.score,
+                      maxScore: attempt.maxScore,
+                      weak: weakPages(
+                        quiz.questions
+                            .where((q) => (results[q.id]?.score ?? 0) < 0.5)
+                            .map((q) => q.pagePaths),
+                      ),
+                    ),
+                  );
+                }
+                index--;
+              }
               final question = quiz.questions[index];
               return Center(
                 child: ConstrainedBox(
