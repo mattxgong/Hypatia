@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/theme.dart';
 import '../providers/chat_provider.dart';
 import '../providers/class_provider.dart';
 import '../providers/search_provider.dart';
@@ -414,20 +415,15 @@ class _DropOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      color: theme.colorScheme.primary.withValues(alpha: 0.1),
+      color: HypatiaTokens.of(context).accentTint,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: HypatiaTokens.cornersLarge,
             border: Border.all(color: theme.colorScheme.primary, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                blurRadius: 20,
-              ),
-            ],
+            boxShadow: HypatiaTokens.of(context).shadowHigh,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

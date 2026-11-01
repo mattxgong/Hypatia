@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
-
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/input_validation.dart';
@@ -483,7 +482,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                       child: Icon(
                         _testResult! ? Icons.check_circle : Icons.cancel,
                         color: _testResult!
-                            ? StatusColors.of(context).success
+                            ? HypatiaTokens.of(context).success
                             : theme.colorScheme.error,
                         size: 20,
                       ),
@@ -498,7 +497,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                               : (_testError ?? 'Connection failed'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: _testResult!
-                                ? StatusColors.of(context).success
+                                ? HypatiaTokens.of(context).success
                                 : theme.colorScheme.error,
                           ),
                           maxLines: 4,

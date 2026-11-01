@@ -140,7 +140,7 @@ class _StartupStep extends StatelessWidget {
       _StepState.done => Icon(
         Icons.check_circle,
         size: 20,
-        color: StatusColors.of(context).success,
+        color: HypatiaTokens.of(context).success,
       ),
       _StepState.active => const SizedBox.square(
         dimension: 20,

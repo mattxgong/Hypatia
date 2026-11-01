@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
-
 import '../../models/study.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
@@ -429,7 +428,7 @@ class _ResultBadge extends StatelessWidget {
       ),
       _ when result.correct == true => (
         Icons.check_circle,
-        StatusColors.of(context).success,
+        HypatiaTokens.of(context).success,
         'Correct',
       ),
       _ when result.score > 0 => (
@@ -553,10 +552,10 @@ class _ChoiceList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Material(
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: HypatiaTokens.corners,
                 side: BorderSide(
                   color: correct == i
-                      ? StatusColors.of(context).success
+                      ? HypatiaTokens.of(context).success
                       : selected == i
                       ? theme.colorScheme.primary
                       : theme.dividerColor,
@@ -564,7 +563,7 @@ class _ChoiceList extends StatelessWidget {
                 ),
               ),
               child: InkWell(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: HypatiaTokens.corners,
                 onTap: enabled ? () => onSelect(i) : null,
                 child: Padding(
                   padding: const EdgeInsets.all(10),
@@ -669,7 +668,7 @@ class _MatchingInput extends StatelessWidget {
                       : '\u2192 ${_letter(expected![i])}',
                   style: TextStyle(
                     color: current[i] == expected![i]
-                        ? StatusColors.of(context).success
+                        ? HypatiaTokens.of(context).success
                         : theme.colorScheme.error,
                   ),
                 ),

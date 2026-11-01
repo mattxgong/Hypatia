@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../config/theme.dart';
+
 class ProviderIcon extends StatelessWidget {
   const ProviderIcon({super.key, required this.providerId, this.size = 20});
 
@@ -36,25 +38,6 @@ class ProviderIcon extends StatelessWidget {
     }
   }
 
-  Color _colorFor(String id, BuildContext context) {
-    final theme = Theme.of(context);
-    switch (id) {
-      case 'copilot':
-        return theme.brightness == Brightness.dark
-            ? const Color(0xFF79C0FF)
-            : const Color(0xFF24292F);
-      case 'anthropic':
-        return const Color(0xFFD97706);
-      case 'openai':
-        return const Color(0xFF10A37F);
-      case 'ollama':
-        return theme.brightness == Brightness.dark
-            ? Colors.white70
-            : const Color(0xFF333333);
-      case 'copilot-ollama':
-        return theme.colorScheme.secondary;
-      default:
-        return theme.colorScheme.onSurface;
-    }
-  }
+  Color _colorFor(String id, BuildContext context) =>
+      ProviderBrandColors.of(id, Theme.of(context));
 }

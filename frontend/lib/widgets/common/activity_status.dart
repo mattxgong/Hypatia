@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../models/source_file.dart';
 import '../../models/task_status.dart';
 import '../../providers/class_provider.dart';
@@ -42,7 +43,7 @@ class ActivityStatus extends ConsumerWidget {
       button: true,
       label: summary,
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: HypatiaTokens.cornersLarge,
         onTap: () => showActiveTasksDialog(context),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

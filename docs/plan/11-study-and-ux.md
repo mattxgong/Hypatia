@@ -132,6 +132,15 @@ with no page references.
 
 ### 11.4 Semantic theme tokens
 
+**Done (2026-11-01).** `HypatiaTokens` in `config/theme.dart` replaces `StatusColors`. It
+holds text levels, hairline/strong lines, the accent tint, success/warning/danger and three
+shadows, all derived from the color scheme. Radius 10 is the base; small (6), large (16)
+and pill derive from it. Cards, dialogs, inputs and snack bars use them. Provider brand
+colors moved to `ProviderBrandColors`. `test/theme_test.dart` fails on any `Color(0x` or
+`BorderRadius.circular(<n>)` outside the theme. Not done: frosted backgrounds, because
+nothing floats over scrolling content yet (the chat input sits below the list). The font
+stays the platform default; decide on bundling one before 10.12.
+
 Replace ad-hoc colors and radii with one theme extension so every later layout (including
 Phase 10's) reads the same slots.
 

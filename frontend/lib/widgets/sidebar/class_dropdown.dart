@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../config/theme.dart';
 import '../../providers/class_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/input_validation.dart';
@@ -44,7 +45,7 @@ class ClassDropdown extends ConsumerWidget {
                     vertical: 8,
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: HypatiaTokens.corners,
                     borderSide: BorderSide.none,
                   ),
                   filled: true,
