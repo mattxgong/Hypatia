@@ -541,7 +541,10 @@ work in W18.
   - Against the real backend: the fingerprint the phone fetches matches the desktop's,
     an address with nothing listening fails rather than hangs, and a typed lower-case,
     dashed code pairs and learns the desktop's other addresses.
-- **Not yet run on a device:** the camera and permission prompts need a phone or emulator.
+- **On an Android emulator** (Pixel 8, Android 16, 2026-11-02): a typed code paired with the
+  desktop app (`flutter run -d windows`, Remote access on), and the app works over the
+  pinned connection. QR scanning by camera and the permission prompt are still to try on
+  a device.
 
 ### 10.12 Responsive layout
 
