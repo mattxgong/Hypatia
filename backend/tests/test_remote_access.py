@@ -93,6 +93,17 @@ class TestStatusEndpoint:
         }
         assert (code["urls"], code["cert_sha256"]) == (["https://lan:8765"], expected)
 
+    async def test_pairing_returns_every_address(self, client: AsyncClient) -> None:
+        settings.remote_access_enabled = True
+        settings.remote_port = 8765
+        code = (await client.post("/api/devices/pairing-code", headers=LOCAL)).json()["code"]
+
+        paired = (
+            await client.post("/api/devices/pair", json={"code": code, "device_name": "Pixel"})
+        ).json()
+
+        assert paired["urls"] == ["https://lan:8765"]
+
     async def test_devices_cannot_read_it(self, client: AsyncClient) -> None:
         code = (await client.post("/api/devices/pairing-code", headers=LOCAL)).json()["code"]
         token = (

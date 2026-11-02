@@ -78,7 +78,8 @@ async def pair(body: PairRequest, session: AsyncSession = Depends(get_session)) 
         raise HypatiaError(ErrorCode.PAIRING_CODE_INVALID)
     device, token = await device_auth.create_device(session, body.device_name)
     logger.info("device_paired", device_id=str(device.id), name=device.name)
-    return PairResponse(device=DeviceRead.model_validate(device), token=token)
+    status = await _remote_status()
+    return PairResponse(device=DeviceRead.model_validate(device), token=token, urls=status.urls)
 
 
 @router.get("", response_model=list[DeviceRead])

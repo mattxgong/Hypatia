@@ -8,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../config/theme.dart';
 import '../../models/device.dart';
+import '../../models/paired_desktop.dart';
 import '../../providers/backend_provider.dart';
 import '../../providers/remote_access_provider.dart';
 import '../../services/api_client.dart';
@@ -300,7 +301,8 @@ class _RemoteAccessDialogState extends ConsumerState<RemoteAccessDialog> {
     return Column(
       children: [
         Text(
-          'Scan with the Hypatia app on your phone, or type the code.',
+          'Scan with the Hypatia app on your phone, or type one of the '
+          'addresses above and this code.',
           style: theme.textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
@@ -333,6 +335,14 @@ class _RemoteAccessDialogState extends ConsumerState<RemoteAccessDialog> {
           'Expires in ${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}',
           style: theme.textTheme.bodySmall,
         ),
+        // A phone given the code by hand checks this before pairing.
+        if (code.certSha256 case final cert?) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Fingerprint ${shortFingerprint(cert)}',
+            style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          ),
+        ],
         const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,

@@ -219,8 +219,11 @@ class ConnectionNotifier extends Notifier<RemoteConnection> {
       }
       final body = response.data!;
       final device = body['device'] as Map<String, dynamic>;
+      // The desktop lists all its addresses (LAN, then Tailscale); keep any
+      // typed one it doesn't know, such as a host name.
+      final known = (body['urls'] as List<dynamic>? ?? const []).cast<String>();
       final desktop = PairedDesktop(
-        urls: payload.urls,
+        urls: {...known, ...payload.urls}.toList(),
         token: body['token'] as String,
         certSha256: payload.certSha256,
         deviceId: device['id'] as String,

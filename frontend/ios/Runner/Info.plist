@@ -53,6 +53,8 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Hypatia uses the camera to scan the pairing code shown by Hypatia on your computer.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Hypatia connects to Hypatia on your computer over your local network.</string>
 	<key>UISupportedInterfaceOrientations</key>

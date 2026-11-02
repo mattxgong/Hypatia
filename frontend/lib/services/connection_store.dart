@@ -81,3 +81,35 @@ void installCertificatePin(String? certSha256) {
 final certificatePinProvider = Provider<void Function(String?)>(
   (ref) => installCertificatePin,
 );
+
+/// The SHA-256 of the certificate the server at [origin] presents, accepted
+/// whatever it is: for a code typed by hand, whose fingerprint the user then
+/// checks against the one the desktop shows. Throws [SocketException],
+/// [HandshakeException] or a timeout when nothing answers.
+Future<String> fetchCertificateFingerprint(String origin) async {
+  final uri = Uri.parse(origin);
+  X509Certificate? presented;
+  final socket = await SecureSocket.connect(
+    uri.host,
+    uri.port,
+    onBadCertificate: (cert) {
+      presented = cert;
+      return true;
+    },
+    timeout: const Duration(seconds: 5),
+  );
+  try {
+    final cert = socket.peerCertificate ?? presented;
+    if (cert == null) {
+      throw const HandshakeException('The computer sent no certificate.');
+    }
+    return sha256.convert(cert.der).toString();
+  } finally {
+    socket.destroy();
+  }
+}
+
+final certificateFingerprintProvider =
+    Provider<Future<String> Function(String origin)>(
+      (ref) => fetchCertificateFingerprint,
+    );

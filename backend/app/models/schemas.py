@@ -523,3 +523,6 @@ class PairResponse(BaseModel):
     device: DeviceRead
     # Shown once; only its hash is stored.
     token: str
+    # Every address the desktop answers at, so a phone paired by typing one
+    # still has the others to fall back on.
+    urls: list[str] = []

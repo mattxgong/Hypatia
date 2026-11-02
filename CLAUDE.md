@@ -116,7 +116,9 @@ frontend/            Flutter application
       remote/          Remote access dialog (desktop): toggle, addresses, pairing
                        QR, paired devices; opened from the sidebar footer.
                        connection_gate.dart (phone): connection screens, offline
-                       banner, pause polling in the background, reconnect on resume
+                       banner, pause polling in the background, reconnect on resume,
+                      "Your computer" dialog. pairing_screen.dart (phone): pair by
+                      QR scan, or typed address + code with a fingerprint check
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
                        status strip + file finished/failed notices; pane_divider.dart;
                        action_menu.dart: menu, or bottom sheet on a phone)
@@ -305,7 +307,8 @@ therefore checks every HTTP request and WebSocket handshake:
 - A paired device's token works too (Phase 10, `devices` table). The desktop
   shows a single-use code from `POST /api/devices/pairing-code` (launch token
   only, via `require_local_client`), and the phone redeems it at the open
-  `POST /api/devices/pair`. Only token SHA-256s are stored; revoked devices get
+  `POST /api/devices/pair`, which also returns all the desktop's addresses. Only
+  token SHA-256s are stored; revoked devices get
   401 `AUTH_INVALID`. `request.state.principal` is `"local"` or the device ID.
   Without a launch token every request counts as local, so remote access must
   never bind beyond loopback unless one is set.

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/backend_provider.dart';
 import '../../providers/class_provider.dart';
+import '../../providers/connection_provider.dart';
 import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/study_provider.dart';
@@ -11,6 +12,7 @@ import '../../providers/wiki_provider.dart';
 import '../../utils/shortcuts.dart';
 import '../../widgets/chat_panel/chat_panel.dart';
 import '../../widgets/common/hypatia_about_button.dart';
+import '../../widgets/remote/connection_gate.dart';
 import '../../widgets/remote/remote_access_dialog.dart';
 import '../../widgets/sidebar/add_file_button.dart';
 import '../../widgets/sidebar/class_dropdown.dart';
@@ -291,6 +293,7 @@ enum _MoreAction {
   aiProvider,
   theme,
   remoteAccess,
+  pairedComputer,
   about,
 }
 
@@ -303,6 +306,7 @@ class _MoreMenu extends ConsumerWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     // Only the desktop app, which runs the backend, offers it.
     final canShareBackend = ref.watch(backendLauncherProvider) != null;
+    final remoteClient = ref.watch(remoteClientProvider);
 
     PopupMenuItem<_MoreAction> item(
       _MoreAction value,
@@ -334,6 +338,8 @@ class _MoreMenu extends ConsumerWidget {
             ref.read(themeModeProvider.notifier).toggle();
           case _MoreAction.remoteAccess:
             showRemoteAccessDialog(context);
+          case _MoreAction.pairedComputer:
+            showPairedComputerDialog(context);
           case _MoreAction.about:
             showHypatiaAboutDialog(context);
         }
@@ -363,6 +369,12 @@ class _MoreMenu extends ConsumerWidget {
             _MoreAction.remoteAccess,
             Icons.phonelink_outlined,
             'Remote access…',
+          ),
+        if (remoteClient)
+          item(
+            _MoreAction.pairedComputer,
+            Icons.computer_outlined,
+            'Your computer…',
           ),
         item(_MoreAction.about, Icons.info_outline, 'About Hypatia'),
       ],

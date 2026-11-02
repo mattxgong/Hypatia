@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/connection_provider.dart';
 import '../../providers/foreground_provider.dart';
 import '../../services/websocket_service.dart';
+import 'pairing_screen.dart';
 
 /// On a phone: shows [child] (the app) once the paired desktop answers, and
 /// the pairing or connection screens until then. After the first connection
@@ -63,16 +64,21 @@ class _ConnectionGateState extends ConsumerState<ConnectionGate> {
         ],
       );
     }
-    return switch (status) {
-      ConnectionStatus.connected => widget.child,
-      ConnectionStatus.unpaired => const _UnpairedScreen(),
-      ConnectionStatus.unauthorized => const _UnauthorizedScreen(),
+    if (status == ConnectionStatus.connected) return widget.child;
+    final screen = switch (status) {
+      ConnectionStatus.unpaired => const PairingScreen(),
+      ConnectionStatus.unauthorized => const PairingScreen(again: true),
       ConnectionStatus.desktopUnreachable => _UnreachableScreen(
         connection: connection,
       ),
-      ConnectionStatus.checking ||
-      ConnectionStatus.connecting => const _ConnectingScreen(),
+      _ => const _ConnectingScreen(),
     };
+    // These screens stand in for the app's router, so give them the
+    // navigator and overlay text fields need.
+    return Navigator(
+      pages: [MaterialPage<void>(key: const ValueKey('gate'), child: screen)],
+      onDidRemovePage: (_) {},
+    );
   }
 }
 
@@ -90,37 +96,40 @@ class _OfflineBanner extends ConsumerWidget {
     }
     final theme = Theme.of(context);
     final retrying = connection.status == ConnectionStatus.connecting;
-    return Material(
-      color: theme.colorScheme.errorContainer,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-          child: Row(
-            children: [
-              Icon(
-                Icons.cloud_off_outlined,
-                size: 18,
-                color: theme.colorScheme.onErrorContainer,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  retrying
-                      ? 'Reconnecting to your computer…'
-                      : "Can't reach your computer. Retrying.",
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onErrorContainer,
+    return Semantics(
+      liveRegion: true,
+      child: Material(
+        color: theme.colorScheme.errorContainer,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.cloud_off_outlined,
+                  size: 18,
+                  color: theme.colorScheme.onErrorContainer,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    retrying
+                        ? 'Reconnecting to your computer…'
+                        : "Can't reach your computer. Retrying.",
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onErrorContainer,
+                    ),
                   ),
                 ),
-              ),
-              TextButton(
-                onPressed: retrying
-                    ? null
-                    : () => ref.read(connectionProvider.notifier).probe(),
-                child: const Text('Retry'),
-              ),
-            ],
+                TextButton(
+                  onPressed: retrying
+                      ? null
+                      : () => ref.read(connectionProvider.notifier).probe(),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -128,23 +137,40 @@ class _OfflineBanner extends ConsumerWidget {
   }
 }
 
-class _GateScreen extends StatelessWidget {
-  const _GateScreen({
+/// The layout of the screens shown before the app: an icon, a title and an
+/// explanation, then [children] (fields) and [actions] (buttons), centered.
+/// With [onBack], a back button steps back within the flow.
+class GateScreen extends StatelessWidget {
+  const GateScreen({
+    super.key,
     required this.icon,
     required this.title,
     required this.body,
+    this.children = const [],
     this.actions = const [],
+    this.onBack,
   });
 
   final IconData icon;
   final String title;
   final String body;
+  final List<Widget> children;
   final List<Widget> actions;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
+      appBar: onBack == null
+          ? null
+          : AppBar(
+              leading: IconButton(
+                icon: const BackButtonIcon(),
+                tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                onPressed: onBack,
+              ),
+            ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -153,6 +179,7 @@ class _GateScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 480),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Icon(icon, size: 56, color: theme.colorScheme.primary),
                   const SizedBox(height: 16),
@@ -167,6 +194,10 @@ class _GateScreen extends StatelessWidget {
                     style: theme.textTheme.bodyMedium,
                     textAlign: TextAlign.center,
                   ),
+                  if (children.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    ...children,
+                  ],
                   if (actions.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Wrap(
@@ -206,23 +237,6 @@ class _ConnectingScreen extends StatelessWidget {
   }
 }
 
-class _UnpairedScreen extends StatelessWidget {
-  const _UnpairedScreen();
-
-  @override
-  Widget build(BuildContext context) {
-    return const _GateScreen(
-      icon: Icons.phonelink_outlined,
-      title: 'Connect to Hypatia on your computer',
-      body:
-          'Your wiki, chat and study material live on your computer. On it, '
-          'open Hypatia, then Remote access, and turn on "Let phones and '
-          'tablets connect". Pairing by scanning its QR code comes in the '
-          'next update.',
-    );
-  }
-}
-
 class _UnreachableScreen extends ConsumerWidget {
   const _UnreachableScreen({required this.connection});
 
@@ -231,7 +245,7 @@ class _UnreachableScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final addresses = connection.desktop?.urls.join('\n') ?? '';
-    return _GateScreen(
+    return GateScreen(
       icon: Icons.cloud_off_outlined,
       title: "Can't reach your computer",
       body:
@@ -252,21 +266,81 @@ class _UnreachableScreen extends ConsumerWidget {
   }
 }
 
-class _UnauthorizedScreen extends ConsumerWidget {
-  const _UnauthorizedScreen();
+/// On a phone: which computer it's paired with, and a way to unpair, after
+/// which the pairing screen shows (to pair with another computer, say).
+Future<void> showPairedComputerDialog(BuildContext context) => showDialog<void>(
+  context: context,
+  builder: (context) => const _PairedComputerDialog(),
+);
+
+class _PairedComputerDialog extends ConsumerWidget {
+  const _PairedComputerDialog();
+
+  Future<void> _forget(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Forget this computer?'),
+        content: const Text(
+          'This phone disconnects and has to be paired again, with this '
+          'computer or another. To stop the computer accepting it as well, '
+          'revoke it under Remote access there.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Forget'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    Navigator.of(context).pop();
+    await ref.read(connectionProvider.notifier).forget();
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return _GateScreen(
-      icon: Icons.link_off,
-      title: 'This phone needs pairing again',
-      body:
-          'Your computer no longer accepts this phone. It may have been '
-          'removed under Remote access there.',
+    final theme = Theme.of(context);
+    final connection = ref.watch(connectionProvider);
+    final desktop = connection.desktop;
+    return AlertDialog(
+      title: const Text('Your computer'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              connection.status == ConnectionStatus.connected
+                  ? 'Connected at ${connection.url}'
+                  : 'Not connected right now.',
+            ),
+            if (desktop != null) ...[
+              const SizedBox(height: 12),
+              Text('Addresses', style: theme.textTheme.labelLarge),
+              for (final url in desktop.urls) SelectableText(url),
+              const SizedBox(height: 12),
+              Text(
+                'Paired as "${desktop.deviceName}"',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
       actions: [
-        FilledButton(
-          onPressed: () => ref.read(connectionProvider.notifier).forget(),
-          child: const Text('Pair again'),
+        TextButton(
+          onPressed: () => _forget(context, ref),
+          child: const Text('Forget this computer'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
         ),
       ],
     );

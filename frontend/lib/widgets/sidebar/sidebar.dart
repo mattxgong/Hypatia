@@ -3,11 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
 import '../../providers/backend_provider.dart';
+import '../../providers/connection_provider.dart';
 import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../utils/shortcuts.dart';
+import '../remote/connection_gate.dart';
 import '../remote/remote_access_dialog.dart';
 import '../study/study_panel.dart';
 import 'add_file_button.dart';
@@ -129,6 +131,15 @@ class Sidebar extends ConsumerWidget {
                     icon: const Icon(Icons.phonelink_outlined, size: 18),
                     onPressed: () => showRemoteAccessDialog(context),
                     tooltip: 'Remote access',
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: HypatiaTokens.iconButtonSize(context, 32),
+                  ),
+                if (ref.watch(remoteClientProvider))
+                  IconButton(
+                    icon: const Icon(Icons.computer_outlined, size: 18),
+                    onPressed: () => showPairedComputerDialog(context),
+                    tooltip: 'Your computer',
                     iconSize: 18,
                     padding: EdgeInsets.zero,
                     constraints: HypatiaTokens.iconButtonSize(context, 32),

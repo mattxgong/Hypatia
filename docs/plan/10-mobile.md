@@ -511,6 +511,38 @@ work in W18.
     different computer, images need an app restart.
   - All three belong with W20/W21, where sources open on a phone.
 
+**Done (2026-11-02, W17: pairing UI).**
+- `PairingScreen` (`widgets/remote/pairing_screen.dart`) replaces the unpaired and
+  pair-again screens. It has a device name field (defaults: "Android phone", "iPad", ...),
+  shown on the desktop's device list, and two ways to pair:
+  - **Scan QR code** (`mobile_scanner`, QR only): anything that isn't a Hypatia pairing
+    QR gets a hint and scanning continues. Camera refused or missing says so and points
+    to typing the code. iOS has `NSCameraUsageDescription`; the plugin adds Android's
+    `CAMERA` permission.
+  - **Enter the code instead:** address (IP or host name, port defaults to 8765, any
+    scheme becomes https) and code (case, spaces and dashes ignored). A typed code has
+    no QR carrying the certificate fingerprint, so the phone fetches the certificate
+    the address presents and shows the start of its SHA-256 ("9B1E 43E5 756C F4E5").
+    The desktop now shows the same under the pairing code. The code is sent only after
+    the user confirms they match. "It's different" stops without sending anything.
+- `POST /api/devices/pair` now also returns the desktop's addresses, so a phone paired
+  by typing one address still falls back to the others (LAN, then Tailscale).
+- **Pair again (401):** the same screen with a "needs pairing again" title, and also
+  Forget this computer. The stored pairing stays until a new one succeeds.
+- The pre-connection screens get their own `Navigator`, for text fields' overlay. They
+  replace the router, so Android's Back steps back through the flow via
+  `didPopRoute`.
+- **In the app:** "Your computer…" (phone menu; sidebar footer on a tablet) shows the
+  address in use and all addresses, with Forget this computer.
+- The offline banner is a live region, so screen readers announce it.
+- **Tested:**
+  - Widget tests cover scanning, typing, a mismatched fingerprint, typing mistakes, a
+    wrong code, Back, re-pairing after a 401, forgetting, and a 360x560 phone.
+  - Against the real backend: the fingerprint the phone fetches matches the desktop's,
+    an address with nothing listening fails rather than hangs, and a typed lower-case,
+    dashed code pairs and learns the desktop's other addresses.
+- **Not yet run on a device:** the camera and permission prompts need a phone or emulator.
+
 ### 10.12 Responsive layout
 
 The 3-panel `Row` stays for expanded widths. Add Material 3 window-size classes:

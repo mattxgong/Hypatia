@@ -1678,7 +1678,15 @@ components:
         token:
           type: string
           description: Shown once; only its SHA-256 is stored.
-      required: [device, token]
+        urls:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every address the desktop answers at (LAN, then Tailscale), so a phone
+            paired by typing one address can fall back to the others. Empty when
+            remote access is off.
+      required: [device, token, urls]
 
     ClassCreate:
       type: object
