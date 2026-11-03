@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
-
 import '../../providers/settings_provider.dart';
 import '../common/provider_icon.dart';
 import '../sidebar/class_dropdown.dart' show providerOptions;
@@ -38,7 +37,7 @@ class ProviderSelector extends ConsumerWidget {
                 vertical: 8,
               ),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: HypatiaTokens.corners,
                 borderSide: BorderSide.none,
               ),
               filled: true,
@@ -96,7 +95,7 @@ class ProviderSelector extends ConsumerWidget {
           tooltip: 'Configure provider',
           iconSize: 18,
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          constraints: HypatiaTokens.iconButtonSize(context, 32),
         ),
       ],
     );
@@ -128,7 +127,7 @@ class ConnectionStatusIndicator extends ConsumerWidget {
       if (value != null && value.connected) {
         icon = Icon(
           Icons.check_circle,
-          color: StatusColors.of(context).success,
+          color: HypatiaTokens.of(context).success,
           size: 18,
         );
         final model = value.model;
@@ -154,7 +153,7 @@ class ConnectionStatusIndicator extends ConsumerWidget {
           : () => ref.invalidate(llmConnectionStatusProvider),
       tooltip: tooltip,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      constraints: HypatiaTokens.iconButtonSize(context, 32),
     );
   }
 }

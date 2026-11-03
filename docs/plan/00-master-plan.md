@@ -58,7 +58,7 @@ The core innovation is the **LLM Wiki pattern**: instead of re-deriving answers 
 | 8 | [Integration & Polish](./08-integration.md) | Complete deferred work, E2E testing, error handling, cross-platform, backend bundling | 10 |
 | 9 | [Study Tools](./09-study-tools.md) | Flashcards (spaced repetition) and practice tests, heuristic and LLM generation, AI grading | 10 |
 | 10 | [Mobile App (proposed)](./10-mobile.md) | Android-first companion app paired to the desktop backend (LAN/Tailscale), responsive phone/tablet layout, offline study, capture with local OCR | 15 |
-| 11 | [Study Feedback, Chat, and Visual Polish (proposed)](./11-study-and-ux.md) | Quiz mistake review, suggested replies, `@` references, theme tokens and pane rules, crash-safe jobs, answer-quality evals. Wave A runs before Phase 10, wave B inside it | 16 |
+| 11 | [Study Feedback, Chat, and Visual Polish (proposed)](./11-study-and-ux.md) | Quiz mistake review, suggested replies, `@` references, theme tokens and pane rules, crash-safe jobs, answer-quality evals. Wave A done (2026-11-01); wave B runs inside Phase 10 | 16 |
 
 **Total estimated tasks: ~125**
 

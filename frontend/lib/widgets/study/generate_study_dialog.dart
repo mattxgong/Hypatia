@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../models/source_file.dart';
 import '../../models/study.dart';
 import '../../models/wiki_page.dart';
@@ -513,7 +514,7 @@ class _DropdownField<T> extends StatelessWidget {
           hint: hint == null ? null : Text(hint!),
           onChanged: onChanged,
           items: items,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: HypatiaTokens.corners,
         ),
       ),
     );

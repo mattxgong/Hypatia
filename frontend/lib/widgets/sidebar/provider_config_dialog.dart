@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
-
 import '../../providers/settings_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/input_validation.dart';
@@ -323,7 +322,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
         children: [
           ProviderIcon(providerId: widget.providerId, size: 24),
           const SizedBox(width: 10),
-          Text(_title),
+          Flexible(child: Text(_title)),
         ],
       ),
       content: SizedBox(
@@ -465,16 +464,19 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: _testing ? null : _testConnection,
-                    icon: _testing
-                        ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.wifi_tethering, size: 16),
-                    label: const Text('Test Connection'),
+                  // Flexible: a phone's dialog is narrower than the button.
+                  Flexible(
+                    child: OutlinedButton.icon(
+                      onPressed: _testing ? null : _testConnection,
+                      icon: _testing
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi_tethering, size: 16),
+                      label: const Text('Test Connection'),
+                    ),
                   ),
                   if (_testResult != null) ...[
                     const SizedBox(width: 8),
@@ -483,7 +485,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                       child: Icon(
                         _testResult! ? Icons.check_circle : Icons.cancel,
                         color: _testResult!
-                            ? StatusColors.of(context).success
+                            ? HypatiaTokens.of(context).success
                             : theme.colorScheme.error,
                         size: 20,
                       ),
@@ -498,7 +500,7 @@ class _ProviderConfigDialogState extends ConsumerState<ProviderConfigDialog> {
                               : (_testError ?? 'Connection failed'),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: _testResult!
-                                ? StatusColors.of(context).success
+                                ? HypatiaTokens.of(context).success
                                 : theme.colorScheme.error,
                           ),
                           maxLines: 4,

@@ -124,4 +124,14 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('fits a phone screen', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(_app(_FakeApiClient()));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }

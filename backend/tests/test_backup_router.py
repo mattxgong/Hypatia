@@ -21,6 +21,7 @@ from app.main import app
 from app.models.db_models import (
     Base,
     CardOrigin,
+    CardReview,
     CardType,
     ChatMessage,
     ChatRole,
@@ -465,6 +466,14 @@ class TestStudyRoundTrip:
                     repetitions=2,
                     lapses=1,
                     due_at=due,
+                    reviews=[
+                        CardReview(
+                            client_review_id="phone:1",
+                            rating="good",
+                            reviewed_at=due,
+                            previous_state={"ease": 2.5},
+                        )
+                    ],
                 )
             )
             quiz = Quiz(class_id=class_id, name="Quiz", generation_method=StudyMethod.HEURISTIC)
@@ -479,6 +488,7 @@ class TestStudyRoundTrip:
                     prompt="Pick",
                     choices_json={"options": ["a", "b"]},
                     answer_json={"choice": 1},
+                    points=3,
                 )
             )
             session.add(
@@ -524,6 +534,12 @@ class TestStudyRoundTrip:
             assert card.due_at.replace(tzinfo=None) == due.replace(tzinfo=None)
             assert card.page_hashes == {"pages/concept/q.md": "abc"}
             assert card.source_file_ids == [str(new_file.id)]
+            [review] = await session.scalars(
+                select(CardReview).where(CardReview.card_id == card.id)
+            )
+            assert (review.client_review_id, review.rating) == ("phone:1", "good")
+            # The earlier schedule isn't backed up, so Undo has nothing to restore.
+            assert review.previous_state is None
 
             new_quiz = await session.scalar(select(Quiz).where(Quiz.class_id == new_class_id))
             assert new_quiz is not None
@@ -535,6 +551,7 @@ class TestStudyRoundTrip:
             )
             assert new_question is not None and attempt is not None
             assert new_question.id != question_id
+            assert new_question.points == 3
             assert attempt.answers_json == {str(new_question.id): {"choice": 1}}
             assert attempt.grading_json == {str(new_question.id): {"score": 1.0}}
 

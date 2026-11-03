@@ -32,6 +32,7 @@ from app.models.schemas import (
 )
 from app.services import wiki_engine
 from app.services.study import jobs as study_jobs
+from app.services.study import mistake_review
 from app.services.study import service as study_service
 from app.services.task_manager import TaskStatus, task_manager
 from app.utils.command_parser import parse_command
@@ -154,6 +155,8 @@ async def _handle_command(
         await _handle_rebuild(conn, class_id)
     elif command in ("flashcards", "quiz"):
         await _handle_study(conn, class_id, command, args.strip())
+    elif command == "review-quiz":
+        await _handle_review_quiz(conn, class_id, args.strip())
 
 
 _HELP_TEXT = """\
@@ -169,12 +172,14 @@ _HELP_TEXT = """\
 | `/export` | Export the wiki as markdown files |
 | `/flashcards [topic]` | Make a flashcard deck from the wiki (or one topic) |
 | `/quiz [topic]` | Make a practice quiz from the wiki (or one topic) |
+| `/review-quiz <attempt id>` | Go over a quiz attempt's mistakes with a tutor |
 | `/help` | Show this command reference |
 
 Type a message without a `/` prefix to default to `/ask`."""
 
 
 async def _handle_help(conn: ChatConnection) -> None:
+    # Not saved to history, so its ID matches no row.
     await conn.send_json(
         {
             "type": "complete",
@@ -210,15 +215,13 @@ async def _page_citations(
 ) -> list[dict[str, str]]:
     if not paths:
         return []
-    titles = dict(
-        (
-            await session.execute(
-                select(WikiPage.path, WikiPage.title).where(
-                    WikiPage.class_id == class_id, WikiPage.path.in_(paths)
-                )
-            )
-        ).tuples()
+    rows = await session.execute(
+        select(WikiPage.path, WikiPage.title).where(
+            WikiPage.class_id == class_id, WikiPage.path.in_(paths)
+        )
     )
+    # Not dict(rows): a Result has .keys(), so dict() reads it as a mapping and fails.
+    titles = {path: title for path, title in rows.tuples()}
     return [{"path": p, "title": titles.get(p, p)} for p in paths]
 
 
@@ -257,23 +260,53 @@ async def _handle_ask_stream(conn: ChatConnection, class_id: uuid.UUID, query: s
             )
         except HypatiaError as e:
             logger.error("chat_ask_error", class_id=str(class_id), code=e.code.value)
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, "ask", e.detail, e.code.value, e.user_action)
         except Exception as e:  # noqa: BLE001
             logger.error("chat_ask_error", class_id=str(class_id), error=str(e))
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": str(e),
-                    "code": ErrorCode.ASK_ERROR,
-                }
+            await _report_error(conn, class_id, "ask", str(e), ErrorCode.ASK_ERROR)
+
+
+async def _handle_review_quiz(conn: ChatConnection, class_id: uuid.UUID, arg: str) -> None:
+    """Tutor through an attempt's mistakes. The quiz view's Review button sends this."""
+    await _record_message(class_id, ChatRole.USER, f"/review-quiz {arg}".strip())
+    try:
+        attempt_id = uuid.UUID(arg)
+    except ValueError:
+        await _report_error(
+            conn, class_id, "review-quiz", "Usage: /review-quiz <attempt id>", "INVALID_COMMAND"
+        )
+        return
+    async with async_session_factory() as session:
+        try:
+            chunks: list[str] = []
+            consulted: list[str] = []
+            async for chunk in mistake_review.review_stream(
+                session, class_id, attempt_id, consulted=consulted
+            ):
+                chunks.append(chunk)
+                await conn.send_json({"type": "chunk", "content": chunk})
+
+            citations = await _page_citations(session, class_id, consulted)
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content="".join(chunks),
+                command="review-quiz",
+                metadata_json={"pages": citations} if citations else None,
             )
+            session.add(reply)
+            await session.commit()
+            await conn.send_json(
+                {"type": "complete", "message_id": str(reply.id), "citations": citations}
+            )
+        except HypatiaError as e:
+            logger.error("chat_review_quiz_error", class_id=str(class_id), code=e.code.value)
+            await _report_error(
+                conn, class_id, "review-quiz", e.detail, e.code.value, e.user_action
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("chat_review_quiz_error", class_id=str(class_id), error=str(e))
+            await _report_error(conn, class_id, "review-quiz", str(e), ErrorCode.REVIEW_ERROR)
 
 
 async def _handle_summarize(conn: ChatConnection, class_id: uuid.UUID, topic: str) -> None:
@@ -286,20 +319,19 @@ async def _handle_summarize(conn: ChatConnection, class_id: uuid.UUID, topic: st
 
             result = await wiki_engine.handle_summarize(session, class_id, topic)
             if result.success:
-                session.add(
-                    ChatMessage(
-                        class_id=class_id,
-                        role=ChatRole.ASSISTANT,
-                        content=f"Created summary page: {result.page_path}",
-                        command="summarize",
-                    )
+                reply = ChatMessage(
+                    class_id=class_id,
+                    role=ChatRole.ASSISTANT,
+                    content=f"Created summary page: {result.page_path}",
+                    command="summarize",
                 )
+                session.add(reply)
                 await session.commit()
                 await conn.send_json(
                     {
                         "type": "complete",
-                        "message_id": str(uuid.uuid4()),
-                        "content": f"Created summary page: {result.page_path}",
+                        "message_id": str(reply.id),
+                        "content": reply.content,
                         "result": {
                             "command": "/summarize",
                             "page_path": result.page_path,
@@ -307,26 +339,17 @@ async def _handle_summarize(conn: ChatConnection, class_id: uuid.UUID, topic: st
                     }
                 )
             else:
-                await conn.send_json(
-                    {
-                        "type": "error",
-                        "message": result.error or "Summarize failed",
-                        "code": "SUMMARIZE_ERROR",
-                    }
+                await _report_error(
+                    conn,
+                    class_id,
+                    "summarize",
+                    result.error or "Summarize failed",
+                    "SUMMARIZE_ERROR",
                 )
         except HypatiaError as e:
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, "summarize", e.detail, e.code.value, e.user_action)
         except Exception as e:  # noqa: BLE001
-            await conn.send_json(
-                {"type": "error", "message": str(e), "code": ErrorCode.SUMMARIZE_ERROR}
-            )
+            await _report_error(conn, class_id, "summarize", str(e), ErrorCode.SUMMARIZE_ERROR)
 
 
 async def _handle_remove(conn: ChatConnection, class_id: uuid.UUID, filename: str) -> None:
@@ -339,23 +362,22 @@ async def _handle_remove(conn: ChatConnection, class_id: uuid.UUID, filename: st
 
             result = await wiki_engine.handle_remove(session, class_id, filename)
             if result.success:
-                session.add(
-                    ChatMessage(
-                        class_id=class_id,
-                        role=ChatRole.ASSISTANT,
-                        content=f"Removed {filename}: {result.pages_deleted} pages deleted, {result.pages_updated} pages updated",
-                        command="remove",
-                    )
+                reply = ChatMessage(
+                    class_id=class_id,
+                    role=ChatRole.ASSISTANT,
+                    content=(
+                        f"Removed {filename}: {result.pages_deleted} pages deleted, "
+                        f"{result.pages_updated} pages updated"
+                    ),
+                    command="remove",
                 )
+                session.add(reply)
                 await session.commit()
                 await conn.send_json(
                     {
                         "type": "complete",
-                        "message_id": str(uuid.uuid4()),
-                        "content": (
-                            f"Removed {filename}: {result.pages_deleted} pages deleted, "
-                            f"{result.pages_updated} pages updated"
-                        ),
+                        "message_id": str(reply.id),
+                        "content": reply.content,
                         "result": {
                             "command": "/remove",
                             "pages_deleted": result.pages_deleted,
@@ -364,26 +386,13 @@ async def _handle_remove(conn: ChatConnection, class_id: uuid.UUID, filename: st
                     }
                 )
             else:
-                await conn.send_json(
-                    {
-                        "type": "error",
-                        "message": result.error or "Remove failed",
-                        "code": "REMOVE_ERROR",
-                    }
+                await _report_error(
+                    conn, class_id, "remove", result.error or "Remove failed", "REMOVE_ERROR"
                 )
         except HypatiaError as e:
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, "remove", e.detail, e.code.value, e.user_action)
         except Exception as e:  # noqa: BLE001
-            await conn.send_json(
-                {"type": "error", "message": str(e), "code": ErrorCode.REMOVE_ERROR}
-            )
+            await _report_error(conn, class_id, "remove", str(e), ErrorCode.REMOVE_ERROR)
 
 
 async def _handle_lint(conn: ChatConnection, class_id: uuid.UUID) -> None:
@@ -394,21 +403,20 @@ async def _handle_lint(conn: ChatConnection, class_id: uuid.UUID) -> None:
 
             result = await wiki_engine.handle_lint(session, class_id)
 
-            session.add(
-                ChatMessage(
-                    class_id=class_id,
-                    role=ChatRole.ASSISTANT,
-                    content=f"Lint complete: {len(result.issues)} issues found",
-                    command="lint",
-                )
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content=f"Lint complete: {len(result.issues)} issues found",
+                command="lint",
             )
+            session.add(reply)
             await session.commit()
 
             await conn.send_json(
                 {
                     "type": "complete",
-                    "message_id": str(uuid.uuid4()),
-                    "content": f"Lint complete: {len(result.issues)} issues found",
+                    "message_id": str(reply.id),
+                    "content": reply.content,
                     "result": {
                         "command": "/lint",
                         "issues": [asdict(i) for i in result.issues],
@@ -416,16 +424,9 @@ async def _handle_lint(conn: ChatConnection, class_id: uuid.UUID) -> None:
                 }
             )
         except HypatiaError as e:
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, "lint", e.detail, e.code.value, e.user_action)
         except Exception as e:  # noqa: BLE001
-            await conn.send_json({"type": "error", "message": str(e), "code": ErrorCode.LINT_ERROR})
+            await _report_error(conn, class_id, "lint", str(e), ErrorCode.LINT_ERROR)
 
 
 async def _handle_export(conn: ChatConnection, class_id: uuid.UUID) -> None:
@@ -436,20 +437,19 @@ async def _handle_export(conn: ChatConnection, class_id: uuid.UUID) -> None:
 
             result = await wiki_engine.handle_export(session, class_id)
             if result.success:
-                session.add(
-                    ChatMessage(
-                        class_id=class_id,
-                        role=ChatRole.ASSISTANT,
-                        content=f"Export complete: {result.page_count} pages",
-                        command="export",
-                    )
+                reply = ChatMessage(
+                    class_id=class_id,
+                    role=ChatRole.ASSISTANT,
+                    content=f"Exported {result.page_count} pages to {result.export_path}",
+                    command="export",
                 )
+                session.add(reply)
                 await session.commit()
                 await conn.send_json(
                     {
                         "type": "complete",
-                        "message_id": str(uuid.uuid4()),
-                        "content": (f"Exported {result.page_count} pages to {result.export_path}"),
+                        "message_id": str(reply.id),
+                        "content": reply.content,
                         "result": {
                             "command": "/export",
                             "export_path": result.export_path,
@@ -458,34 +458,47 @@ async def _handle_export(conn: ChatConnection, class_id: uuid.UUID) -> None:
                     }
                 )
             else:
-                await conn.send_json(
-                    {
-                        "type": "error",
-                        "message": result.error or "Export failed",
-                        "code": "EXPORT_ERROR",
-                    }
+                await _report_error(
+                    conn, class_id, "export", result.error or "Export failed", "EXPORT_ERROR"
                 )
         except HypatiaError as e:
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, "export", e.detail, e.code.value, e.user_action)
         except Exception as e:  # noqa: BLE001
-            await conn.send_json(
-                {"type": "error", "message": str(e), "code": ErrorCode.EXPORT_ERROR}
-            )
+            await _report_error(conn, class_id, "export", str(e), ErrorCode.EXPORT_ERROR)
 
 
 async def _record_message(
     class_id: uuid.UUID, role: ChatRole, content: str, command: str | None = None
-) -> None:
+) -> uuid.UUID:
     async with async_session_factory() as session:
-        session.add(ChatMessage(class_id=class_id, role=role, content=content, command=command))
+        message = ChatMessage(class_id=class_id, role=role, content=content, command=command)
+        session.add(message)
         await session.commit()
+        return message.id
+
+
+async def _report_error(
+    conn: ChatConnection,
+    class_id: uuid.UUID,
+    command: str,
+    message: str,
+    code: str,
+    user_action: str | None = None,
+) -> None:
+    """Record a command's failure in history, then send it.
+
+    Saved in its own session (the handler's may be unusable after the error),
+    and in the form the client shows it live, so a client that left mid-command
+    sees the same thing when it reloads history.
+    """
+    try:
+        await _record_message(class_id, ChatRole.SYSTEM, f"Error: {message}", command)
+    except Exception:  # still tell a connected client
+        logger.exception("chat_error_not_recorded", class_id=str(class_id), command=command)
+    payload: dict[str, Any] = {"type": "error", "message": message, "code": code}
+    if user_action is not None:
+        payload["user_action"] = user_action
+    await conn.send_json(payload)
 
 
 async def _handle_rebuild(conn: ChatConnection, class_id: uuid.UUID) -> None:
@@ -534,11 +547,11 @@ async def _handle_rebuild(conn: ChatConnection, class_id: uuid.UUID) -> None:
                 else "Rebuild complete."
             )
             # In history too: the client may have left before it finished.
-            await _record_message(class_id, ChatRole.ASSISTANT, summary, "rebuild")
+            message_id = await _record_message(class_id, ChatRole.ASSISTANT, summary, "rebuild")
             await conn.send_json(
                 {
                     "type": "complete",
-                    "message_id": str(uuid.uuid4()),
+                    "message_id": str(message_id),
                     "content": summary,
                     "result": {"command": "/rebuild", "task_id": task_id},
                 }
@@ -551,8 +564,7 @@ async def _handle_rebuild(conn: ChatConnection, class_id: uuid.UUID) -> None:
                 if t.status == "cancelled"
                 else t.error or t.message
             )
-            await _record_message(class_id, ChatRole.SYSTEM, message, "rebuild")
-            await conn.send_json({"type": "error", "message": message, "code": "REBUILD_ERROR"})
+            await _report_error(conn, class_id, "rebuild", message, "REBUILD_ERROR")
             break
         else:
             await conn.send_json(
@@ -632,12 +644,8 @@ async def _handle_study(
                         message = "Generation cancelled."
                     else:
                         message = (final.error if final else None) or "Generation failed."
-                    await conn.send_json(
-                        {
-                            "type": "error",
-                            "message": message,
-                            "code": ErrorCode.INTERNAL_ERROR.value,
-                        }
+                    await _report_error(
+                        conn, class_id, command, message, ErrorCode.INTERNAL_ERROR.value
                     )
                     return
                 item_id, name, count = (
@@ -667,37 +675,27 @@ async def _handle_study(
                 f'Created {what} "{name}" with {count} {noun}.{note} '
                 "Open it from the Study tab in the sidebar."
             )
-            session.add(
-                ChatMessage(
-                    class_id=class_id,
-                    role=ChatRole.ASSISTANT,
-                    content=content,
-                    command=command,
-                )
+            reply = ChatMessage(
+                class_id=class_id,
+                role=ChatRole.ASSISTANT,
+                content=content,
+                command=command,
             )
+            session.add(reply)
             await session.commit()
             await conn.send_json(
                 {
                     "type": "complete",
-                    "message_id": str(uuid.uuid4()),
+                    "message_id": str(reply.id),
                     "content": content,
                     "result": {"command": f"/{command}", "kind": kind, "id": item_id},
                 }
             )
         except HypatiaError as e:
-            await conn.send_json(
-                {
-                    "type": "error",
-                    "message": e.detail,
-                    "code": e.code.value,
-                    "user_action": e.user_action,
-                }
-            )
+            await _report_error(conn, class_id, command, e.detail, e.code.value, e.user_action)
         except Exception as e:
             logger.exception("chat_study_error", class_id=str(class_id))
-            await conn.send_json(
-                {"type": "error", "message": str(e), "code": ErrorCode.INTERNAL_ERROR.value}
-            )
+            await _report_error(conn, class_id, command, str(e), ErrorCode.INTERNAL_ERROR.value)
 
 
 def _rebuild_summary(result: wiki_engine.RebuildResult) -> str:

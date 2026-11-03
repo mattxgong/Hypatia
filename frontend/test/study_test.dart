@@ -4,11 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:frontend/models/chat_message.dart';
 import 'package:frontend/models/hypatia_class.dart';
 import 'package:frontend/models/source_file.dart';
 import 'package:frontend/models/study.dart';
 import 'package:frontend/models/task_status.dart';
 import 'package:frontend/models/wiki_page.dart';
+import 'package:frontend/providers/chat_provider.dart';
 import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/file_provider.dart';
 import 'package:frontend/providers/settings_provider.dart';
@@ -20,8 +22,12 @@ import 'package:frontend/widgets/sidebar/sidebar.dart';
 import 'package:frontend/widgets/study/flashcard_review.dart';
 import 'package:frontend/widgets/study/generate_study_dialog.dart';
 import 'package:frontend/widgets/study/quiz_view.dart';
+import 'package:frontend/widgets/study/session_summary.dart';
 
 const _classId = 'class-1';
+
+/// Keyboard hints and compact controls: what a desktop shows.
+final _desktop = TargetPlatformVariant.only(TargetPlatform.windows);
 
 Flashcard _card(String id, String front, String back, {CardType? type}) =>
     Flashcard.fromJson({
@@ -37,15 +43,16 @@ Flashcard _card(String id, String front, String back, {CardType? type}) =>
       'interval_days': 0,
     });
 
-Deck _deck() => Deck.fromJson({
+Deck _deck({int due = 2, String? nextDue}) => Deck.fromJson({
   'id': 'deck-1',
   'class_id': _classId,
   'name': 'NLP flashcards',
   'description': null,
   'generation_method': 'heuristic',
   'card_count': 2,
-  'due_count': 2,
+  'due_count': due,
   'stale_count': 1,
+  'next_due_at': nextDue,
   'created_at': '2026-10-01T00:00:00',
 });
 
@@ -61,7 +68,7 @@ QuizSummary _quizSummary() => QuizSummary.fromJson({
   'created_at': '2026-10-01T00:00:00',
 });
 
-Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
+Quiz _quiz({bool twoQuestions = false, int points = 1}) => Quiz.fromJson({
   'id': 'quiz-1',
   'class_id': _classId,
   'name': 'NLP quiz',
@@ -80,6 +87,7 @@ Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
       'choices': {
         'options': ['A power law', 'A tokenizer'],
       },
+      'points': points,
       'page_paths': <String>[],
       'stale': false,
     },
@@ -95,6 +103,20 @@ Quiz _quiz({bool twoQuestions = false}) => Quiz.fromJson({
       },
   ],
 });
+
+/// Records what the quiz view sends to chat instead of opening a socket.
+class _RecordingChat extends ChatMessagesNotifier {
+  final sent = <String>[];
+
+  @override
+  Future<List<ChatMessage>> build(String arg) async => const [];
+
+  @override
+  bool sendMessage(String content) {
+    sent.add(content);
+    return true;
+  }
+}
 
 class _FakeApi extends ApiClient {
   _FakeApi() : super(baseUrl: 'http://test');
@@ -142,6 +164,10 @@ class _FakeApi extends ApiClient {
     return due.firstWhere((c) => c.id == cardId);
   }
 
+  /// What the next submitted attempt scores on q1.
+  double resultScore = 1;
+  int resultPoints = 1;
+
   @override
   Future<QuizAttempt> submitQuizAttempt(
     String classId,
@@ -151,14 +177,15 @@ class _FakeApi extends ApiClient {
     submitted.add(answers);
     return QuizAttempt.fromJson({
       'id': 'a1',
-      'score': 1,
-      'max_score': 1,
+      'score': resultScore * resultPoints,
+      'max_score': resultPoints,
       'created_at': '2026-10-01T00:00:00',
       'results': [
         {
           'question_id': 'q1',
-          'score': 1,
-          'correct': true,
+          'score': resultScore,
+          'points': resultPoints,
+          'correct': resultScore == 1,
           'status': 'graded',
           'response': {'choice': 0},
           'expected': {'choice': 0},
@@ -258,11 +285,13 @@ class _MockClassListNotifier extends ClassListNotifier {
 void main() {
   late SharedPreferences prefs;
   late _FakeApi api;
+  late Deck deck;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     prefs = await SharedPreferences.getInstance();
     api = _FakeApi();
+    deck = _deck();
   });
 
   Widget wrap(
@@ -290,7 +319,7 @@ void main() {
         fileListProvider(
           _classId,
         ).overrideWith((ref) async => const <SourceFile>[]),
-        deckListProvider(_classId).overrideWith((ref) async => [_deck()]),
+        deckListProvider(_classId).overrideWith((ref) async => [deck]),
         quizListProvider(
           _classId,
         ).overrideWith((ref) async => [_quizSummary()]),
@@ -402,7 +431,59 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.digit4);
     await tester.pumpAndSettle();
     expect(api.reviews.last, ('c2', ReviewRating.easy));
-    expect(find.text('All caught up'), findsOneWidget);
+    expect(find.text('Reviewed 2 cards'), findsOneWidget);
+    expect(find.text('Good: 1'), findsOneWidget);
+    expect(find.text('Easy: 1'), findsOneWidget);
+    expect(find.text('No misses this time.'), findsOneWidget);
+    expect(find.text('2 more cards are due now.'), findsOneWidget);
+    expect(find.text('Keep studying'), findsOneWidget);
+  }, variant: _desktop);
+
+  testWidgets('a session of misses points at the pages to revisit', (
+    tester,
+  ) async {
+    largeSurface(tester);
+    final soon = DateTime.now().add(const Duration(minutes: 10, seconds: 30));
+    deck = _deck(due: 0, nextDue: soon.toUtc().toIso8601String());
+    api.due = [_card('c1', 'What is entropy?', 'Uncertainty.')];
+    await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+    await tester.pumpAndSettle();
+
+    // Again sends the card to the back of this session; Easy then finishes it.
+    for (final rating in [
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit4,
+    ]) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(rating);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('Reviewed 2 cards'), findsOneWidget);
+    expect(find.text('Again: 1'), findsOneWidget);
+    expect(find.text('Worth another look:'), findsOneWidget);
+    expect(find.text('x.md (1 miss)'), findsOneWidget);
+    expect(find.text('Next review in 10 minutes.'), findsOneWidget);
+    expect(find.text('Keep studying'), findsNothing);
+  });
+
+  testWidgets('summaries skip the pop-in when animations are off', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        const MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: SessionSummary(score: 0, maxScore: 2),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(TweenAnimationBuilder<double>), findsNothing);
+    expect(find.text('You earned 0 of 2 points'), findsOneWidget);
+    expect(find.text('No wiki pages to revisit.'), findsOneWidget);
   });
 
   testWidgets('quiz answers are submitted and graded', (tester) async {
@@ -436,9 +517,127 @@ void main() {
       'q1': {'choice': 0},
     });
     expect(find.text('Score: 1 / 1'), findsOneWidget);
-    expect(find.text('Correct'), findsOneWidget);
+    expect(find.text('Correct · 1 / 1'), findsOneWidget);
+    expect(find.text('Review my mistakes'), findsNothing);
+    expect(find.text('You earned 1 of 1 point'), findsOneWidget);
+    expect(find.text('No misses this time.'), findsOneWidget);
     expect(find.text('Rank and frequency follow a power law.'), findsOneWidget);
     expect(find.text('Retake'), findsOneWidget);
+  });
+
+  testWidgets('weighted questions show points and partial credit', (
+    tester,
+  ) async {
+    largeSurface(tester);
+    api
+      ..resultScore = 0.5
+      ..resultPoints = 3;
+    final chat = _RecordingChat();
+    late ProviderContainer container;
+    await tester.pumpWidget(
+      wrap(
+        Consumer(
+          builder: (context, ref, _) {
+            container = ProviderScope.containerOf(context);
+            return const QuizView(quizId: 'quiz-1');
+          },
+        ),
+        overrides: [
+          quizProvider((
+            classId: _classId,
+            quizId: 'quiz-1',
+          )).overrideWith((ref) async => _quiz(points: 3)),
+          chatMessagesProvider.overrideWith(() => chat),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Question 1 · Multiple choice · 3 points'),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.ancestor(
+        of: find.text('A power law'),
+        matching: find.byType(InkWell),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Score: 1.5 / 3'), findsOneWidget);
+    expect(find.text('50% · 1.5 / 3'), findsOneWidget);
+    // The question cites no wiki page, so there is nothing to point at.
+    expect(find.text('No wiki pages to revisit.'), findsOneWidget);
+
+    await tester.tap(find.text('Review my mistakes'));
+    await tester.pumpAndSettle();
+    expect(chat.sent, ['/review-quiz a1']);
+    expect(container.read(chatRevealRequestProvider), 1);
+  });
+
+  Future<void> pumpTwoQuestionQuiz(WidgetTester tester) async {
+    largeSurface(tester);
+    await tester.pumpWidget(
+      wrap(
+        const QuizView(quizId: 'quiz-1'),
+        overrides: [
+          quizProvider((
+            classId: _classId,
+            quizId: 'quiz-1',
+          )).overrideWith((ref) async => _quiz(twoQuestions: true)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('quiz keys move between questions and pick choices', (
+    tester,
+  ) async {
+    await pumpTwoQuestionQuiz(tester);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2 answered'), findsOneWidget);
+
+    // On the short answer, number keys pick nothing; back on question 1 they do.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    // A modifier means a shortcut, not an answer.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Submit anyway'));
+    await tester.pumpAndSettle();
+    expect(api.submitted.single['q1'], {'choice': 0});
+  });
+
+  testWidgets('quiz keys type into a focused answer field', (tester) async {
+    await pumpTwoQuestionQuiz(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(TextField));
+    await tester.enterText(find.byType(TextField), 'It finds the best path');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Submit'));
+    await tester.pumpAndSettle();
+    expect(api.submitted.single, {
+      'q1': {'choice': 0},
+      'q2': {'text': 'It finds the best path'},
+    });
   });
 
   testWidgets('a rating can be undone from its notice', (tester) async {
@@ -457,7 +656,7 @@ void main() {
     expect(api.reviews, [('c1', ReviewRating.good)]);
     expect(api.undos, ['c1']);
     expect(find.text('What is entropy?'), findsOneWidget);
-  });
+  }, variant: _desktop);
 
   Widget quizWrap({ValueNotifier<bool>? shown, bool twoQuestions = false}) =>
       wrap(
@@ -725,6 +924,98 @@ void main() {
     expect(shortApi.selfGrades.single, {'q1': true});
     expect(find.text('Score: 1 / 1'), findsOneWidget);
     expect(find.text('I got it right'), findsNothing);
+  });
+
+  group('on a phone', () {
+    void phoneSurface(WidgetTester tester) {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    testWidgets('ratings are large buttons, and a swipe rates too', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      final good = find.widgetWithText(OutlinedButton, 'Good');
+      expect(tester.getSize(good).height, greaterThanOrEqualTo(56));
+      await tester.tap(good);
+      await tester.pumpAndSettle();
+      expect(api.reviews, [('c1', ReviewRating.good)]);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      // A swipe that starts on the (selectable) card text.
+      await tester.fling(
+        find.text('The [...] algorithm decodes.'),
+        const Offset(-300, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(api.reviews.last, ('c2', ReviewRating.again));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the deck header folds its actions into a menu', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(wrap(const FlashcardReview(deckId: 'deck-1')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Browse cards'), findsNothing);
+      await tester.tap(find.byTooltip('Deck actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Update from wiki'), findsOneWidget);
+      await tester.tap(find.text('Browse cards'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Deck actions'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a graded quiz fits, with icon buttons in its header', (
+      tester,
+    ) async {
+      phoneSurface(tester);
+      api.resultScore = 0;
+      await tester.pumpWidget(quizWrap());
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('A tokenizer'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Submit'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Retake'), findsOneWidget);
+      expect(find.byTooltip('Review my mistakes'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the generate dialog fits a phone', (tester) async {
+      phoneSurface(tester);
+      await tester.pumpWidget(
+        wrap(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showGenerateStudyDialog(
+                context,
+                kind: StudyMaterialKind.quiz,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+          aiConnected: true,
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   });
 }
 

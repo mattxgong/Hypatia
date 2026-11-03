@@ -5,7 +5,8 @@ info:
     Contract between the Flutter frontend and the FastAPI backend for the
     Hypatia LLM wiki application. Covers health, Classes CRUD, file
     upload/serve/delete, wiki tree/page CRUD/search/export/lint/rebuild,
-    chat WebSocket + history, task status, settings, and class backup/import.
+    chat WebSocket + history, task status, settings, class backup/import, and
+    device pairing.
   version: "0.4.0"
 servers:
   - url: http://127.0.0.1:8000
@@ -16,12 +17,15 @@ servers:
 # Timestamps are ISO 8601 in UTC with an explicit offset
 # (e.g. 2026-10-27T18:00:00+00:00); clients convert them to local time.
 #
-# Every request except /health, including the chat WebSocket handshake, must
-# carry the launch token when the backend has one (HYPATIA_API_TOKEN). The
+# Every request except /health and POST /api/devices/pair, including the chat
+# WebSocket handshake, must carry the launch token or a paired device's token
+# when the backend has a launch token (HYPATIA_API_TOKEN). A missing token gets
+# 401 AUTH_REQUIRED; an unknown or revoked one gets 401 AUTH_INVALID. The
 # backend also rejects a Host header outside HYPATIA_ALLOWED_HOSTS (400) and a
 # browser Origin that doesn't match the CORS settings (403). See app/security.py.
 security:
   - LaunchToken: []
+  - DeviceToken: []
 
 paths:
   /health:
@@ -736,6 +740,110 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/devices/pairing-code:
+    post:
+      summary: Offer a pairing code (desktop app only)
+      description: >-
+        Issues a single-use code that expires after 5 minutes. A new code
+        replaces the previous one, and 5 wrong guesses use it up. Only the
+        launch token may call this, so a paired device can't pair others.
+      operationId: createPairingCode
+      security:
+        - LaunchToken: []
+      responses:
+        "200":
+          description: The code to show on the desktop
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCodeRead"
+        "403":
+          description: Called with a device token (LOCAL_CLIENT_REQUIRED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/devices/remote-access:
+    get:
+      summary: Remote-access status (desktop app only)
+      description: >-
+        Whether phones can connect, and on which addresses and certificate.
+        Phones use HTTPS on a separate port with a self-signed certificate,
+        pinned by fingerprint; the desktop app stays on loopback HTTP.
+      operationId: getRemoteAccess
+      security:
+        - LaunchToken: []
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteAccessRead"
+        "403":
+          description: Called with a device token (LOCAL_CLIENT_REQUIRED)
+
+  /api/devices/pair:
+    post:
+      summary: Pair a device with a code
+      description: >-
+        Needs no token; the code is the credential. Codes ignore case, spaces
+        and dashes. The response is the only time the token is shown.
+      operationId: pairDevice
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairRequest"
+      responses:
+        "201":
+          description: The new device and its token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairResponse"
+        "400":
+          description: Wrong, used or expired code (PAIRING_CODE_INVALID)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/devices:
+    get:
+      summary: List paired devices that are not revoked
+      operationId: listDevices
+      responses:
+        "200":
+          description: Paired devices, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceRead"
+
+  /api/devices/{device_id}:
+    parameters:
+      - name: device_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      summary: Revoke a device
+      description: Its token stops working at once. A device may revoke itself.
+      operationId: revokeDevice
+      responses:
+        "204":
+          description: Revoked
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/classes/{class_id}/decks:
     parameters:
       - $ref: "#/components/parameters/ClassId"
@@ -989,6 +1097,11 @@ paths:
       - $ref: "#/components/parameters/CardId"
     post:
       summary: Record a review and reschedule the card (SM-2)
+      description: >-
+        Each review is logged. Offline clients replay queued reviews with
+        reviewed_at and client_review_id: a client_review_id the card has
+        already seen returns the card unchanged. Reviews apply in arrival
+        order, so a client should send a card's reviews oldest first.
       operationId: reviewCard
       requestBody:
         required: true
@@ -1000,6 +1113,19 @@ paths:
                 rating:
                   type: string
                   enum: [again, hard, good, easy]
+                reviewed_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: >-
+                    When the card was rated; defaults to now. A future time
+                    counts as now, one older than 30 days as 30 days ago.
+                client_review_id:
+                  type: string
+                  nullable: true
+                  maxLength: 64
+                  pattern: "^[A-Za-z0-9_.:-]+$"
+                  description: Idempotency key, unique per card.
               required: [rating]
       responses:
         "200":
@@ -1017,8 +1143,9 @@ paths:
     post:
       summary: Undo the card's last review, restoring its previous schedule
       description: >
-        The previous schedule is held in memory for the most recent reviews
-        only, so undo is available until the backend restarts.
+        Restores the schedule saved with the card's latest logged review and
+        deletes that review, so repeating it walks further back. Reviews
+        restored from a backup carry no earlier schedule and can't be undone.
       operationId: undoReview
       responses:
         "200":
@@ -1193,6 +1320,10 @@ components:
       type: http
       scheme: bearer
       description: Per-launch secret generated by the desktop app (HYPATIA_API_TOKEN).
+    DeviceToken:
+      type: http
+      scheme: bearer
+      description: A paired device's token, from POST /api/devices/pair.
   parameters:
     ClassId:
       name: class_id
@@ -1462,7 +1593,100 @@ components:
           type: string
         code:
           type: string
+        user_action:
+          type: string
+          nullable: true
       required: [detail, code]
+
+    DeviceRead:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_seen_ip:
+          type: string
+          nullable: true
+      required: [id, name, created_at, last_seen_at, last_seen_ip]
+
+    PairingCodeRead:
+      type: object
+      properties:
+        code:
+          type: string
+          example: K7MQ2XRP
+        expires_at:
+          type: string
+          format: date-time
+        urls:
+          type: array
+          items:
+            type: string
+          description: >-
+            With remote access on, the HTTPS addresses a phone can try, LAN
+            first, then Tailscale. Empty otherwise.
+        cert_sha256:
+          type: string
+          nullable: true
+          description: SHA-256 (hex) of the certificate the phone should pin.
+      required: [code, expires_at, urls]
+
+    RemoteAccessRead:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        port:
+          type: integer
+          nullable: true
+        urls:
+          type: array
+          items:
+            type: string
+        cert_sha256:
+          type: string
+          nullable: true
+      required: [enabled, port, urls, cert_sha256]
+
+    PairRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+        device_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+      required: [code, device_name]
+
+    PairResponse:
+      type: object
+      properties:
+        device:
+          $ref: "#/components/schemas/DeviceRead"
+        token:
+          type: string
+          description: Shown once; only its SHA-256 is stored.
+        urls:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every address the desktop answers at (LAN, then Tailscale), so a phone
+            paired by typing one address can fall back to the others. Empty when
+            remote access is off.
+      required: [device, token, urls]
 
     ClassCreate:
       type: object
@@ -1817,7 +2041,11 @@ components:
 
     # --- Chat WebSocket protocol -------------------------------------------
     ChatWsMessage:
-      description: Client -> server. A chat message or slash command.
+      description: >-
+        Client -> server. A chat message or slash command: /ask (the default),
+        /summarize, /remove, /lint, /rebuild, /export, /flashcards, /quiz,
+        /review-quiz <attempt_id> (streams a tutor's reply about that attempt's
+        wrong, partly wrong and skipped questions), /help.
       type: object
       properties:
         type:
@@ -1860,6 +2088,9 @@ components:
           type: string
           enum: [complete]
         message_id:
+          description: >-
+            ID of the saved assistant message in chat history. /help isn't
+            saved, so its ID matches no message.
           type: string
           format: uuid
         content:
@@ -1884,7 +2115,12 @@ components:
       required: [type, message_id]
 
     ChatWsError:
-      description: Server -> client. Error processing message/command.
+      description: >-
+        Server -> client. Error processing message/command. A failed command
+        is also saved to chat history as a system message "Error: <message>",
+        so a client that disconnected while it ran sees it after reloading.
+        Errors for frames that never started a command (INVALID_COMMAND) are
+        not saved.
       type: object
       properties:
         type:
@@ -1893,6 +2129,10 @@ components:
         message:
           type: string
         code:
+          type: string
+          nullable: true
+        user_action:
+          description: Suggested next step for the user, when there is one.
           type: string
           nullable: true
       required: [type, message]
@@ -2042,6 +2282,14 @@ components:
         stale_count:
           type: integer
           description: Cards whose source wiki pages changed since generation.
+        next_due_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When the next already-studied card falls due, if later than now. New
+            cards are left out, since the daily new-card limit decides when they
+            appear.
         created_at:
           type: string
           format: date-time
@@ -2187,13 +2435,18 @@ components:
         choices:
           type: object
           nullable: true
+        points:
+          type: integer
+          minimum: 1
+          maximum: 3
+          description: Weight in the attempt score.
         page_paths:
           type: array
           items:
             type: string
         stale:
           type: boolean
-      required: [id, position, question_type, prompt, stale]
+      required: [id, position, question_type, prompt, points, stale]
 
     QuizSummaryRead:
       type: object
@@ -2256,8 +2509,10 @@ components:
           format: uuid
         score:
           type: number
+          description: Sum of each question's 0-1 score times its points.
         max_score:
           type: number
+          description: Sum of the questions' points.
         created_at:
           type: string
           format: date-time
@@ -2272,6 +2527,9 @@ components:
               score:
                 type: number
                 description: 0-1; matching gives partial credit.
+              points:
+                type: integer
+                description: What the question is worth; it earned score x points.
               correct:
                 type: boolean
                 nullable: true

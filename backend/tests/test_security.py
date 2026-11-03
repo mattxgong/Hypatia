@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app import database
 from app.config import settings
 from app.main import app
 
@@ -21,6 +22,12 @@ async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as ac:
         yield ac
+
+
+@pytest.fixture
+async def schema() -> None:
+    """A token that isn't the launch token is looked up in the devices table."""
+    await database.run_migrations()
 
 
 @pytest.fixture
@@ -40,6 +47,27 @@ class TestHost:
         assert resp.status_code == 400
 
 
+class TestRemoteAccess:
+    @pytest.mark.usefixtures("real_hosts")
+    async def test_any_host_is_accepted_but_the_token_still_applies(
+        self, client: AsyncClient
+    ) -> None:
+        settings.remote_access_enabled = True
+        settings.api_token = TOKEN
+        lan = {"host": "192.168.1.20:8765"}
+
+        assert (await client.get("/health", headers=lan)).status_code == 200
+        assert (await client.get("/api/tasks", headers=lan)).status_code == 401
+        authed = {**lan, "authorization": f"Bearer {TOKEN}"}
+        assert (await client.get("/api/tasks", headers=authed)).status_code == 200
+
+    def test_the_backend_refuses_to_start_without_a_token(self) -> None:
+        settings.remote_access_enabled = True
+        settings.api_token = None
+        with pytest.raises(RuntimeError, match="HYPATIA_API_TOKEN"), TestClient(app):
+            pass
+
+
 class TestOrigin:
     async def test_foreign_origin_rejected(self, client: AsyncClient) -> None:
         resp = await client.post(
@@ -52,6 +80,7 @@ class TestOrigin:
         assert resp.status_code == 200
 
 
+@pytest.mark.usefixtures("schema")
 class TestToken:
     async def test_no_token_configured_allows_requests(self, client: AsyncClient) -> None:
         resp = await client.get(f"/api/tasks/{uuid.uuid4()}")
@@ -62,6 +91,13 @@ class TestToken:
         assert (await client.get("/api/tasks")).status_code == 401
         wrong = await client.get("/api/tasks", headers={"authorization": "Bearer nope"})
         assert wrong.status_code == 401
+        assert wrong.json()["code"] == "AUTH_INVALID"
+
+    async def test_non_ascii_token_rejected(self, client: AsyncClient) -> None:
+        settings.api_token = TOKEN
+        header = ("Bearer t" + chr(0xE9) + "st").encode("latin-1")  # headers are Latin-1
+        resp = await client.get("/api/tasks", headers={"authorization": header})
+        assert resp.status_code == 401
 
     async def test_correct_token_accepted(self, client: AsyncClient) -> None:
         settings.api_token = TOKEN

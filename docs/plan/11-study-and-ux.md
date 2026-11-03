@@ -16,7 +16,7 @@ and study-material quality. Larger items (study modes, a per-page proficiency es
 retrieval tools, concept maps, per-task model selection, crash-safe jobs) are listed as
 options for later.
 
-**Status**: Planning only, not started. Drafted 2026-10-28.
+**Status**: Wave A (11.1-11.5) done 2026-11-01. Waves B and C not started. Drafted 2026-10-28.
 
 ---
 
@@ -60,6 +60,15 @@ Several pieces this phase builds on already exist. Don't rebuild them:
 
 ### 11.1 Review mistakes from quiz results
 
+**Done (2026-11-01).** `services/study/mistake_review.py` and `prompts/review_prompt.py`.
+Mistakes are questions scored below full marks, including skipped ones. Short answers still
+waiting for a self-check are left out, because they aren't graded yet. The tutor covers at
+most two mistakes per message. The student's replies go through `/ask`, which sees the
+last six messages, so the conversation carries on there. The button sends
+`/review-quiz <attempt_id>` and reveals the chat panel (`chatRevealRequestProvider`).
+Writing the e2e test turned up a v0.3.0 bug: `/ask` failed whenever it found pages
+(`_page_citations` called `dict()` on a SQLAlchemy Result), fixed in its own commit.
+
 After a submitted attempt, a **Review my mistakes** button on the results view opens chat
 with a tutoring session about the questions the user got wrong or partly wrong.
 
@@ -82,6 +91,11 @@ reply saved to history.
 
 ### 11.2 Weighted questions and partial credit display
 
+**Done (2026-11-01).** The LLM sets `points="1|2|3"` on each `<question>` (open question 1:
+LLM-assigned, no per-quiz difficulty). Anything else counts as 1. True/false already
+required a `true`/`false` answer; matching now also rejects repeated definitions. Backups
+made before this import with every question at 1 point.
+
 **Implementation details:**
 - Add `points` (int, default 1) to `quiz_questions` with an Alembic migration, and include it
   in backups. The LLM prompt may assign 1-3 points by difficulty. Heuristic questions stay at 1.
@@ -95,6 +109,12 @@ reply saved to history.
 tests for malformed matching and true/false output.
 
 ### 11.3 Session summary screen
+
+**Done (2026-11-01).** `widgets/study/session_summary.dart`, shared by the flashcard
+session's end and the top of quiz results. `DeckRead.next_due_at` is the earliest future
+`due_at` among cards already studied; new cards are left out, because the daily limit
+decides when they appear. Undo removes a rating from the summary too. The icon pops in,
+unless `MediaQuery.disableAnimations` is set.
 
 When a flashcard review session or quiz ends, replace the bare "done" state with a summary:
 cards reviewed per rating, quiz score, the wiki pages with the most misses (links), and when
@@ -111,6 +131,15 @@ the next cards are due.
 with no page references.
 
 ### 11.4 Semantic theme tokens
+
+**Done (2026-11-01).** `HypatiaTokens` in `config/theme.dart` replaces `StatusColors`. It
+holds text levels, hairline/strong lines, the accent tint, success/warning/danger and three
+shadows, all derived from the color scheme. Radius 10 is the base; small (6), large (16)
+and pill derive from it. Cards, dialogs, inputs and snack bars use them. Provider brand
+colors moved to `ProviderBrandColors`. `test/theme_test.dart` fails on any `Color(0x` or
+`BorderRadius.circular(<n>)` outside the theme. Not done: frosted backgrounds, because
+nothing floats over scrolling content yet (the chat input sits below the list). The font
+stays the platform default; decide on bundling one before 10.12.
 
 Replace ad-hoc colors and radii with one theme extension so every later layout (including
 Phase 10's) reads the same slots.
@@ -135,6 +164,15 @@ Phase 10's) reads the same slots.
 and no `Color(0x...)` literals left in `widgets/` outside the theme (a grep in CI or a test).
 
 ### 11.5 Pane layout rules
+
+**Done (2026-11-01).** Pane widths and collapsed flags are in `providers/layout_provider.dart`,
+clamped when loaded. A divider double-click resets its pane. The sidebar and chat headers
+have Hide buttons; the centre top bar keeps only the activity strip. The collapsed sidebar
+is an icon strip (Wiki, Source files, Study, Search). Source files sets a flag that the wiki
+tree consumes once built, because the tree isn't mounted yet when the icon is tapped. The
+chat draft is in `chatDraftProvider`, per Class. The chat panel was already kept mounted
+across centre-view changes; the draft now also survives collapsing it. The quiz keyboard
+outlines the current question.
 
 Tidy the three-panel layout in `home_screen.dart` before 10.12 (W13) generalises it.
 

@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
+import '../../providers/backend_provider.dart';
+import '../../providers/connection_provider.dart';
+import '../../providers/layout_provider.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../utils/shortcuts.dart';
+import '../remote/connection_gate.dart';
+import '../remote/remote_access_dialog.dart';
 import '../study/study_panel.dart';
 import 'add_file_button.dart';
 import 'class_dropdown.dart';
@@ -25,7 +32,21 @@ class Sidebar extends ConsumerWidget {
       color: theme.colorScheme.surfaceContainerLowest,
       child: Column(
         children: [
-          const Padding(padding: EdgeInsets.all(12), child: ClassDropdown()),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+            child: Row(
+              children: [
+                const Expanded(child: ClassDropdown()),
+                IconButton(
+                  icon: const Icon(Icons.keyboard_double_arrow_left, size: 18),
+                  tooltip: 'Hide sidebar ($shortcutModifierLabel+B)',
+                  onPressed: () =>
+                      ref.read(sidebarCollapsedProvider.notifier).state = true,
+                  constraints: HypatiaTokens.iconButtonSize(context, 36),
+                ),
+              ],
+            ),
+          ),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
             child: SidebarSearchBar(),
@@ -42,10 +63,6 @@ class Sidebar extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: SegmentedButton<SidebarMode>(
                 showSelectedIcon: false,
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
                 segments: const [
                   ButtonSegment(
                     value: SidebarMode.wiki,
@@ -106,11 +123,27 @@ class Sidebar extends ConsumerWidget {
                   tooltip: 'Toggle theme',
                   iconSize: 18,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
+                  constraints: HypatiaTokens.iconButtonSize(context, 32),
                 ),
+                // Only the desktop app, which runs the backend, offers it.
+                if (ref.watch(backendLauncherProvider) != null)
+                  IconButton(
+                    icon: const Icon(Icons.phonelink_outlined, size: 18),
+                    onPressed: () => showRemoteAccessDialog(context),
+                    tooltip: 'Remote access',
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: HypatiaTokens.iconButtonSize(context, 32),
+                  ),
+                if (ref.watch(remoteClientProvider))
+                  IconButton(
+                    icon: const Icon(Icons.computer_outlined, size: 18),
+                    onPressed: () => showPairedComputerDialog(context),
+                    tooltip: 'Your computer',
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: HypatiaTokens.iconButtonSize(context, 32),
+                  ),
                 const Spacer(),
                 const TaskIndicator(),
               ],

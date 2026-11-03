@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/task_status.dart';
 import '../services/api_client.dart';
+import 'foreground_provider.dart';
 
 class TaskListState {
   const TaskListState({this.tasks = const []});
@@ -40,7 +41,9 @@ class TaskListNotifier extends Notifier<TaskListState> {
 
   void startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(_pollInterval, (_) => fetchTasks());
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      if (ref.read(appInForegroundProvider)) fetchTasks();
+    });
     fetchTasks();
   }
 

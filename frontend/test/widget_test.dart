@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +12,7 @@ import 'package:frontend/models/hypatia_class.dart';
 import 'package:frontend/providers/class_provider.dart';
 import 'package:frontend/providers/backend_provider.dart';
 import 'package:frontend/providers/theme_provider.dart';
+import 'package:frontend/screens/home_screen.dart';
 import 'package:frontend/services/api_client.dart';
 import 'package:frontend/services/backend_launcher.dart';
 
@@ -66,6 +69,35 @@ void main() {
     expect(find.text('Welcome to Hypatia'), findsOneWidget);
     expect(find.byTooltip('About Hypatia'), findsOneWidget);
   });
+
+  testWidgets(
+    'Files can be dropped onto the window only on desktop',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sharedPreferencesProvider.overrideWithValue(prefs),
+            classListProvider.overrideWith(() => _EmptyClassListNotifier()),
+          ],
+          child: const MaterialApp(home: HomeScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final desktop =
+          debugDefaultTargetPlatformOverride == TargetPlatform.windows;
+      expect(find.byType(DropTarget), desktop ? findsOneWidget : findsNothing);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.windows,
+      TargetPlatform.android,
+    }),
+  );
 
   testWidgets('Startup screen shows until the backend is ready', (
     tester,

@@ -21,6 +21,7 @@ from app.errors import HypatiaError
 from app.routers import backup as backup_router
 from app.routers import chat as chat_router
 from app.routers import classes as classes_router
+from app.routers import devices as devices_router
 from app.routers import files as files_router
 from app.routers import settings as settings_router
 from app.routers import study as study_router
@@ -67,6 +68,9 @@ def _watch_stdin_for_parent_exit() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    if settings.remote_access_enabled and not settings.api_token:
+        # Without a token every request counts as the desktop app's.
+        raise RuntimeError("Remote access needs HYPATIA_API_TOKEN; refusing to start.")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     if settings.exit_on_stdin_close:
         _watch_stdin_for_parent_exit()
@@ -130,6 +134,7 @@ app.add_middleware(LocalAccessMiddleware)
 
 app.include_router(backup_router.router)
 app.include_router(classes_router.router)
+app.include_router(devices_router.router)
 app.include_router(files_router.router)
 app.include_router(wiki_router.router)
 app.include_router(chat_router.router)

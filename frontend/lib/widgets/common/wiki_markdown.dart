@@ -59,6 +59,16 @@ class WikiMarkdown extends ConsumerWidget {
     void onTap(String text, String? href, String title) =>
         _handleLink(ref, href, pages);
 
+    // Columns fit their content up to a cap, and a table wider than the page
+    // scrolls sideways instead of squeezing every column (see the vendored
+    // builder's Hypatia patch).
+    final sheet = styleSheet.copyWith(
+      tableColumnWidth: const MinColumnWidth(
+        IntrinsicColumnWidth(),
+        FixedColumnWidth(320),
+      ),
+    );
+
     // SelectionArea rather than `selectable`, which cannot host inline math.
     return SelectionArea(
       child: scrollable
@@ -67,14 +77,14 @@ class WikiMarkdown extends ConsumerWidget {
               extensionSet: mathExtensionSet,
               builders: mathBuilders,
               onTapLink: onTap,
-              styleSheet: styleSheet,
+              styleSheet: sheet,
             )
           : MarkdownBody(
               data: rendered,
               extensionSet: mathExtensionSet,
               builders: mathBuilders,
               onTapLink: onTap,
-              styleSheet: styleSheet,
+              styleSheet: sheet,
             ),
     );
   }

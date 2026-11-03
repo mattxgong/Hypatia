@@ -21,6 +21,7 @@ from app.models.db_models import (
 
 ClassName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 ClassDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
+DeviceName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 ProviderName = Literal["copilot", "copilot-ollama", "anthropic", "openai", "ollama"]
 WhisperModelSize = Literal[
     "tiny",
@@ -329,6 +330,8 @@ class DeckRead(BaseModel):
     card_count: int
     due_count: int
     stale_count: int
+    # The earliest future due time among cards already studied; None if there is none.
+    next_due_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -376,6 +379,13 @@ class FlashcardRead(BaseModel):
 
 class FlashcardReview(BaseModel):
     rating: ReviewRating
+    # When the student rated the card, for reviews queued offline. Defaults to
+    # now; a future time is treated as now, and one older than 30 days as 30 days ago.
+    reviewed_at: datetime | None = None
+    # Makes a replayed review apply once. Unique per card.
+    client_review_id: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$"
+    )
 
 
 class DeckRefreshResponse(BaseModel):
@@ -421,6 +431,7 @@ class QuizQuestionRead(BaseModel):
     question_type: QuestionType
     prompt: str
     choices: dict | None
+    points: int
     page_paths: list[str]
     stale: bool
 
@@ -451,7 +462,9 @@ class QuizAttemptCreate(BaseModel):
 
 class QuestionResultRead(BaseModel):
     question_id: uuid.UUID
+    # 0-1; the question is worth `points` of the attempt's max_score.
     score: float
+    points: int
     correct: bool | None
     status: str
     response: dict[str, Any] | None
@@ -473,3 +486,43 @@ class QuizAttemptRead(BaseModel):
     max_score: float
     results: list[QuestionResultRead]
     created_at: datetime
+
+
+class DeviceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    created_at: datetime
+    last_seen_at: datetime | None
+    last_seen_ip: str | None
+
+
+class PairingCodeRead(BaseModel):
+    code: str
+    expires_at: datetime
+    # For the pairing QR, when remote access is on: where to connect, and the
+    # certificate fingerprint to pin.
+    urls: list[str] = []
+    cert_sha256: str | None = None
+
+
+class RemoteAccessRead(BaseModel):
+    enabled: bool
+    port: int | None
+    urls: list[str]
+    cert_sha256: str | None
+
+
+class PairRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    device_name: DeviceName
+
+
+class PairResponse(BaseModel):
+    device: DeviceRead
+    # Shown once; only its hash is stored.
+    token: str
+    # Every address the desktop answers at, so a phone paired by typing one
+    # still has the others to fall back on.
+    urls: list[str] = []

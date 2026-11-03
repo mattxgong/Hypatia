@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import 'rebuild_confirm_dialog.dart';
@@ -42,11 +43,15 @@ class _CommandInputState extends ConsumerState<CommandInput> {
   @override
   void initState() {
     super.initState();
+    _controller.text = ref.read(chatDraftProvider(_draftKey));
     _controller.addListener(_onTextChanged);
   }
 
+  String get _draftKey => ref.read(currentClassIdProvider) ?? '';
+
   void _onTextChanged() {
     final text = _controller.text;
+    ref.read(chatDraftProvider(_draftKey).notifier).state = text;
     final typingCommand = text.startsWith('/') && !text.contains(RegExp(r'\s'));
     final matches = typingCommand
         ? chatCommands
@@ -155,6 +160,10 @@ class _CommandInputState extends ConsumerState<CommandInput> {
       _focusNode.requestFocus();
       ref.read(chatInputProvider.notifier).state = '';
     });
+    // Each Class keeps its own draft.
+    ref.listen(currentClassIdProvider, (_, classId) {
+      _controller.text = ref.read(chatDraftProvider(classId ?? ''));
+    });
     ref.listen(chatInputFocusRequestProvider, (_, _) {
       _focusNode.requestFocus();
     });
@@ -187,7 +196,6 @@ class _CommandInputState extends ConsumerState<CommandInput> {
                     for (final (index, command) in _suggestions.indexed)
                       ListTile(
                         dense: true,
-                        visualDensity: VisualDensity.compact,
                         selected: index == _highlighted,
                         selectedTileColor: theme.colorScheme.primaryContainer
                             .withValues(alpha: 0.4),
@@ -225,9 +233,13 @@ class _CommandInputState extends ConsumerState<CommandInput> {
                   minLines: 1,
                   maxLines: 6,
                   keyboardType: TextInputType.multiline,
-                  decoration: const InputDecoration(
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
                     hintText: 'Ask anything, /command...',
-                    helperText: 'Enter to send · Shift+Enter for a new line',
+                    // A phone's keyboard Enter makes a new line; Send sends.
+                    helperText: HypatiaTokens.touch(context)
+                        ? null
+                        : 'Enter to send · Shift+Enter for a new line',
                     isDense: true,
                   ),
                 ),

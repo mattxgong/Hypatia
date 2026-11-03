@@ -10,13 +10,15 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
 from starlette.testclient import TestClient
 
+from app.errors import LLMProviderError
 from app.main import app
+from app.services.wiki_engine import SummarizeResult
 
 pytestmark = pytest.mark.asyncio
 
@@ -75,15 +77,62 @@ async def test_ask_finishes_after_the_client_disconnects(
             ws.send_json({"type": "message", "content": "/ask anything"})
             assert ws.receive_json() == {"type": "chunk", "content": "First part. "}
         # The socket is closed now; the answer must still be finished and saved.
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            history = _history(client, class_id)
-            if len(history) == 2:
-                break
-            await asyncio.sleep(0.05)
+        history = await _wait_for_history(client, class_id, 2)
 
     assert [m["role"] for m in history] == ["user", "assistant"]
     assert history[1]["content"] == "First part. Second part."
+
+
+async def _wait_for_history(client: TestClient, class_id: str, count: int) -> list[dict]:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        history = _history(client, class_id)
+        if len(history) >= count:
+            return history
+        await asyncio.sleep(0.05)
+    return _history(client, class_id)
+
+
+async def test_complete_carries_the_saved_message_id(
+    e2e_client: AsyncClient, e2e_class: dict
+) -> None:
+    class_id = e2e_class["id"]
+    summary = SummarizeResult(success=True, page_path="pages/synthesis/gravity.md")
+    with (
+        patch("app.routers.chat.wiki_engine.handle_summarize", AsyncMock(return_value=summary)),
+        TestClient(app) as client,
+    ):
+        with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+            ws.send_json({"type": "message", "content": "/summarize gravity"})
+            complete = ws.receive_json()
+        history = _history(client, class_id)
+
+    assert complete["type"] == "complete"
+    assert history[-1]["id"] == complete["message_id"]
+    assert history[-1]["content"] == complete["content"]
+
+
+async def test_failure_after_the_client_disconnects_is_in_history(
+    e2e_client: AsyncClient, e2e_class: dict
+) -> None:
+    class_id = e2e_class["id"]
+
+    async def fail_later(*args: object, **kwargs: object) -> SummarizeResult:
+        await asyncio.sleep(0.3)
+        raise LLMProviderError(detail="The model is overloaded")
+
+    with (
+        patch("app.routers.chat.wiki_engine.handle_summarize", fail_later),
+        TestClient(app) as client,
+    ):
+        with client.websocket_connect(f"/api/classes/{class_id}/chat") as ws:
+            ws.send_json({"type": "message", "content": "/summarize gravity"})
+            # Only /help returns before the command has run; leave now.
+        history = await _wait_for_history(client, class_id, 2)
+
+    assert [m["role"] for m in history] == ["user", "system"]
+    assert history[1]["content"] == "Error: The model is overloaded"
+    assert history[1]["command"] == "summarize"
 
 
 async def test_cancel_reaches_a_running_command(e2e_client: AsyncClient, e2e_class: dict) -> None:

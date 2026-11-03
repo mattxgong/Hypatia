@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections import OrderedDict
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -114,7 +113,9 @@ async def _card_reads(
 async def _deck_reads(
     session: AsyncSession, class_id: uuid.UUID, decks: list[Deck]
 ) -> list[DeckRead]:
-    counts = await service.deck_counts(session, class_id, [d.id for d in decks], _now())
+    now = _now()
+    counts = await service.deck_counts(session, class_id, [d.id for d in decks], now)
+    next_due = await service.next_due(session, [d.id for d in decks], now)
     return [
         DeckRead(
             id=d.id,
@@ -126,6 +127,7 @@ async def _deck_reads(
             card_count=counts[d.id][0],
             due_count=counts[d.id][1],
             stale_count=counts[d.id][2],
+            next_due_at=next_due.get(d.id),
             created_at=d.created_at,
             updated_at=d.updated_at,
         )
@@ -169,6 +171,7 @@ async def _quiz_read(session: AsyncSession, class_id: uuid.UUID, quiz: Quiz) -> 
                 question_type=q.question_type,
                 prompt=q.prompt,
                 choices=q.choices_json,
+                points=q.points,
                 page_paths=list(q.page_hashes or {}),
                 stale=service.is_stale(q.page_hashes, current),
             )
@@ -186,6 +189,7 @@ def _attempt_read(attempt: QuizAttempt, questions: list[QuizQuestion]) -> QuizAt
             QuestionResultRead(
                 question_id=question.id,
                 score=graded.get("score", 0.0),
+                points=question.points,
                 correct=graded.get("correct"),
                 status=graded.get("status", "unanswered"),
                 response=attempt.answers_json.get(key),
@@ -428,11 +432,23 @@ async def review_card(
     body: FlashcardReview,
     session: AsyncSession = Depends(get_session),
 ) -> FlashcardRead:
+    """Rate a card. Replaying the same ``client_review_id`` changes nothing."""
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
-    _remember_for_undo(card)
-    service.apply_review(card, body.rating, _now())
-    await session.commit()
+    applied = await service.record_review(
+        session,
+        card,
+        body.rating,
+        reviewed_at=body.reviewed_at,
+        client_review_id=body.client_review_id,
+        now=_now(),
+    )
+    if applied:
+        try:
+            await session.commit()
+        except IntegrityError:
+            # The same review arrived twice at once; the other copy was saved.
+            await session.rollback()
     await session.refresh(card)
     return (await _card_reads(session, class_id, [card]))[0]
 
@@ -447,39 +463,13 @@ async def undo_review(
     """Put a card's schedule back to before its most recent review."""
     deck = await _get_deck(session, class_id, deck_id)
     card = await _get_card(session, deck, card_id)
-    previous = _undo_states.pop(card.id, None)
-    if previous is None:
+    if not await service.undo_last_review(session, card):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Nothing to undo for this card"
         )
-    for field_name, value in previous.items():
-        setattr(card, field_name, value)
     await session.commit()
     await session.refresh(card)
     return (await _card_reads(session, class_id, [card]))[0]
-
-
-#: Scheduling state before each card's latest review, for Undo. In memory and
-#: bounded: undo is offered for a few seconds right after rating.
-_undo_states: OrderedDict[uuid.UUID, dict[str, Any]] = OrderedDict()
-_MAX_UNDO_STATES = 200
-_SCHEDULE_FIELDS = (
-    "ease",
-    "interval_days",
-    "repetitions",
-    "lapses",
-    "learning_step",
-    "due_at",
-    "last_reviewed_at",
-    "first_reviewed_at",
-)
-
-
-def _remember_for_undo(card: Flashcard) -> None:
-    _undo_states[card.id] = {f: getattr(card, f) for f in _SCHEDULE_FIELDS}
-    _undo_states.move_to_end(card.id)
-    while len(_undo_states) > _MAX_UNDO_STATES:
-        _undo_states.popitem(last=False)
 
 
 # --- Quizzes ---

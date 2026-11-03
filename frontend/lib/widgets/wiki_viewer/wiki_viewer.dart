@@ -5,12 +5,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/wiki_provider.dart';
 import '../../services/api_client.dart';
 import '../../utils/frontmatter.dart';
+import '../../utils/window_size.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
 
 final sourceViewerRequestProvider = StateProvider<SourceViewerRequest?>(
   (ref) => null,
 );
+
+/// The source shown beside the wiki page on a tablet in landscape, where a
+/// tapped citation opens next to the text instead of over it.
+final sideSourceProvider = StateProvider<SourceViewerRequest?>((ref) => null);
 
 class SourceViewerRequest {
   const SourceViewerRequest({required this.fileRef, required this.location});
@@ -36,9 +41,11 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
     return pageAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: ErrorCard(
-          error: e,
-          onRetry: () => ref.invalidate(currentWikiPageProvider),
+        child: SingleChildScrollView(
+          child: ErrorCard(
+            error: e,
+            onRetry: () => ref.invalidate(currentWikiPageProvider),
+          ),
         ),
       ),
       data: (page) {
@@ -68,16 +75,22 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
         final editing = ref.watch(
           wikiEditDraftsProvider.select((drafts) => drafts.containsKey(key)),
         );
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildHeader(page.title, page.updatedAt, key, editing),
-            Expanded(
-              child: editing
-                  ? _DraftEditor(key: ValueKey(key), pageKey: key)
-                  : _buildViewer(theme, page.content),
-            ),
-          ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // The markdown view pads itself; a phone-width pane adds no more.
+            final narrow = constraints.maxWidth < narrowPaneWidth;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHeader(page.title, page.updatedAt, key, editing, narrow),
+                Expanded(
+                  child: editing
+                      ? _DraftEditor(key: ValueKey(key), pageKey: key)
+                      : _buildViewer(theme, page.content, narrow),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -88,10 +101,11 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
     DateTime updatedAt,
     WikiPageKey key,
     bool editing,
+    bool narrow,
   ) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      padding: EdgeInsets.symmetric(horizontal: narrow ? 16 : 24, vertical: 12),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: theme.dividerColor)),
       ),
@@ -138,9 +152,9 @@ class _WikiViewerState extends ConsumerState<WikiViewer> {
     );
   }
 
-  Widget _buildViewer(ThemeData theme, String content) {
+  Widget _buildViewer(ThemeData theme, String content, bool narrow) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: EdgeInsets.symmetric(horizontal: narrow ? 0 : 24, vertical: 16),
       child: WikiMarkdown(
         data: stripFrontmatter(content),
         styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(

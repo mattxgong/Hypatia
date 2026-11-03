@@ -32,3 +32,6 @@ data/*
 # Flutter global tool-state cache (written to CWD if LOCALAPPDATA is unset)
 .flutter
 .flutter_tool_state
+
+# OCR evaluation images and results (spikes/ocr-eval/eval_ocr.py makes or reads them)
+spikes/ocr-eval/samples/

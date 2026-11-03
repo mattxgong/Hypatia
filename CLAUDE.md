@@ -28,6 +28,8 @@ backend/            FastAPI Python backend
     database.py      Async SQLAlchemy engine/session, Alembic migration runner
     dependencies.py  FastAPI dependency injection (session, LLM availability check)
     errors.py        Structured error catalog: ErrorCode enum, HypatiaError + subclasses
+    security.py      LocalAccessMiddleware: Host/Origin checks, launch and device tokens
+    serve.py         Remote-access entry point: loopback HTTP + HTTPS for phones, one process
     exceptions.py    Legacy exception types (being consolidated into errors.py)
     models/
       db_models.py    SQLAlchemy ORM models (the DB schema)
@@ -35,8 +37,9 @@ backend/            FastAPI Python backend
     routers/
       backup.py       Backup export/import endpoints
       chat.py         WebSocket chat with /ask, /summarize, /remove, /lint, /rebuild, /export,
-                      /flashcards, /quiz
+                      /flashcards, /quiz, /review-quiz
       classes.py      Class CRUD endpoints
+      devices.py      Device pairing (codes, pair), list and revoke paired devices
       files.py        File upload and listing
       settings.py     Settings get/put and usage stats
       study.py        Flashcard decks, SM-2 review, practice quizzes, deck export
@@ -44,6 +47,8 @@ backend/            FastAPI Python backend
       wiki.py         Wiki tree, page retrieval, search, export
     services/
       credential_store.py  Platform-native credential storage (keyring → file fallback)
+      device_auth.py  Pairing codes (in memory) and device token checks
+      remote_access.py  Self-signed cert (pinned by phones), LAN/Tailscale pairing URLs
       settings_store.py    Persistent non-secret settings (settings.json in data_dir)
       wiki_store.py   DB-is-truth helpers: per-Class operation lock, index from rows,
                       mirror_to_disk (rewrites wiki files + git commit), log.md
@@ -54,7 +59,9 @@ backend/            FastAPI Python backend
                       markdown), quiz_builder.py, grading.py, scheduler.py
                       (SM-2), llm_generator.py (AI cards/questions, short-
                       answer grading), jobs.py (background AI generation),
-                      service.py (scope, staleness, export)
+                      service.py (scope, staleness, export, points-weighted
+                      attempt scores), mistake_review.py (/review-quiz:
+                      tutoring prompt from an attempt's wrong answers)
       file_converter.py  MarkItDown-based document-to-markdown conversion
       video_processor.py ffmpeg + faster-whisper transcription pipeline
       storage_service.py Per-Class file storage with path-traversal-safe filenames
@@ -81,19 +88,43 @@ frontend/            Flutter application
   lib/
     main.dart          App entry point
     models/            Data models (task_status.dart, etc.)
-    providers/         Riverpod state providers (settings, search, tasks, etc.)
+    providers/         Riverpod state providers (settings, search, tasks, etc.; layout_provider:
+                       pane widths, collapsed panes, collapsed-sidebar sections;
+                       connection_provider: a phone's link to its paired desktop)
     screens/           Full-screen views (home_screen, class_settings_screen)
+      home/            Home screen layouts by window size class: compact (phones, bottom
+                       nav), medium (rail + 2 panes), expanded (3 panes); home_panes.dart
+                       has the shared panes, app bar, and GlobalKeys that keep pane state
+                       when the size class changes
     services/
       api_client.dart     HTTP/WebSocket client for backend API
       backend_launcher.dart   Launches/manages the backend subprocess
+      desktop_window.dart     Window close/quit (stops the backend), system tray while
+                              remote access is on
+      connection_store.dart   Phone side: pairing kept in flutter_secure_storage, and the
+                              pinned-certificate HttpOverrides for the desktop's cert
+    utils/
+      platform.dart      isDesktop
+      window_size.dart   WindowSizeClass (compact < 600 <= medium < 840 <= expanded), from the window
     widgets/
       chat_panel/      Chat UI (message list, input, streaming)
       sidebar/         Sidebar (class dropdown, wiki tree, search bar, task indicator)
-      source_viewer/   Source file viewer (PDF, video, images, text)
+      source_viewer/   Source file viewer (PDF, video, images, text): SourcePanel, shown in
+                       a dialog (full-screen on phones) or beside the page on a tablet
       wiki_viewer/     Wiki page renderer (markdown with citations)
       study/           Study panel, generate dialog, flashcard review, quiz view
+      remote/          Remote access dialog (desktop): toggle, addresses, pairing
+                       QR, paired devices; opened from the sidebar footer.
+                       connection_gate.dart (phone): connection screens, offline
+                       banner, pause polling in the background, reconnect on resume,
+                      "Your computer" dialog. pairing_screen.dart (phone): pair by
+                      QR scan, or typed address + code with a fingerprint check
       common/          Shared widgets (error_card.dart; activity_status.dart: top-bar
-                       status strip + file finished/failed notices)
+                       status strip + file finished/failed notices; pane_divider.dart;
+                       action_menu.dart: menu, or bottom sheet on a phone)
+  android/, ios/       Mobile targets (Phase 10), app ID com.mattxgong.hypatia.
+                       compileSdk is 37 for the app and, via android/build.gradle.kts,
+                       for every plugin (some still declare older SDKs)
 
 data/                Runtime data (gitignored; DB, wiki repos, uploaded files live here)
 docs/
@@ -105,8 +136,9 @@ scripts/
   run_dev.sh          Runs backend (uvicorn --reload) and frontend (flutter run) together
 spikes/               Early technical spikes/prototypes (Phase 0.5), not part of the app
 third_party/
-  flutter_markdown_plus/  Vendored 1.0.12 (lib/ only) with a "Hypatia patch" in
-                      builder.dart so tall inline math grows its line; see its pubspec.yaml
+  flutter_markdown_plus/  Vendored 1.0.12 (lib/ only) with two "Hypatia patch"es in
+                      builder.dart: tall inline math grows its line, and MinColumnWidth
+                      tables scroll sideways; see its pubspec.yaml
 .github/workflows/    CI (ci.yml), nightly (nightly.yml), manual (manual.yml),
                       release (release.yml), shared desktop packaging (build-desktop.yml)
 ```
@@ -141,7 +173,9 @@ itself (see `frontend/lib/services/backend_launcher.dart` and Task 1.9).
 `providers/backend_provider.dart`. There is a single `MaterialApp.router`, whose
 `builder` (`widgets/backend_gate.dart`) shows the startup and error screens
 until the backend is ready. Closing the window or quitting (Cmd+Q) awaits
-`stopBackend()` first (`_BackendShutdown` in `main.dart`). As a backstop, the
+`stopBackend()` first (`DesktopWindow` in `services/desktop_window.dart`);
+while remote access is on, closing instead keeps Hypatia running in the
+system tray (minimized on Linux). As a backstop, the
 launcher sets `HYPATIA_EXIT_ON_STDIN_CLOSE=1`, so the backend shuts itself down
 when the app's stdin pipe closes, even if the app crashed.
 
@@ -186,10 +220,13 @@ cd backend
     `metadata_json`).
 - Study tables (Phase 9, DB-only, included in backups): `decks` →
   `flashcards` (SM-2 state: `ease`, `interval_days`, `repetitions`, `lapses`,
-  `due_at`), and `quizzes` → `quiz_questions` / `quiz_attempts`. Cards and
+  `due_at`) → `flashcard_reviews` (one row per rating; `client_review_id`
+  makes offline replays idempotent, `previous_state` backs Undo), and `quizzes` → `quiz_questions` / `quiz_attempts`. Cards and
   questions store `page_hashes` (`{page_path: body hash}`); a mismatch with
   the current page body marks them out of date (computed on read, frontmatter
   ignored).
+- `devices` (Phase 10): paired phones/tablets (`name`, `token_hash`,
+  `last_seen_at`, `last_seen_ip`, `revoked_at`). Not per-Class, so not in backups.
 - Timestamp columns use `UTCDateTime` (`db_models.py`): SQLite drops
   tzinfo, so values are stored as UTC and always come back timezone-aware,
   and the API sends them with an offset. The Flutter models call `.toLocal()`.
@@ -225,8 +262,10 @@ retrieval, and the chat WebSocket message protocol). Keep it in sync with
 - Synchronous heavy work (document conversion, backup zip/unzip, git) runs
   in `asyncio.to_thread`.
 - Chat commands run in a per-connection worker (`routers/chat.py`) and
-  outlive the socket. They write their results to chat history, and the
-  frontend reloads history when it reconnects. The router owns chat history;
+  outlive the socket. They write their results to chat history (failures
+  too, via `_report_error`, as a system "Error: ..." message), and the
+  `complete` frame's `message_id` is the saved row's ID. The frontend reloads
+  history when it reconnects. The router owns chat history;
   the engine's streaming `/ask` and `/summarize` don't save messages.
 
 ## Logging
@@ -241,8 +280,8 @@ and attached to every log line for the duration of a request/operation.
 ## Error handling
 
 The backend uses a structured error catalog in `backend/app/errors.py`:
-- `ErrorCode` is a `StrEnum` with 21 codes across 5 groups: general, LLM,
-  chat commands, file/system, and settings/provider.
+- `ErrorCode` is a `StrEnum` with 27 codes across 6 groups: general, LLM,
+  chat commands, file/system, settings/provider, and auth.
 - `HypatiaError` is the base exception; subclasses include
   `LLMUnavailableError`, `LLMProviderError`, `ResourceNotFoundError`,
   `FileProcessingError`, and `SettingsError`.
@@ -265,6 +304,30 @@ therefore checks every HTTP request and WebSocket handshake:
   it, and exposes `authHeaders` for loaders that fetch backend URLs themselves
   (WebSocket, media, PDF, image). `scripts/run_dev.sh` makes one per run and
   passes it to Flutter as `--dart-define=HYPATIA_API_TOKEN`.
+- A paired device's token works too (Phase 10, `devices` table). The desktop
+  shows a single-use code from `POST /api/devices/pairing-code` (launch token
+  only, via `require_local_client`), and the phone redeems it at the open
+  `POST /api/devices/pair`, which also returns all the desktop's addresses. Only
+  token SHA-256s are stored; revoked devices get
+  401 `AUTH_INVALID`. `request.state.principal` is `"local"` or the device ID.
+  Without a launch token every request counts as local, so remote access must
+  never bind beyond loopback unless one is set.
+- On a phone (`remoteClientProvider`), `connectionProvider` replaces the launcher:
+  it tries the paired desktop's URLs (last good first), pins its certificate via
+  `HttpOverrides.global`, and sets the same base URL and token providers. Any
+  `HttpClient` made outside Dio must come after the pin is installed;
+  `WebSocket.connect` ignores `HttpOverrides`, so the chat socket gets a pinned
+  client explicitly.
+- Remote access (Phase 10, off by default) is a launcher setting
+  (`RemoteAccess` in `backend_launcher.json`; `setRemoteAccess` saves it and
+  restarts the backend). When on, the launcher runs `python -m app.serve`:
+  the usual loopback HTTP listener for the desktop, plus HTTPS on `0.0.0.0`
+  on a fixed port (8765) with a self-signed certificate in
+  `<data_dir>/remote/` that phones pin by SHA-256. Only the loopback server
+  runs the lifespan. `HYPATIA_REMOTE_ACCESS_ENABLED=1` makes the backend accept
+  any Host header, and it refuses to start in that mode without a launch
+  token. A token that isn't the launch token is
+  looked up in the database, so tests sending one need the schema migrated.
 
 Wiki page paths from LLM output, `PUT /wiki/pages/...` and backups go through
 `wiki_parser.normalize_page_path`. It accepts only `pages/**/*.md` with no `..`
@@ -302,6 +365,11 @@ are persisted via `backend/app/services/settings_store.py` to
 **Dart (frontend)**:
 - Formatted with `dart format` and linted with `flutter analyze`, using the
   standard Flutter/Dart lint set (see `frontend/analysis_options.yaml`).
+- Don't hard-code `VisualDensity.compact` or small button constraints: the
+  theme's adaptive density keeps desktop compact and makes touch targets 48 dp.
+  Use `HypatiaTokens.iconButtonSize` / `HypatiaTokens.touch`. Widget tests run
+  as Android (touch) by default; pin desktop behaviour with
+  `TargetPlatformVariant.only(TargetPlatform.windows)`.
 
 ## Testing and quality checks
 
@@ -340,6 +408,10 @@ CI regenerates it and fails on any diff; after editing `pyproject.toml` run
 `python -m uv pip compile pyproject.toml --extra dev --universal --python-version 3.11 -o requirements.lock`
 from `backend/`. `--python-version 3.11` matches `requires-python`; without it
 uv targets the local interpreter and drops markers CI's 3.11 run needs.
+
+`ci.yml` also builds an unsigned debug APK (ubuntu) and an unsigned iOS release
+build (`--no-codesign`, macOS runner) on every PR, so mobile breakage shows up
+before the mobile client exists.
 
 `.github/workflows/build-desktop.yml` is a reusable workflow that builds the
 Windows, macOS, and Linux desktop apps, bundles the backend source, packages

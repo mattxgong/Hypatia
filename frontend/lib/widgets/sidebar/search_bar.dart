@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../providers/search_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/error_card.dart';
@@ -15,7 +16,11 @@ class SidebarSearchBar extends ConsumerStatefulWidget {
 }
 
 class _SidebarSearchBarState extends ConsumerState<SidebarSearchBar> {
-  final _controller = TextEditingController();
+  // From the query, which outlives this box: the compact and expanded
+  // layouts each build their own.
+  late final _controller = TextEditingController(
+    text: ref.read(searchQueryProvider),
+  );
   Timer? _debounce;
 
   @override
@@ -82,7 +87,6 @@ class SearchModeSelector extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: SegmentedButton<String>(
         style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
           textStyle: WidgetStatePropertyAll(theme.textTheme.labelSmall),
           padding: const WidgetStatePropertyAll(
             EdgeInsets.symmetric(horizontal: 8),
@@ -133,7 +137,6 @@ class SearchCategoryFilter extends ConsumerWidget {
             onSelected: (_) {
               ref.read(searchCategoryProvider.notifier).state = value;
             },
-            visualDensity: VisualDensity.compact,
             labelStyle: const TextStyle(fontSize: 11),
             padding: EdgeInsets.zero,
           );
@@ -203,7 +206,6 @@ class SearchResults extends ConsumerWidget {
             final result = results[index];
             return ListTile(
               dense: true,
-              visualDensity: VisualDensity.compact,
               title: Row(
                 children: [
                   Expanded(
@@ -296,7 +298,7 @@ class _CategoryBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: HypatiaTokens.cornersSmall,
       ),
       child: Text(
         label,

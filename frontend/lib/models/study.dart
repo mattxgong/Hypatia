@@ -74,6 +74,7 @@ class Deck {
     required this.cardCount,
     required this.dueCount,
     required this.staleCount,
+    this.nextDueAt,
     required this.createdAt,
   });
 
@@ -86,6 +87,10 @@ class Deck {
     cardCount: json['card_count'] as int,
     dueCount: json['due_count'] as int,
     staleCount: json['stale_count'] as int,
+    nextDueAt: switch (json['next_due_at']) {
+      final String at => DateTime.parse(at).toLocal(),
+      _ => null,
+    },
     createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
   );
 
@@ -97,6 +102,9 @@ class Deck {
   final int cardCount;
   final int dueCount;
   final int staleCount;
+
+  /// When the next already-studied card falls due, if later than now.
+  final DateTime? nextDueAt;
   final DateTime createdAt;
 }
 
@@ -189,6 +197,7 @@ class QuizQuestion {
     this.options = const [],
     this.left = const [],
     this.right = const [],
+    this.points = 1,
     required this.pagePaths,
     required this.stale,
   });
@@ -205,6 +214,7 @@ class QuizQuestion {
       options: list('options'),
       left: list('left'),
       right: list('right'),
+      points: json['points'] as int? ?? 1,
       pagePaths: (json['page_paths'] as List<dynamic>).cast<String>(),
       stale: json['stale'] as bool,
     );
@@ -217,6 +227,9 @@ class QuizQuestion {
   final List<String> options;
   final List<String> left;
   final List<String> right;
+
+  /// Weight in the attempt score (1-3).
+  final int points;
   final List<String> pagePaths;
   final bool stale;
 }
@@ -239,6 +252,7 @@ class QuestionResult {
   const QuestionResult({
     required this.questionId,
     required this.score,
+    this.points = 1,
     this.correct,
     required this.status,
     this.response,
@@ -251,6 +265,7 @@ class QuestionResult {
   factory QuestionResult.fromJson(Map<String, dynamic> json) => QuestionResult(
     questionId: json['question_id'] as String,
     score: (json['score'] as num).toDouble(),
+    points: json['points'] as int? ?? 1,
     correct: json['correct'] as bool?,
     status: json['status'] as String,
     response: json['response'] as Map<String, dynamic>?,
@@ -261,7 +276,10 @@ class QuestionResult {
   );
 
   final String questionId;
+
+  /// 0-1; the question is worth [points] of the attempt's max score.
   final double score;
+  final int points;
   final bool? correct;
   final String status;
   final Map<String, dynamic>? response;
@@ -276,6 +294,11 @@ class QuestionResult {
 
   bool get needsSelfReview => status == 'needs_self_review';
 }
+
+/// A question the student got wrong, partly wrong or skipped, as `/review-quiz`
+/// counts them. Short answers still waiting for a self-check don't count.
+bool isMistake(QuestionResult result) =>
+    !result.needsSelfReview && result.score < 1;
 
 class QuizAttempt {
   const QuizAttempt({

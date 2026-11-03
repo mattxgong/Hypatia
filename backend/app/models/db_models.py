@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -285,6 +286,36 @@ class Flashcard(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow, onupdate=_utcnow)
 
     deck: Mapped[Deck] = relationship(back_populates="cards")
+    reviews: Mapped[list[CardReview]] = relationship(
+        back_populates="card", cascade="all, delete-orphan"
+    )
+
+
+class CardReview(Base):
+    """One rating of a flashcard (Phase 10.6).
+
+    ``client_review_id`` makes a queued review from an offline device apply
+    once however often it is replayed. ``previous_state`` is the card's
+    schedule just before this review, so Undo can restore it; reviews
+    restored from a backup have none.
+    """
+
+    __tablename__ = "flashcard_reviews"
+    __table_args__ = (
+        UniqueConstraint("card_id", "client_review_id", name="uq_flashcard_reviews_client_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    card_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("flashcards.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    client_review_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rating: Mapped[str] = mapped_column(String(8), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    previous_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    card: Mapped[Flashcard] = relationship(back_populates="reviews")
 
 
 class Quiz(Base):
@@ -329,6 +360,8 @@ class QuizQuestion(Base):
     choices_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     answer_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Weight in the attempt score: 1-3 from the LLM by difficulty, 1 for heuristic questions.
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     page_hashes: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     source_file_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
@@ -350,3 +383,20 @@ class QuizAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
 
     quiz: Mapped[Quiz] = relationship(back_populates="attempts")
+
+
+class Device(Base):
+    """A phone or tablet paired for remote access (Phase 10).
+
+    Only a hash of its token is stored. Not per-Class, so backups leave it out.
+    """
+
+    __tablename__ = "devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    last_seen_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -73,11 +73,12 @@ backend runs on. Install these first:
 | Git | Wiki version history | [git-scm.com](https://git-scm.com/downloads), `brew install git`, or `sudo apt install git` |
 | An LLM provider | Building and querying the wiki | A GitHub Copilot subscription, an Anthropic or OpenAI API key, or a local [Ollama](https://ollama.com) install |
 
-On Linux, the app also uses the system GTK 3, libmpv, and libsecret libraries,
-and the AppImage needs FUSE 2. On Ubuntu 24.04 or Debian 13, install them with:
+On Linux, the app also uses the system GTK 3, libmpv, libsecret and Ayatana
+AppIndicator (system tray) libraries, and the AppImage needs FUSE 2. On Ubuntu
+24.04 or Debian 13, install them with:
 
 ```bash
-sudo apt install libgtk-3-0t64 libmpv2 libsecret-1-0 libfuse2t64
+sudo apt install libgtk-3-0t64 libmpv2 libsecret-1-0 libayatana-appindicator3-1 libfuse2t64
 ```
 
 Older releases name two of these packages `libgtk-3-0` and `libfuse2`.
@@ -155,7 +156,7 @@ On Linux, Flutter's desktop toolchain and the app's video and secure-storage
 plugins also need these development packages (Debian or Ubuntu names):
 
 ```bash
-sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev
+sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libepoxy-dev libsecret-1-dev libayatana-appindicator3-dev
 ```
 
 ### macOS and Linux setup
@@ -359,7 +360,7 @@ macOS that directory lives inside the app at `Contents/Resources/backend`, so
 dragging the app into Applications keeps everything together. The Windows
 installer and the AppImage keep it beside the executable for you. The Linux
 packages are built on Ubuntu 24.04 and link against the system GTK 3, libmpv,
-and libsecret libraries.
+libsecret and Ayatana AppIndicator libraries.
 
 Python itself is not bundled. On first launch, the desktop app finds an
 installed Python 3.11 or newer, creates a virtual environment named

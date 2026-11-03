@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../models/chat_message.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/wiki_markdown.dart';
@@ -57,7 +58,7 @@ class MessageBubble extends ConsumerWidget {
                 color: isUser
                     ? theme.colorScheme.primaryContainer
                     : theme.colorScheme.surfaceContainerHigh,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: HypatiaTokens.corners,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,7 +100,6 @@ class MessageBubble extends ConsumerWidget {
                             ),
                             label: Text(title),
                             tooltip: 'Open $title',
-                            visualDensity: VisualDensity.compact,
                             onPressed: () =>
                                 ref
                                         .read(

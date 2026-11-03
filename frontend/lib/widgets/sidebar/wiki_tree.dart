@@ -5,16 +5,59 @@ import '../../models/source_file.dart';
 import '../../models/wiki_page.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/file_provider.dart';
+import '../../providers/layout_provider.dart';
 import '../../providers/wiki_provider.dart';
 import '../common/error_card.dart';
 import '../source_viewer/source_viewer.dart';
 import 'source_file_actions.dart';
 
-class WikiTree extends ConsumerWidget {
-  const WikiTree({super.key});
+/// Which parts of the tree to list.
+enum WikiTreeContent {
+  /// Wiki pages and source files: the expanded layout's sidebar.
+  all,
+
+  /// Wiki pages only; the compact and medium layouts list sources apart.
+  pages,
+
+  /// Source files only.
+  sources,
+}
+
+class WikiTree extends ConsumerStatefulWidget {
+  const WikiTree({super.key, this.content = WikiTreeContent.all});
+
+  final WikiTreeContent content;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<WikiTree> createState() => _WikiTreeState();
+}
+
+class _WikiTreeState extends ConsumerState<WikiTree> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// Opens Source Files, the last section, and scrolls down to it.
+  void _revealSources() {
+    ref.read(revealSourcesProvider.notifier).state = false;
+    final collapsed = ref.read(_collapsedSectionsProvider.notifier);
+    collapsed.state = {...collapsed.state}..remove(_sourceFiles);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (ref.watch(revealSourcesProvider)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealSources();
+      });
+    }
     final classId = ref.watch(currentClassIdProvider);
     if (classId == null) {
       return const Center(child: Text('Select a class'));
@@ -53,50 +96,57 @@ class WikiTree extends ConsumerWidget {
         void open(String path) =>
             ref.read(currentWikiPagePathProvider.notifier).state = path;
         final collapsed = ref.watch(_collapsedSectionsProvider);
+        final showPages = widget.content != WikiTreeContent.sources;
+        final showSources = widget.content != WikiTreeContent.pages;
         // One flat, lazily built list: a ListView of ExpansionTiles built
         // every row of every section up front, which doesn't scale to a large
         // wiki.
         final rows = <Widget Function()>[
-          if (indexPage.isNotEmpty)
+          if (showPages && indexPage.isNotEmpty)
             () => _PageTile(
               page: indexPage.first,
               isSelected: currentPath == indexPage.first.path,
               onTap: () => open(indexPage.first.path),
             ),
-          for (final (title, icon, items) in [
-            ('Concepts', Icons.lightbulb_outline, concepts),
-            ('Source Summaries', Icons.description_outlined, summaries),
-            ('Entities', Icons.person_outline, entities),
-          ]) ...[
-            () => _CategoryHeader(
-              title: title,
-              icon: icon,
-              count: items.length,
-              expanded: !collapsed.contains(title),
-              onToggle: () => _toggleSection(ref, title),
-            ),
-            if (!collapsed.contains(title))
-              for (final p in items)
-                () => Padding(
-                  padding: const EdgeInsets.only(left: 16),
-                  child: _PageTile(
-                    page: p,
-                    isSelected: currentPath == p.path,
-                    onTap: () => open(p.path),
+          if (showPages)
+            for (final (title, icon, items) in [
+              ('Concepts', Icons.lightbulb_outline, concepts),
+              ('Source Summaries', Icons.description_outlined, summaries),
+              ('Entities', Icons.person_outline, entities),
+            ]) ...[
+              () => _CategoryHeader(
+                title: title,
+                icon: icon,
+                count: items.length,
+                expanded: !collapsed.contains(title),
+                onToggle: () => _toggleSection(ref, title),
+              ),
+              if (!collapsed.contains(title))
+                for (final p in items)
+                  () => Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: _PageTile(
+                      page: p,
+                      isSelected: currentPath == p.path,
+                      onTap: () => open(p.path),
+                    ),
                   ),
-                ),
-          ],
-          () => _CategoryHeader(
-            title: 'Source Files',
-            icon: Icons.folder_outlined,
-            count: files.length,
-            expanded: !collapsed.contains('Source Files'),
-            onToggle: () => _toggleSection(ref, 'Source Files'),
-          ),
-          if (!collapsed.contains('Source Files'))
+            ],
+          if (widget.content == WikiTreeContent.all)
+            () => _CategoryHeader(
+              title: _sourceFiles,
+              icon: Icons.folder_outlined,
+              count: files.length,
+              expanded: !collapsed.contains(_sourceFiles),
+              onToggle: () => _toggleSection(ref, _sourceFiles),
+            ),
+          // Listed on their own, sources have no header to collapse them.
+          if (showSources &&
+              (widget.content == WikiTreeContent.sources ||
+                  !collapsed.contains(_sourceFiles)))
             for (final f in files)
               () => Padding(
-                padding: const EdgeInsets.only(left: 16),
+                padding: EdgeInsets.only(left: showPages ? 16 : 0),
                 child: _FileTile(
                   file: f,
                   onTap: f.convertedPath == null
@@ -108,7 +158,19 @@ class WikiTree extends ConsumerWidget {
               ),
         ];
 
+        if (rows.isEmpty) {
+          return Center(
+            child: Text(
+              widget.content == WikiTreeContent.sources
+                  ? 'No source files yet. Add one to start the wiki.'
+                  : 'No wiki pages yet.',
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
+
         return ListView.builder(
+          controller: _scroll,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           itemCount: rows.length,
           itemBuilder: (context, index) => rows[index](),
@@ -124,6 +186,8 @@ class WikiTree extends ConsumerWidget {
         : {...notifier.state, title};
   }
 }
+
+const _sourceFiles = 'Source Files';
 
 /// Sidebar sections the user has collapsed.
 final _collapsedSectionsProvider = StateProvider<Set<String>>((ref) => {});
@@ -148,7 +212,6 @@ class _CategoryHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
       leading: Icon(icon, size: 18),
       title: Text(
@@ -180,7 +243,6 @@ class _PageTile extends StatelessWidget {
     final theme = Theme.of(context);
     return ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       selected: isSelected,
       selectedTileColor: theme.colorScheme.primaryContainer.withValues(
         alpha: 0.3,
@@ -241,7 +303,6 @@ class _FileTile extends StatelessWidget {
     );
     final tile = ListTile(
       dense: true,
-      visualDensity: VisualDensity.compact,
       title: Text(
         file.originalFilename,
         style: theme.textTheme.bodySmall,

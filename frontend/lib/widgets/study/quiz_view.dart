@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
-
 import '../../models/study.dart';
+import '../../providers/chat_provider.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/window_size.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
 import 'flashcard_review.dart' show studyMarkdownStyle;
+import 'session_summary.dart';
 
 /// Center-panel practice quiz: answer every question, submit, review results.
 class QuizView extends ConsumerStatefulWidget {
@@ -36,6 +39,85 @@ class _QuizViewState extends ConsumerState<QuizView> {
   QuizAttempt? _attempt;
   bool _submitting = false;
   String? _grading;
+
+  /// The question the arrow and number keys act on.
+  int _current = 0;
+  final _focusNode = FocusNode();
+  final _cardKeys = <String, GlobalKey>{};
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  static const _digits = [
+    LogicalKeyboardKey.digit1,
+    LogicalKeyboardKey.digit2,
+    LogicalKeyboardKey.digit3,
+    LogicalKeyboardKey.digit4,
+    LogicalKeyboardKey.digit5,
+    LogicalKeyboardKey.digit6,
+    LogicalKeyboardKey.digit7,
+    LogicalKeyboardKey.digit8,
+    LogicalKeyboardKey.digit9,
+  ];
+
+  /// Left/right move between questions; 1-9 pick a choice (1 = true, 2 = false
+  /// for true/false). Keys belong to a focused text field, and shortcuts with
+  /// a modifier to the app, so both are left alone.
+  KeyEventResult _onKey(Quiz quiz, KeyEvent event) {
+    if (event is! KeyDownEvent || quiz.questions.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isControlPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused?.findAncestorStateOfType<EditableTextState>() != null) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowLeft) {
+      final step = key == LogicalKeyboardKey.arrowRight ? 1 : -1;
+      _goTo(quiz, (_current + step).clamp(0, quiz.questions.length - 1));
+      return KeyEventResult.handled;
+    }
+    final digit = _digits.indexOf(key);
+    if (digit < 0 || _attempt != null) return KeyEventResult.ignored;
+    final question =
+        quiz.questions[_current.clamp(0, quiz.questions.length - 1)];
+    final response = switch (question.type) {
+      QuestionType.mcq when digit < question.options.length => {
+        'choice': digit,
+      },
+      QuestionType.trueFalse when digit < 2 => {'value': digit == 0},
+      _ => null,
+    };
+    if (response == null) return KeyEventResult.ignored;
+    _answer(question.id, response);
+    return KeyEventResult.handled;
+  }
+
+  void _goTo(Quiz quiz, int index) {
+    setState(() => _current = index);
+    final card = _cardKeys[quiz.questions[index].id]?.currentContext;
+    if (card != null) {
+      Scrollable.ensureVisible(
+        card,
+        alignment: 0.1,
+        duration: MediaQuery.of(context).disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 200),
+      );
+    }
+  }
 
   Future<void> _submit(String classId, Quiz quiz) async {
     final unanswered = quiz.questions
@@ -91,6 +173,7 @@ class _QuizViewState extends ConsumerState<QuizView> {
   void _retake() => setState(() {
     _answers.clear();
     _attempt = null;
+    _current = 0;
   });
 
   Future<void> _selfGrade(
@@ -151,13 +234,28 @@ class _QuizViewState extends ConsumerState<QuizView> {
     return quizAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => Center(
-        child: ErrorCard(
-          error: e,
-          onRetry: () => ref.invalidate(quizProvider(key)),
+        child: SingleChildScrollView(
+          child: ErrorCard(
+            error: e,
+            onRetry: () => ref.invalidate(quizProvider(key)),
+          ),
         ),
       ),
-      data: (quiz) => _buildQuiz(context, classId, quiz),
+      data: (quiz) => Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: (_, event) => _onKey(quiz, event),
+        child: _buildQuiz(context, classId, quiz),
+      ),
     );
+  }
+
+  /// Starts a tutoring chat about this attempt's mistakes and shows the chat.
+  void _reviewMistakes(String classId, QuizAttempt attempt) {
+    final sent = ref
+        .read(chatMessagesProvider(classId).notifier)
+        .sendMessage('/review-quiz ${attempt.id}');
+    if (sent) ref.read(chatRevealRequestProvider.notifier).state++;
   }
 
   Widget _buildQuiz(BuildContext context, String classId, Quiz quiz) {
@@ -171,86 +269,143 @@ class _QuizViewState extends ConsumerState<QuizView> {
         .where((q) => _isAnswered(_answers[q.id]))
         .length;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: theme.dividerColor)),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.quiz_outlined, size: 20),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(quiz.summary.name, style: theme.textTheme.titleMedium),
-                    Text(
-                      attempt == null
-                          ? '$answered of ${quiz.questions.length} answered'
-                          : 'Score: ${formatScore(attempt.score)} / '
-                                '${formatScore(attempt.maxScore)}',
-                      style: theme.textTheme.bodySmall,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A phone-width pane: icon buttons in the header, less padding.
+        final narrow = constraints.maxWidth < narrowPaneWidth;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: narrow ? 16 : 24,
+                vertical: 12,
+              ),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: theme.dividerColor)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.quiz_outlined, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          quiz.summary.name,
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        Text(
+                          attempt == null
+                              ? '$answered of ${quiz.questions.length} answered'
+                              : 'Score: ${formatScore(attempt.score)} / '
+                                    '${formatScore(attempt.maxScore)}',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (attempt == null)
+                    FilledButton(
+                      onPressed: _submitting || answered == 0
+                          ? null
+                          : () => _submit(classId, quiz),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Submit'),
+                    )
+                  else if (narrow) ...[
+                    if (attempt.results.any(isMistake))
+                      IconButton.filledTonal(
+                        onPressed: () => _reviewMistakes(classId, attempt),
+                        icon: const Icon(Icons.school_outlined),
+                        tooltip: 'Review my mistakes',
+                      ),
+                    IconButton.outlined(
+                      onPressed: _retake,
+                      icon: const Icon(Icons.replay),
+                      tooltip: 'Retake',
+                    ),
+                  ] else ...[
+                    if (attempt.results.any(isMistake)) ...[
+                      FilledButton.tonalIcon(
+                        onPressed: () => _reviewMistakes(classId, attempt),
+                        icon: const Icon(Icons.school_outlined, size: 16),
+                        label: const Text('Review my mistakes'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    OutlinedButton.icon(
+                      onPressed: _retake,
+                      icon: const Icon(Icons.replay, size: 16),
+                      label: const Text('Retake'),
                     ),
                   ],
-                ),
+                ],
               ),
-              if (attempt == null)
-                FilledButton(
-                  onPressed: _submitting || answered == 0
-                      ? null
-                      : () => _submit(classId, quiz),
-                  child: _submitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Submit'),
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: _retake,
-                  icon: const Icon(Icons.replay, size: 16),
-                  label: const Text('Retake'),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: quiz.questions.length,
-            itemBuilder: (context, index) {
-              final question = quiz.questions[index];
-              return Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 760),
-                  child: _QuestionCard(
-                    number: index + 1,
-                    question: question,
-                    response: _answers[question.id],
-                    result: results[question.id],
-                    onAnswer: (response) => _answer(question.id, response),
-                    grading: _grading == question.id,
-                    onSelfGrade: (correct) =>
-                        _selfGrade(classId, quiz, question.id, correct),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.all(narrow ? 12 : 24),
+                itemCount: quiz.questions.length + (attempt == null ? 0 : 1),
+                itemBuilder: (context, index) {
+                  if (attempt != null) {
+                    if (index == 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        child: SessionSummary(
+                          score: attempt.score,
+                          maxScore: attempt.maxScore,
+                          weak: weakPages(
+                            quiz.questions
+                                .where((q) => (results[q.id]?.score ?? 0) < 0.5)
+                                .map((q) => q.pagePaths),
+                          ),
+                        ),
+                      );
+                    }
+                    index--;
+                  }
+                  final question = quiz.questions[index];
+                  return Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 760),
+                      child: _QuestionCard(
+                        key: _cardKeys.putIfAbsent(question.id, GlobalKey.new),
+                        current: index == _current,
+                        number: index + 1,
+                        question: question,
+                        response: _answers[question.id],
+                        result: results[question.id],
+                        onAnswer: (response) {
+                          _current = index;
+                          _answer(question.id, response);
+                        },
+                        grading: _grading == question.id,
+                        onSelfGrade: (correct) =>
+                            _selfGrade(classId, quiz, question.id, correct),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
 
 class _QuestionCard extends ConsumerWidget {
   const _QuestionCard({
+    super.key,
+    this.current = false,
     required this.number,
     required this.question,
     required this.response,
@@ -260,6 +415,8 @@ class _QuestionCard extends ConsumerWidget {
     this.grading = false,
   });
 
+  /// The question the keyboard acts on; outlined.
+  final bool current;
   final int number;
   final QuizQuestion question;
   final Map<String, dynamic>? response;
@@ -279,28 +436,48 @@ class _QuestionCard extends ConsumerWidget {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: HypatiaTokens.corners,
+        side: current
+            ? BorderSide(
+                color: theme.colorScheme.primary.withValues(alpha: 0.6),
+              )
+            : BorderSide.none,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
+            // The result goes under the title when a phone has no room
+            // beside it.
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
               children: [
                 Text(
-                  'Question $number · ${question.type.label}',
+                  'Question $number · ${question.type.label} · '
+                  '${question.points} ${question.points == 1 ? 'point' : 'points'}',
                   style: theme.textTheme.labelMedium,
                 ),
-                const Spacer(),
-                if (question.stale)
-                  Tooltip(
-                    message: 'The wiki page behind this question has changed',
-                    child: Icon(
-                      Icons.update,
-                      size: 16,
-                      color: theme.colorScheme.tertiary,
-                    ),
-                  ),
-                if (result != null) _ResultBadge(result: result),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (question.stale)
+                      Tooltip(
+                        message:
+                            'The wiki page behind this question has changed',
+                        child: Icon(
+                          Icons.update,
+                          size: 16,
+                          color: theme.colorScheme.tertiary,
+                        ),
+                      ),
+                    if (result != null) _ResultBadge(result: result),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -392,7 +569,7 @@ class _ResultBadge extends StatelessWidget {
       ),
       _ when result.correct == true => (
         Icons.check_circle,
-        StatusColors.of(context).success,
+        HypatiaTokens.of(context).success,
         'Correct',
       ),
       _ when result.score > 0 => (
@@ -402,15 +579,17 @@ class _ResultBadge extends StatelessWidget {
       ),
       _ => (Icons.cancel, scheme.error, 'Incorrect'),
     };
+    final graded = result.grader == 'ai' ? '$label (AI graded)' : label;
+    // Partial credit in points, e.g. "1.5 / 3"; nothing until a short answer is checked.
+    final earned = result.needsSelfReview
+        ? ''
+        : ' · ${formatScore(result.score * result.points)} / ${result.points}';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 18, color: color),
         const SizedBox(width: 4),
-        Text(
-          result.grader == 'ai' ? '$label (AI graded)' : label,
-          style: TextStyle(color: color),
-        ),
+        Text('$graded$earned', style: TextStyle(color: color)),
       ],
     );
   }
@@ -514,10 +693,10 @@ class _ChoiceList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Material(
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: HypatiaTokens.corners,
                 side: BorderSide(
                   color: correct == i
-                      ? StatusColors.of(context).success
+                      ? HypatiaTokens.of(context).success
                       : selected == i
                       ? theme.colorScheme.primary
                       : theme.dividerColor,
@@ -525,7 +704,7 @@ class _ChoiceList extends StatelessWidget {
                 ),
               ),
               child: InkWell(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: HypatiaTokens.corners,
                 onTap: enabled ? () => onSelect(i) : null,
                 child: Padding(
                   padding: const EdgeInsets.all(10),
@@ -630,7 +809,7 @@ class _MatchingInput extends StatelessWidget {
                       : '\u2192 ${_letter(expected![i])}',
                   style: TextStyle(
                     color: current[i] == expected![i]
-                        ? StatusColors.of(context).success
+                        ? HypatiaTokens.of(context).success
                         : theme.colorScheme.error,
                   ),
                 ),

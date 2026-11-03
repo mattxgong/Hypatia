@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../models/task_status.dart';
 import '../../providers/task_provider.dart';
 import '../common/activity_status.dart';
@@ -22,7 +23,7 @@ class TaskIndicator extends ConsumerWidget {
           icon: const Icon(Icons.pending_actions, size: 18),
           onPressed: () => showActiveTasksDialog(context),
           iconSize: 18,
-          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+          constraints: HypatiaTokens.iconButtonSize(context, 36),
           padding: EdgeInsets.zero,
           color: theme.colorScheme.primary,
         ),
@@ -101,7 +102,7 @@ class _TaskTile extends ConsumerWidget {
               onPressed: () =>
                   ref.read(taskListProvider.notifier).cancelTask(task.taskId),
               tooltip: 'Cancel',
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+              constraints: HypatiaTokens.iconButtonSize(context, 40),
             ),
           ],
         ),

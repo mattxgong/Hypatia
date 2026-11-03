@@ -155,6 +155,31 @@ It's worth considering only if store distribution is unwanted (§10).
 
 ### 10.1 Remote-access mode and process lifetime
 
+**Remote-access setting done (2026-11-01, W6). Tray done (2026-11-01, W9).**
+- `services/desktop_window.dart` (`DesktopWindow`, previously `_BackendShutdown` in
+  `main.dart`) shows the tray icon only while remote access is on, refreshed after each
+  backend start. Closing then hides the window on Windows and macOS. On Linux it
+  minimizes instead, because GNOME without the AppIndicator extension draws no tray icon
+  and a hidden window couldn't be brought back. If the icon can't be created, closing
+  quits. A first-close dialog explains the behaviour once.
+- Tray menu: Open Hypatia, Pair a device... (opens the window and the Remote access
+  dialog), a status line with the port, and Quit Hypatia (the usual stop-the-backend path).
+- macOS keeps its Dock icon. Clicking the Dock icon while the window is hidden doesn't
+  reopen it yet; use the menu-bar icon.
+- Linux: `libayatana-appindicator3-dev` is in `build-desktop.yml`. The AppImage relies on
+  the system library, as it already does for libmpv, and the README lists it. Login
+  start (`launch_at_startup`) and "prevent sleep" are still deferred.
+- The setting is the launcher's, not `settings_store.py`'s: the launcher picks the bind
+  address before the backend runs. It is stored as `remoteAccess` in
+  `backend_launcher.json`. `BackendLauncher.setRemoteAccess` saves it and restarts the
+  backend. An unreadable value means off.
+- When on, uvicorn binds `0.0.0.0` on a fixed port (8765 by default), because phones save
+  the address. If the port is taken, startup fails with a message instead of moving to
+  another port. The desktop client still talks to `127.0.0.1`.
+- The backend gets `HYPATIA_REMOTE_ACCESS_ENABLED=1`. It then skips the Host check, since
+  LAN and Tailscale addresses vary and every request needs a token. It refuses to start if
+  there's no launch token.
+
 - Add `remote_access_enabled: bool = False`, `bind_host`, and `remote_port` to
   `app/config.py`. Persist them via `settings_store.py`.
 - `backend_launcher.dart` passes `--host 0.0.0.0` (or a chosen interface) only when remote
@@ -187,6 +212,23 @@ It's worth considering only if store distribution is unwanted (§10).
 - `cors_origin_regex` only affects browsers. It matters for the PWA option, not for native apps.
 
 ### 10.2 Authentication: device pairing tokens (not OAuth/JWT)
+
+**Backend done (2026-11-01, W5).** The device list/revoke UI is W8. Notes:
+- The per-launch local token already existed (`security.py`, `BackendLauncher`, `ApiClient`),
+  so W5 extended `LocalAccessMiddleware` to accept device tokens too, rather than adding a
+  per-route dependency. It sets `request.state.principal` to `"local"` or the device ID.
+- Only `POST /api/devices/pairing-code` is local-only (`require_local_client`). A phone that
+  can mint codes could pair a device that outlives the phone's own revocation. Revoking is
+  open to devices, including revoking themselves.
+- Pairing codes live in memory: 8 characters from an alphabet without look-alikes, single
+  use, 5 minutes, one at a time, used up after 5 wrong guesses. That is the rate limit; a
+  restart clears them. The QR payload (`url`, `cert_sha256`) comes with W7/W8.
+- `devices` also stores `last_seen_ip`, updated at most once a minute unless the IP changes.
+  Backups are per-Class, so they leave the table out.
+- Without a launch token (dev, tests) every request counts as local, as before. W6 must
+  refuse to bind beyond loopback unless a token is set.
+- Test fixtures didn't change: tests run without a launch token. Tests that send a token
+  other than the launch token migrate the schema, because it gets looked up in `devices`.
 
 There's one user and no accounts, so OAuth and JWT refresh flows add complexity with no benefit.
 Use opaque, revocable per-device tokens:
@@ -238,6 +280,22 @@ Options, roughly in order of preference:
 3. Plain HTTP on a trusted home LAN: allowed, with a warning. It needs Android cleartext
    config and an iOS ATS exception (`NSAllowsLocalNetworking`).
 
+**Backend and launcher done (2026-11-01, W7).** The QR itself is drawn in W8.
+- Two listeners in one process (`app/serve.py`), not one HTTPS port. The desktop keeps
+  plain HTTP on loopback, so Dio, the WebSocket, media_kit, pdfrx and image loading need
+  no certificate handling. Phones get HTTPS on `0.0.0.0` on the fixed remote port. The
+  follower server skips the lifespan and signal handling, waits for startup to finish,
+  and stops with the main server.
+- `services/remote_access.py` makes an EC P-256 certificate once, valid 10 years and kept,
+  because replacing it breaks every pin. It detects LAN addresses (the default route,
+  plus the host name's addresses) and Tailscale (`100.64.0.0/10`, plus `tailscale status
+  --json` for the IPs and MagicDNS name).
+- `POST /api/devices/pairing-code` now also returns `urls` and `cert_sha256`, and `GET
+  /api/devices/remote-access` reports the status; both are desktop-only. Virtual adapters
+  (WSL, Hyper-V, VPNs) show up as extra LAN URLs after the real one. They're harmless,
+  since phones try URLs in order, but W8 could let the user hide them.
+- Firewall advice is in `docs/troubleshooting.md`.
+
 **Decided (2026-10-19): support both LAN and Tailscale.** Concretely:
 
 - The backend binds `0.0.0.0` when remote access is on, so it's reachable on both the LAN
@@ -260,6 +318,13 @@ Options, roughly in order of preference:
   recommend allowing it on public networks.
 - Desktop UI: Settings > Remote access shows the toggle, the port, the detected LAN and
   Tailscale URLs, "Pair a device" (QR), and the paired-device list.
+  **Done (2026-11-01, W8)** as a dialog from the sidebar footer (there is no app-wide
+  settings screen), shown only when this app runs the backend. Turning the toggle on or off
+  asks first, closes the dialog and restarts the backend. "Pair a device" shows the QR
+  (JSON `{urls, code, cert_sha256}`, dark on white in either theme) and the code as
+  `XXXX-XXXX` with a countdown. While a code is shown, the dialog checks for the new
+  device every 3 s, then hides the code. Each device shows when it was last seen, from
+  which IP, and a Revoke button.
 
 ### 10.4 Discovery (optional)
 
@@ -269,6 +334,10 @@ IP means re-scanning the QR code, or using the Tailscale MagicDNS name.
 
 ### 10.5 Make chat resilient to disconnects (bug)
 
+**Done (2026-10-28).** The v0.3.0 review fixes already kept commands running after a
+disconnect and reloaded history on reconnect. W1 finished it: every `complete` frame's
+`message_id` is the saved row's ID, and failures are saved to history as system messages.
+
 `_handle_ask_stream` and the other handlers in `chat.py` save the assistant message only
 after every chunk has been sent. If the socket drops mid-stream, `send_json` raises and the
 answer is lost even though the LLM tokens were spent. Phones background apps constantly,
@@ -277,6 +346,15 @@ assistant message, and have the client reload `/chat/history` on reconnect. Rela
 the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row's ID.
 
 ### 10.6 Offline-safe study endpoints
+
+**Backend done (2026-11-01, W2).** `flashcard_reviews` (ORM `CardReview`) logs every
+rating with `client_review_id` (unique per card), `reviewed_at`, `received_at`, and the
+card's schedule just before the review. Undo now restores from that log instead of an
+in-memory dict, so it survives restarts and works from any device; repeating it walks
+back further. Old `reviewed_at` values are clamped to 30 days rather than rejected.
+Backups carry the log without the earlier schedules. Not done: the snapshot endpoint (the
+existing endpoints are enough for W18) and offline quiz grading, which is client-side
+work in W18.
 
 - `FlashcardReview` currently only takes `rating`, and the scheduler uses "now". Add
   optional `reviewed_at` (clamped: not in the future, not older than some limit such as
@@ -319,6 +397,19 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
 
 ### 10.9 Add the platforms
 
+**Done (2026-10-28, W10).** Notes from doing it:
+- `flutter create` also upgraded `pubspec.lock` and rewrote `.metadata` without the desktop
+  platforms. Both were restored, and only the android/ios entries were added.
+- `compileSdk` is 37: `flutter_secure_storage` requires it, and Flutter's default is 36.
+  `android/build.gradle.kts` raises every plugin to 37 through `finalizeDsl`, because
+  `desktop_drop` and others declare older SDKs that their AndroidX dependencies reject.
+- `minSdk` stays at Flutter's default. No plugin's manifest needed more.
+- `INTERNET` is in the main manifest. The template only puts it in the debug and profile
+  ones. Cleartext and network-security config come with 10.3.
+- Launcher icons use a white background, because the glyph is transparent.
+- Several plugins still use the Kotlin Gradle plugin, which Flutter warns about
+  ("Built-in Kotlin"). It's a warning for now. Recheck when upgrading Flutter.
+
 - `flutter create --platforms=android,ios --org com.mattxgong --project-name hypatia .` in
   `frontend/`. The pubspec `name` is `frontend`, so set the IDs explicitly rather than relying
   on the generated defaults: Android `applicationId` and `namespace` set to
@@ -339,6 +430,19 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
   tag-vs-pubspec check working.
 
 ### 10.10 Isolate desktop-only code
+
+**Done (2026-11-01, W12).** `utils/platform.dart` has the shared `isDesktop` check.
+- `BackendLauncher` and `window_manager` were already desktop-only in `main()`. On mobile
+  `backendLauncherProvider` stays null, and the base URL waits for 10.11.
+- `DropTarget` wraps the home screen only on desktop. Phones and tablets use the Add File
+  button.
+- Added `media_kit_libs_android_video` and `media_kit_libs_ios_video` next to the Windows
+  libs, so desktop builds are unchanged. macOS still has no bundled libmpv; that is a
+  desktop gap, not a mobile one.
+- No frontend code calls `/files/{id}/open`, so there is nothing to replace yet. 10.13/W20
+  adds the share sheet when sources open on mobile.
+- Every shortcut already has an on-screen control: the search bar (Ctrl+K), Create Class
+  (Ctrl+N), the panel collapse strips (Ctrl+B / Ctrl+J), and the search clear button (Esc).
 
 | Code | Issue on mobile | Action |
 |---|---|---|
@@ -363,6 +467,84 @@ the `message_id` in the `complete` frame is a fresh `uuid4()`, not the saved row
   reopen the chat socket, reload chat history (see 10.5), and resume task polling. Pause
   polling while the app is in the background.
 - Show a clear "Desktop offline" banner while keeping cached study content usable.
+
+**Done (2026-11-01, W16: the connection layer).** W17 adds the pairing UI on top.
+- `connectionProvider` (`providers/connection_provider.dart`) owns the pairing and the
+  status (checking / unpaired / connecting / connected / desktopUnreachable /
+  unauthorized). Like the desktop launcher, it sets `backendBaseUrlProvider` and
+  `backendApiTokenProvider` (token first), so the rest of the app needed no changes.
+  `remoteClientProvider` (set in `main()` when there's no launcher) switches it on.
+- **Addresses:** the last address that answered is tried first, then the rest in the QR's
+  order (LAN, then Tailscale). The check is `GET /api/classes` with the token, so one
+  pass proves the address, the certificate and the token. A connection error on any
+  request while connected re-checks the addresses, which moves to Tailscale when the LAN
+  drops (tested). An unreachable desktop is retried at 5 s, doubling up to 60 s.
+- **Pairing:** `pair()` redeems the code at the first address that answers, then stores
+  the URLs, token, pin and device in `flutter_secure_storage` (`SecureConnectionStore`). A
+  refused code fails at once instead of trying the other addresses. `forget()` unpairs.
+- **Pinning:** `PinnedCertificateOverrides` sets `HttpOverrides.global` with a
+  `badCertificateCallback` that accepts only the certificate whose SHA-256 the QR
+  carried. It covers Dio and the image loader. `WebSocket.connect`'s own client ignores
+  `HttpOverrides`, so the chat socket is handed a pinned client explicitly.
+- **401:** `ApiClient` takes `onUnauthorized` / `onUnreachable`. On a phone, any 401 moves
+  to "unauthorized", which asks to pair again.
+- **Lifecycle:** `ConnectionGate` (in place of the desktop's startup screens) pauses polling
+  while the app is hidden (`appInForegroundProvider`, checked by the task, file and study
+  job polls). On resume it re-checks the route and reconnects the chat socket at once
+  (`WebSocketService.reconnectNow`); chat history reloads on reconnect as before.
+- **Gate:** before the first connection it shows connecting / unreachable (with Try again
+  and Forget) / unpaired / pair-again screens. After that the app stays mounted and a
+  banner shows while the desktop is out of reach, so nothing open is lost (tested).
+  "Desktop offline" with cached study content waits for 10.14.
+- iOS: `NSLocalNetworkUsageDescription` is in `Info.plist`. Android already had `INTERNET`.
+- **Tested against the real backend** (`python -m app.serve`, throwaway Dart test, not
+  committed):
+  - Without the pin, and with a wrong pin, the self-signed certificate is refused.
+  - Pairing over the LAN URL stores the token, and API calls and the chat WebSocket work.
+  - After the desktop revokes the device, the next check reports "unauthorized".
+  - That run found the WebSocket ignoring the global pin; it's fixed.
+- **Known gaps:**
+  - Video playback on a phone: media_kit's libmpv does its own TLS and won't accept the
+    self-signed certificate.
+  - pdfrx's downloader hasn't been checked.
+  - Flutter's image loader keeps one shared `HttpClient`, so after re-pairing with a
+    different computer, images need an app restart.
+  - All three belong with W20/W21, where sources open on a phone.
+
+**Done (2026-11-02, W17: pairing UI).**
+- `PairingScreen` (`widgets/remote/pairing_screen.dart`) replaces the unpaired and
+  pair-again screens. It has a device name field (defaults: "Android phone", "iPad", ...),
+  shown on the desktop's device list, and two ways to pair:
+  - **Scan QR code** (`mobile_scanner`, QR only): anything that isn't a Hypatia pairing
+    QR gets a hint and scanning continues. Camera refused or missing says so and points
+    to typing the code. iOS has `NSCameraUsageDescription`; the plugin adds Android's
+    `CAMERA` permission.
+  - **Enter the code instead:** address (IP or host name, port defaults to 8765, any
+    scheme becomes https) and code (case, spaces and dashes ignored). A typed code has
+    no QR carrying the certificate fingerprint, so the phone fetches the certificate
+    the address presents and shows the start of its SHA-256 ("9B1E 43E5 756C F4E5").
+    The desktop now shows the same under the pairing code. The code is sent only after
+    the user confirms they match. "It's different" stops without sending anything.
+- `POST /api/devices/pair` now also returns the desktop's addresses, so a phone paired
+  by typing one address still falls back to the others (LAN, then Tailscale).
+- **Pair again (401):** the same screen with a "needs pairing again" title, and also
+  Forget this computer. The stored pairing stays until a new one succeeds.
+- The pre-connection screens get their own `Navigator`, for text fields' overlay. They
+  replace the router, so Android's Back steps back through the flow via
+  `didPopRoute`.
+- **In the app:** "Your computer…" (phone menu; sidebar footer on a tablet) shows the
+  address in use and all addresses, with Forget this computer.
+- The offline banner is a live region, so screen readers announce it.
+- **Tested:**
+  - Widget tests cover scanning, typing, a mismatched fingerprint, typing mistakes, a
+    wrong code, Back, re-pairing after a 401, forgetting, and a 360x560 phone.
+  - Against the real backend: the fingerprint the phone fetches matches the desktop's,
+    an address with nothing listening fails rather than hangs, and a typed lower-case,
+    dashed code pairs and learns the desktop's other addresses.
+- **On an Android emulator** (Pixel 8, Android 16, 2026-11-02): a typed code paired with the
+  desktop app (`flutter run -d windows`, Remote access on), and the app works over the
+  pinned connection. QR scanning by camera and the permission prompt are still to try on
+  a device.
 
 ### 10.12 Responsive layout
 
@@ -402,6 +584,94 @@ The 3-panel `Row` stays for expanded widths. Add Material 3 window-size classes:
   large rating buttons, with swipe-to-rate as an optional extra.
 - Widget tests at phone sizes (e.g. 390x844) and tablet sizes using `tester.view.physicalSize`.
 
+**Done (2026-11-01, W13: the shell).** `utils/window_size.dart` picks the size class from
+`MediaQuery.sizeOf` (the window). `HomeScreen` keeps the listeners, shortcuts, drop target
+and Back handling, and builds one of `screens/home/{compact,medium,expanded}_layout.dart`.
+- **Navigation state is in providers, not routes.** The page, the open deck or quiz and the
+  search were already providers. W13 added `compactDestinationProvider` (the bottom bar),
+  `secondaryPaneProvider` (the rail) and `searchOpenProvider`. A page "pushed" from the list
+  is the list replaced while `currentWikiPagePathProvider` is set. That makes a size-class
+  change a rebuild over the same state, with no route stack to translate between layouts.
+  go_router still owns `/class/:id` and its settings, which are now pushed (`openClassSettings`),
+  so Back returns to the Class.
+- **Back** (`_BackHandler`, a `PopScope` on the home route) steps out one level at a time:
+  search, then the open deck or quiz, then the open page, then (compact) back to the Wiki
+  tab. Only after that does it leave the app.
+- **Panes keep their state across size classes.** `HomePaneKeys` gives chat, the wiki page and
+  the open deck or quiz a GlobalKey each, so a rotation moves them rather than rebuilding them.
+  A review session, the quiz in progress and the chat scroll survive (tested). The compact tabs
+  sit in an `IndexedStack`, so switching tabs keeps them too. On a phone, opening a wiki page
+  no longer closes a review: each has its own tab.
+- **Compact:** app bar with the Class list, search and a menu (new/import class, class
+  settings, AI provider, theme, remote access on desktop, about); tabs Wiki / Chat / Study /
+  Sources; sources opened from a citation or the list are full-screen.
+- **Medium:** the rail picks Chat / Study / Sources for the secondary pane. The primary pane
+  holds the wiki, or the open deck or quiz beside the study list. The split has a 24 dp
+  handle with a visible grip and is saved like the expanded widths.
+- **Expanded:** unchanged, moved to `expanded_layout.dart`. The divider widget is now
+  `widgets/common/pane_divider.dart`, shared with the medium split.
+- The desktop window's minimum size dropped from 900x600 to 360x560, so all three layouts
+  can be tried by resizing it.
+- Tests: `test/responsive_layout_test.dart` covers the 4-size matrix, Back, rotation mid-review,
+  and the smallest window. That test found the chat starter cards overflowing a short screen;
+  they scroll now.
+- Left for W14: tap-target sizes in the lists, keyboard insets in chat, sheets, wide math and
+  tables. Left for W15: touch-friendly expanded dividers, the side-by-side source viewer, and
+  a physical or emulated tablet run.
+
+**Done (2026-11-01, W14: screen by screen).**
+- **Tap targets follow the platform.** The theme is left at its adaptive defaults (compact
+  density and shrink-wrapped targets on desktop, standard and padded on Android and iOS). The
+  hard-coded `VisualDensity.compact` and shrink-wraps are gone, so desktop looks the same and
+  phone rows reach 48 dp. Small icon buttons use `HypatiaTokens.iconButtonSize(context, n)`:
+  `n` with a mouse, 48 on touch. `HypatiaTokens.touch(context)` is the one check, read from
+  the theme, so a test picks the platform with `TargetPlatformVariant`.
+- **Flashcards:** on touch, four full-width 56 dp rating buttons without the keyboard hints,
+  a full-width Show answer button, and swipe-to-rate (left Again, right Good). The swipe reads
+  raw pointers, because the card's selectable text would otherwise win every horizontal drag.
+- **Headers fold in narrow panes** (`narrowPaneWidth`, 480, measured on the pane, since a
+  medium layout's panes get that narrow too). The deck header's actions go into a menu, the
+  graded quiz's buttons become icons, padding shrinks, and a quiz question's result badge
+  wraps under its title.
+- **Wide content:** tables size columns to content up to 320 dp and scroll sideways (a second
+  patch to the vendored markdown builder). Display math already scrolled.
+- **Chat:** scrolling the history dismisses the keyboard; the input stays above it (tested
+  with a 320 dp inset); on touch there's no "Enter to send" hint, since a phone's Enter makes
+  a new line, and sentences capitalise.
+- **Sheets:** a long-pressed source file opens a bottom sheet on a phone (`showActionMenu`
+  in `widgets/common/action_menu.dart`) and a menu elsewhere.
+- **Fixes the phone-size tests found:** centred error cards overflowed short panes and now
+  scroll; the AI provider dialog's title and Test Connection row overflowed; the class
+  settings usage stats now wrap.
+- No hover-only controls were found: every tooltip's control also works by tap, and file
+  actions have long-press.
+- Tests: `test/phone_screens_test.dart` (wide table, row heights on touch and desktop, sheet
+  vs menu, keyboard inset, every tab with content), plus phone cases in the study, provider
+  dialog and remote access tests. Two desktop review tests now pin `TargetPlatform.windows`.
+
+**Done (2026-11-01, W15: tablet polish), except the device run.**
+- **Expanded dividers on touch:** 24 dp handles with a visible grip, and 48 dp collapsed
+  strips (`constrainPanelWidths` takes the divider and strip widths). Desktop keeps 12 and 32.
+  The collapse buttons and shortcuts stay.
+- **Source beside the page:** on a touch screen in the expanded layout, a tapped citation
+  (from the page or from chat) opens in a `SourcePanel` beside the page or open deck, held in
+  `sideSourceProvider`. The dialog's body is the same `SourcePanel`. Close or Back shuts it.
+  Turning to portrait (or entering split-screen) moves an open side source into the dialog.
+  Desktop still opens citations in a dialog.
+- **Rotation and resize:** the reading position survives a layout change (tested). The
+  review session, the quiz in progress and the chat already did (W13). Android's
+  `configChanges` already lists orientation, screenSize, smallestScreenSize and
+  screenLayout, so rotation, split-screen and folding don't restart the activity.
+  `resizeableActivity` is at its default, and nothing locks orientation. iPad allows every
+  orientation, without `UIRequiresFullScreen`, so Split View and Slide Over work.
+- **Keyboards and trackpads:** shortcuts use Cmd on iPadOS as on macOS (tested). A mouse on a
+  tablet keeps right-click file menus and hover tooltips. Swipe-to-rate ignores the mouse.
+- **Test matrix:** the 4 sizes from 10.12 in `responsive_layout_test.dart`, phone screens in
+  `phone_screens_test.dart`, tablet behaviour in `tablet_test.dart`. Touch vs desktop is
+  picked with `TargetPlatformVariant`.
+- **Not done: the run on a physical or emulated Android tablet.** This machine has the
+  Android SDK but no system image or AVD, and its SDK licenses aren't accepted. Still to do.
+
 ### 10.13 Capture on mobile
 
 - **Files**: `file_picker` works on mobile. On iOS it copies the picked file into the app's
@@ -435,6 +705,35 @@ no text layer (it's cheap to include, and it helps desktop users too).
   dependency for users, whereas Tesseract would be a second "install ffmpeg"-style
   prerequisite. Confirm that the license, wheel availability on Windows, macOS (arm64), and
   Linux, and the lockfile all work under `--universal --python-version 3.11`.
+- **Evaluation (2026-11-01, W3): RapidOCR, provisionally.** Script:
+  `spikes/ocr-eval/eval_ocr.py` (`generate` makes labelled images; `run` scores every
+  engine it finds on a folder, labelled or not).
+  - 16 generated images (handout, small print, JPEG q35, angled page, angled with shadow,
+    4° skew, blur, slide, projector photo, marker whiteboard and its photo, handwriting
+    fonts, code, low light, sideways via EXIF). RapidOCR 3.10 (PP-OCRv6 small models) read
+    15 perfectly and dropped one character in the 16th: mean CER 0.001, about 1 s per
+    image on this laptop's CPU. These are rendered fonts, not real photos or real
+    handwriting, so they show it copes with the distortions, not how it does on a phone
+    photo of a real board.
+  - **Not done yet**: the 15-20 real photos, and Tesseract. Tesseract needs a system
+    install, which this run didn't do. To finish: put photos (plus optional `.txt`
+    transcriptions) in `spikes/ocr-eval/samples/real/` and run the script, with
+    Tesseract on PATH or in `TESSERACT_CMD` if comparing.
+  - Install: Apache-2.0 for code and models (models from PaddleOCR, see its
+    `MODEL_LICENSES.md`), models bundled in the wheel, no download at runtime. It adds
+    `opencv-python-headless` (~113 MB installed, the bulk), `shapely`, `pyclipper`,
+    `omegaconf` and a few small packages. `onnxruntime`, `numpy` and Pillow are already
+    dependencies. The universal lock resolves with `--python-version 3.11`, and
+    binary-only resolution finds wheels for Windows x64, Linux x64/arm64 and macOS arm64
+    (macOS 14+).
+  - Intel Macs: `onnxruntime` has no x86_64 macOS wheels after 1.23, and the lock already
+    pins a newer one for faster-whisper. That's an existing gap, not one OCR adds.
+  - Runtime: about 1 s to load; memory peaked near 580 MB on a 2500 px image, then settled
+    around 150 MB. W4 should run OCR one image at a time in a worker thread, and could
+    lower the downscale to 2000 px if memory matters.
+  - Windows: a deep venv path can exceed 260 characters in `onnxruntime`'s package tree
+    when long paths are off. The backend's venv path is short enough today, and the
+    package is already installed there.
 - **Handwriting**: none of the local engines handle handwriting well. Set expectations in
   the UI ("printed text works best"). A vision-LLM option for handwriting can come later.
 - **Pipeline**: correct the EXIF orientation (Pillow), downscale very large photos (for
@@ -827,8 +1126,8 @@ lifetime (system tray), image OCR (local engine), tablets (first-class), doc loc
 Still open:
 
 1. **PWA**: still worth pursuing, now that native Android distribution is decided? (Probably not.)
-2. **OCR engine**: RapidOCR (pip only) vs Tesseract (system binary). Decide after the
-   sample-photo evaluation in 10.13a.
+2. **OCR engine**: provisionally RapidOCR (2026-11-01, see 10.13a). Confirm with real
+   photos before W4 ships camera capture.
 3. **Final app identifier**: keep `com.mattxgong.hypatia` permanently? Confirm before
    sharing APKs beyond your own devices (see 10.9).
 

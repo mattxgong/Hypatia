@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../config/theme.dart';
 import '../../models/study.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/study_provider.dart';
 import '../../services/api_client.dart';
+import '../../utils/window_size.dart';
 import '../common/error_card.dart';
 import '../common/wiki_markdown.dart';
+import 'session_summary.dart';
 import 'study_actions.dart';
 
 const _sessionSize = 100;
@@ -42,6 +46,9 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
   final _focusNode = FocusNode();
   List<Flashcard> _queue = [];
   int _reviewed = 0;
+
+  /// This session's ratings in order, for the summary at the end.
+  final List<(Flashcard, ReviewRating)> _session = [];
   bool _revealed = false;
   bool _loading = true;
   bool _browsing = false;
@@ -76,6 +83,7 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       setState(() {
         _queue = [...cards]; // reordered as cards are rated
         _reviewed = 0;
+        _session.clear();
         _revealed = false;
       });
     } on ApiException catch (e) {
@@ -101,6 +109,7 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       // Missed cards come back at the end of this session.
       if (rating == ReviewRating.again) _queue.add(card);
       _reviewed++;
+      _session.add((card, rating));
       _revealed = false;
     });
     final messenger = ScaffoldMessenger.of(context);
@@ -143,6 +152,8 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
   }
 
   void _putBack(Flashcard card, ReviewRating rating) {
+    final index = _session.lastIndexWhere((r) => r.$1.id == card.id);
+    if (index >= 0) _session.removeAt(index);
     if (rating == ReviewRating.again) _queue.remove(card);
     _queue.insert(0, card);
     _reviewed = (_reviewed - 1).clamp(0, _reviewed);
@@ -180,6 +191,44 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
       }
     });
     _afterChange();
+  }
+
+  Widget _summary() {
+    final classId = _classId;
+    final decks = classId == null
+        ? null
+        : ref.watch(deckListProvider(classId)).valueOrNull;
+    final deck = decks?.where((d) => d.id == widget.deckId).firstOrNull;
+    final ratings = <ReviewRating, int>{};
+    for (final (_, rating) in _session) {
+      ratings[rating] = (ratings[rating] ?? 0) + 1;
+    }
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: SessionSummary(
+          ratings: ratings,
+          weak: weakPages(
+            _session
+                .where((r) => r.$2 == ReviewRating.again)
+                .map((r) => r.$1.pagePaths),
+          ),
+          dueNow: deck?.dueCount ?? 0,
+          nextDue: deck?.nextDueAt,
+          actions: [
+            if ((deck?.dueCount ?? 0) > 0)
+              FilledButton(
+                onPressed: _loadDue,
+                child: const Text('Keep studying'),
+              ),
+            OutlinedButton(
+              onPressed: () => setState(() => _browsing = true),
+              child: const Text('Browse cards'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -246,9 +295,12 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
       return Center(
-        child: ErrorCard(error: _error!, onRetry: _loadDue),
+        child: SingleChildScrollView(
+          child: ErrorCard(error: _error!, onRetry: _loadDue),
+        ),
       );
     }
+    if (_queue.isEmpty && _session.isNotEmpty) return _summary();
     if (_queue.isEmpty) {
       return _AllCaughtUp(
         reviewed: _reviewed,
@@ -258,8 +310,9 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
 
     final theme = Theme.of(context);
     final card = _queue.first;
+    final touch = HypatiaTokens.touch(context);
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(touch ? 16 : 24),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
@@ -280,26 +333,33 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
                   card: card,
                   onChanged: _replaceCurrent,
                 ),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      WikiMarkdown(
-                        data: card.question,
-                        styleSheet: studyMarkdownStyle(theme, scale: 1.15),
-                        scrollable: false,
-                      ),
-                      if (_revealed) ...[
-                        const Divider(height: 32),
+              _SwipeToRate(
+                // Swipe a revealed card: left for Again, right for Good.
+                onSwipe: touch && _revealed
+                    ? (left) =>
+                          _rate(left ? ReviewRating.again : ReviewRating.good)
+                    : null,
+                child: Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(touch ? 20 : 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
                         WikiMarkdown(
-                          data: card.answer,
-                          styleSheet: studyMarkdownStyle(theme),
+                          data: card.question,
+                          styleSheet: studyMarkdownStyle(theme, scale: 1.15),
                           scrollable: false,
                         ),
+                        if (_revealed) ...[
+                          const Divider(height: 32),
+                          WikiMarkdown(
+                            data: card.answer,
+                            styleSheet: studyMarkdownStyle(theme),
+                            scrollable: false,
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -307,12 +367,26 @@ class _FlashcardReviewState extends ConsumerState<FlashcardReview> {
               if (!_revealed)
                 Center(
                   child: FilledButton(
+                    style: touch
+                        ? FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(56),
+                          )
+                        : null,
                     onPressed: () => setState(() => _revealed = true),
-                    child: const Text('Show answer (Space)'),
+                    child: Text(touch ? 'Show answer' : 'Show answer (Space)'),
                   ),
                 )
-              else
+              else ...[
                 _RatingButtons(enabled: true, onRate: _rate),
+                if (touch) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Or swipe the card: left for Again, right for Good.',
+                    style: theme.textTheme.bodySmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ],
               if (card.pagePaths.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Center(
@@ -376,52 +450,103 @@ class _DeckHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final deck = this.deck;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: theme.dividerColor)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.style_outlined, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(deck?.name ?? 'Deck', style: theme.textTheme.titleMedium),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < narrowPaneWidth;
+        return Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: narrow ? 16 : 24,
+            vertical: 12,
+          ),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: theme.dividerColor)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.style_outlined, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      deck?.name ?? 'Deck',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    if (deck != null)
+                      Text(
+                        '${deck.dueCount} due · ${deck.cardCount} cards'
+                        '${deck.staleCount > 0 ? ' · ${deck.staleCount} out of date' : ''}',
+                        style: theme.textTheme.bodySmall,
+                      ),
+                  ],
+                ),
+              ),
+              if (narrow)
+                _overflowMenu(context, ref)
+              else ...[
+                if (deck != null && deck.staleCount > 0)
+                  TextButton.icon(
+                    onPressed: () => _refreshStale(context, ref),
+                    icon: const Icon(Icons.update, size: 16),
+                    label: const Text('Update from wiki'),
+                  ),
+                TextButton.icon(
+                  onPressed: onToggleBrowse,
+                  icon: Icon(
+                    browsing ? Icons.school_outlined : Icons.list,
+                    size: 16,
+                  ),
+                  label: Text(browsing ? 'Review' : 'Browse cards'),
+                ),
                 if (deck != null)
-                  Text(
-                    '${deck.dueCount} due · ${deck.cardCount} cards'
-                    '${deck.staleCount > 0 ? ' · ${deck.staleCount} out of date' : ''}',
-                    style: theme.textTheme.bodySmall,
+                  PopupMenuButton<String>(
+                    tooltip: 'Export',
+                    icon: const Icon(Icons.ios_share, size: 18),
+                    onSelected: (format) =>
+                        exportDeck(context, ref, deck, format),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                        value: 'anki',
+                        child: Text('Export for Anki'),
+                      ),
+                      PopupMenuItem(value: 'csv', child: Text('Export as CSV')),
+                    ],
                   ),
               ],
-            ),
+            ],
           ),
-          if (deck != null && deck.staleCount > 0)
-            TextButton.icon(
-              onPressed: () => _refreshStale(context, ref),
-              icon: const Icon(Icons.update, size: 16),
-              label: const Text('Update from wiki'),
-            ),
-          TextButton.icon(
-            onPressed: onToggleBrowse,
-            icon: Icon(browsing ? Icons.school_outlined : Icons.list, size: 16),
-            label: Text(browsing ? 'Review' : 'Browse cards'),
+        );
+      },
+    );
+  }
+
+  /// The header's actions in one menu, for a phone-width pane.
+  Widget _overflowMenu(BuildContext context, WidgetRef ref) {
+    final deck = this.deck;
+    return PopupMenuButton<String>(
+      tooltip: 'Deck actions',
+      onSelected: (action) => switch (action) {
+        'refresh' => _refreshStale(context, ref),
+        'browse' => onToggleBrowse(),
+        _ when deck != null => exportDeck(context, ref, deck, action),
+        _ => null,
+      },
+      itemBuilder: (_) => [
+        if (deck != null && deck.staleCount > 0)
+          const PopupMenuItem(
+            value: 'refresh',
+            child: Text('Update from wiki'),
           ),
-          if (deck != null)
-            PopupMenuButton<String>(
-              tooltip: 'Export',
-              icon: const Icon(Icons.ios_share, size: 18),
-              onSelected: (format) => exportDeck(context, ref, deck, format),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'anki', child: Text('Export for Anki')),
-                PopupMenuItem(value: 'csv', child: Text('Export as CSV')),
-              ],
-            ),
+        PopupMenuItem(
+          value: 'browse',
+          child: Text(browsing ? 'Review' : 'Browse cards'),
+        ),
+        if (deck != null) ...const [
+          PopupMenuItem(value: 'anki', child: Text('Export for Anki')),
+          PopupMenuItem(value: 'csv', child: Text('Export as CSV')),
         ],
-      ),
+      ],
     );
   }
 }
@@ -435,6 +560,7 @@ class _RatingButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    if (HypatiaTokens.touch(context)) return _touchButtons(scheme);
     Widget button(ReviewRating rating, String label, int key, Color color) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -455,6 +581,82 @@ class _RatingButtons extends StatelessWidget {
         button(ReviewRating.good, 'Good', 3, scheme.primary),
         button(ReviewRating.easy, 'Easy', 4, scheme.secondary),
       ],
+    );
+  }
+
+  /// A row of four large buttons for thumbs, without the keyboard hints.
+  Widget _touchButtons(ColorScheme scheme) {
+    Widget button(ReviewRating rating, String label, Color color) => Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: color,
+            minimumSize: const Size.fromHeight(56),
+            padding: EdgeInsets.zero,
+          ),
+          onPressed: enabled ? () => onRate(rating) : null,
+          child: Text(label),
+        ),
+      ),
+    );
+
+    return Row(
+      children: [
+        button(ReviewRating.again, 'Again', scheme.error),
+        button(ReviewRating.hard, 'Hard', scheme.tertiary),
+        button(ReviewRating.good, 'Good', scheme.primary),
+        button(ReviewRating.easy, 'Easy', scheme.secondary),
+      ],
+    );
+  }
+}
+
+/// Calls [onSwipe] for a quick sideways swipe (true for left) across [child].
+///
+/// Watches raw pointers instead of joining the gesture arena: the card's text
+/// is selectable, and the selection's drag recognizer would win every swipe
+/// that starts on text.
+class _SwipeToRate extends StatefulWidget {
+  const _SwipeToRate({required this.onSwipe, required this.child});
+
+  final ValueChanged<bool>? onSwipe;
+  final Widget child;
+
+  @override
+  State<_SwipeToRate> createState() => _SwipeToRateState();
+}
+
+class _SwipeToRateState extends State<_SwipeToRate> {
+  static const _minDistance = 64.0;
+  static const _minSpeed = 300.0; // logical pixels per second
+
+  Offset? _start;
+  Duration? _startTime;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) {
+        if (event.kind == PointerDeviceKind.mouse) return;
+        _start = event.position;
+        _startTime = event.timeStamp;
+      },
+      onPointerCancel: (_) => _start = null,
+      onPointerUp: (event) {
+        final start = _start, startTime = _startTime;
+        _start = null;
+        final onSwipe = widget.onSwipe;
+        if (onSwipe == null || start == null || startTime == null) return;
+        final delta = event.position - start;
+        final seconds = (event.timeStamp - startTime).inMicroseconds / 1e6;
+        final sideways = delta.dx.abs() > 2 * delta.dy.abs();
+        final fast = seconds > 0 && delta.dx.abs() / seconds >= _minSpeed;
+        if (sideways && fast && delta.dx.abs() >= _minDistance) {
+          onSwipe(delta.dx < 0);
+        }
+      },
+      child: widget.child,
     );
   }
 }
@@ -769,7 +971,9 @@ class _CardBrowserState extends ConsumerState<_CardBrowser> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
-            child: ErrorCard(error: snapshot.error!, onRetry: _reload),
+            child: SingleChildScrollView(
+              child: ErrorCard(error: snapshot.error!, onRetry: _reload),
+            ),
           );
         }
         final cards = snapshot.data

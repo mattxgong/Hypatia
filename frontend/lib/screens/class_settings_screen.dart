@@ -7,6 +7,7 @@ import '../providers/class_provider.dart';
 import '../providers/settings_provider.dart';
 import '../services/api_client.dart';
 import '../utils/input_validation.dart';
+import '../utils/window_size.dart';
 
 class ClassSettingsScreen extends ConsumerStatefulWidget {
   const ClassSettingsScreen({super.key});
@@ -51,12 +52,16 @@ class _ClassSettingsScreenState extends ConsumerState<ClassSettingsScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/class/${currentClass.id}'),
+          onPressed: () => context.canPop()
+              ? context.pop()
+              : context.go('/class/${currentClass.id}'),
         ),
         title: const Text('Class Settings'),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(
+          windowSizeClassOf(context) == WindowSizeClass.compact ? 16 : 24,
+        ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 600),
           child: Column(
@@ -484,15 +489,16 @@ class _TokenUsageCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
+                // Wraps on a phone, where three stats don't fit a row.
+                Wrap(
+                  spacing: 32,
+                  runSpacing: 12,
                   children: [
                     _UsageStat(label: 'Requests', value: '$requests'),
-                    const SizedBox(width: 32),
                     _UsageStat(
                       label: 'Input Tokens',
                       value: _formatNumber(input),
                     ),
-                    const SizedBox(width: 32),
                     _UsageStat(
                       label: 'Output Tokens',
                       value: _formatNumber(output),

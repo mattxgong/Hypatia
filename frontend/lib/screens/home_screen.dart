@@ -1,122 +1,38 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/theme.dart';
+import '../providers/chat_provider.dart';
 import '../providers/class_provider.dart';
+import '../providers/layout_provider.dart';
 import '../providers/search_provider.dart';
 import '../providers/study_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/upload_provider.dart';
 import '../providers/wiki_provider.dart';
+import '../utils/platform.dart';
 import '../utils/shortcuts.dart';
-import '../widgets/chat_panel/chat_panel.dart';
+import '../utils/window_size.dart';
 import '../widgets/common/activity_status.dart';
 import '../widgets/sidebar/add_file_button.dart';
 import '../widgets/sidebar/class_dropdown.dart';
-import '../widgets/sidebar/sidebar.dart';
 import '../widgets/source_viewer/source_viewer.dart';
-import '../widgets/study/flashcard_review.dart';
-import '../widgets/study/quiz_view.dart';
 import '../widgets/wiki_viewer/wiki_viewer.dart';
+import 'home/compact_layout.dart';
+import 'home/expanded_layout.dart';
+import 'home/home_panes.dart';
+import 'home/medium_layout.dart';
 
-// Panel layout is remembered across launches, like the theme.
-const _sidebarWidthKey = 'hypatia_layout_sidebar_width';
-const _chatWidthKey = 'hypatia_layout_chat_width';
-const _sidebarCollapsedKey = 'hypatia_layout_sidebar_collapsed';
-const _chatCollapsedKey = 'hypatia_layout_chat_collapsed';
+export 'home/expanded_layout.dart' show PanelWidths, constrainPanelWidths;
 
-final _sidebarWidthProvider = StateProvider<double>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getDouble(_sidebarWidthKey) ?? 250,
-);
-final _chatPanelWidthProvider = StateProvider<double>(
-  (ref) => ref.read(sharedPreferencesProvider).getDouble(_chatWidthKey) ?? 350,
-);
-final _sidebarCollapsedProvider = StateProvider<bool>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getBool(_sidebarCollapsedKey) ??
-      false,
-);
-final _chatPanelCollapsedProvider = StateProvider<bool>(
-  (ref) =>
-      ref.read(sharedPreferencesProvider).getBool(_chatCollapsedKey) ?? false,
-);
-
-const _minimumCenterWidth = 400.0;
-const _minimumSidebarWidth = 180.0;
-const _minimumChatWidth = 280.0;
-const _collapsedStripWidth = 32.0;
-
-/// Space a resize handle takes: a 1px line inside an easy-to-grab strip.
-const _dividerWidth = 12.0;
-
-class PanelWidths {
-  const PanelWidths({required this.sidebar, required this.chat});
-
-  final double sidebar;
-  final double chat;
-}
-
-PanelWidths constrainPanelWidths({
-  required double availableWidth,
-  required double sidebarWidth,
-  required double chatWidth,
-  required bool sidebarCollapsed,
-  required bool chatCollapsed,
-}) {
-  final fixedWidth =
-      (sidebarCollapsed ? _collapsedStripWidth : _dividerWidth) +
-      (chatCollapsed ? _collapsedStripWidth : _dividerWidth);
-  final sideBudget = math.max(
-    0.0,
-    availableWidth - fixedWidth - _minimumCenterWidth,
-  );
-
-  if (sidebarCollapsed && chatCollapsed) {
-    return const PanelWidths(sidebar: 0, chat: 0);
-  }
-  if (sidebarCollapsed) {
-    return PanelWidths(sidebar: 0, chat: math.min(chatWidth, sideBudget));
-  }
-  if (chatCollapsed) {
-    return PanelWidths(sidebar: math.min(sidebarWidth, sideBudget), chat: 0);
-  }
-
-  final requestedSidebar = sidebarWidth.clamp(_minimumSidebarWidth, 400.0);
-  final requestedChat = chatWidth.clamp(_minimumChatWidth, 500.0);
-  const minimumTotal = _minimumSidebarWidth + _minimumChatWidth;
-  if (sideBudget < minimumTotal) {
-    final scale = sideBudget / minimumTotal;
-    return PanelWidths(
-      sidebar: _minimumSidebarWidth * scale,
-      chat: _minimumChatWidth * scale,
-    );
-  }
-
-  final requestedExtra =
-      (requestedSidebar - _minimumSidebarWidth) +
-      (requestedChat - _minimumChatWidth);
-  if (requestedSidebar + requestedChat <= sideBudget || requestedExtra == 0) {
-    return PanelWidths(sidebar: requestedSidebar, chat: requestedChat);
-  }
-
-  final availableExtra = sideBudget - minimumTotal;
-  return PanelWidths(
-    sidebar:
-        _minimumSidebarWidth +
-        availableExtra *
-            (requestedSidebar - _minimumSidebarWidth) /
-            requestedExtra,
-    chat:
-        _minimumChatWidth +
-        availableExtra * (requestedChat - _minimumChatWidth) / requestedExtra,
-  );
-}
-
+/// A Class: the wiki, chat, study and sources, laid out for the window's size
+/// class (compact, medium or expanded). The state behind every layout lives in
+/// providers, so the window can change size class at any time (rotation,
+/// split-screen, resizing) and the same page, review and draft stay open.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -127,6 +43,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _isDragging = false;
   final _focusNode = FocusNode();
+  final _paneKeys = PaneKeys();
   Timer? _saveWidths;
 
   @override
@@ -138,220 +55,155 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _persistLayout() {
     final prefs = ref.read(sharedPreferencesProvider);
-    ref.listen(_sidebarCollapsedProvider, (_, collapsed) {
-      prefs.setBool(_sidebarCollapsedKey, collapsed);
+    ref.listen(sidebarCollapsedProvider, (_, collapsed) {
+      prefs.setBool(sidebarCollapsedKey, collapsed);
     });
-    ref.listen(_chatPanelCollapsedProvider, (_, collapsed) {
-      prefs.setBool(_chatCollapsedKey, collapsed);
+    ref.listen(chatPanelCollapsedProvider, (_, collapsed) {
+      prefs.setBool(chatCollapsedKey, collapsed);
     });
     // Widths change on every pointer move of a drag; save once it settles.
     void saveWidthsSoon() {
       _saveWidths?.cancel();
       _saveWidths = Timer(const Duration(milliseconds: 400), () {
-        prefs.setDouble(_sidebarWidthKey, ref.read(_sidebarWidthProvider));
-        prefs.setDouble(_chatWidthKey, ref.read(_chatPanelWidthProvider));
+        prefs.setDouble(sidebarWidthKey, ref.read(sidebarWidthProvider));
+        prefs.setDouble(chatWidthKey, ref.read(chatPanelWidthProvider));
+        prefs.setDouble(
+          secondaryPaneFractionKey,
+          ref.read(secondaryPaneFractionProvider),
+        );
       });
     }
 
-    ref.listen(_sidebarWidthProvider, (_, _) => saveWidthsSoon());
-    ref.listen(_chatPanelWidthProvider, (_, _) => saveWidthsSoon());
+    ref.listen(sidebarWidthProvider, (_, _) => saveWidthsSoon());
+    ref.listen(chatPanelWidthProvider, (_, _) => saveWidthsSoon());
+    ref.listen(secondaryPaneFractionProvider, (_, _) => saveWidthsSoon());
   }
 
   @override
   Widget build(BuildContext context) {
+    final sizeClass = windowSizeClassOf(context);
+    final expanded = sizeClass == WindowSizeClass.expanded;
     _persistLayout();
+    ref.listen(chatRevealRequestProvider, (_, _) {
+      ref.read(chatPanelCollapsedProvider.notifier).state = false;
+      showDestination(ref, HomeDestination.chat);
+    });
     ref.listen(sourceViewerRequestProvider, (prev, next) {
-      if (next != null) {
+      if (next == null) return;
+      ref.read(sourceViewerRequestProvider.notifier).state = null;
+      // A tablet in landscape has room to show the source beside the text.
+      if (windowSizeClassOf(context) == WindowSizeClass.expanded &&
+          HypatiaTokens.touch(context)) {
+        ref.read(sideSourceProvider.notifier).state = next;
+      } else {
         showSourceViewer(context, next);
-        ref.read(sourceViewerRequestProvider.notifier).state = null;
       }
     });
-    // Opening a wiki page or switching class leaves the study view.
-    ref.listen(currentWikiPagePathProvider, (_, _) {
-      ref.read(studySelectionProvider.notifier).state = null;
+    // Turned to portrait (or split-screen) with a source open beside the
+    // page: there's no room for it there, so it carries on in a dialog.
+    final sideSource = ref.watch(sideSourceProvider);
+    if (!expanded && sideSource != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || ref.read(sideSourceProvider) != sideSource) return;
+        ref.read(sideSourceProvider.notifier).state = null;
+        showSourceViewer(context, sideSource);
+      });
+    }
+    ref.listen(currentWikiPagePathProvider, (_, path) {
+      // Opening a wiki page leaves the study view where the two share a
+      // pane. On a phone each has its own tab, so a review stays open on the
+      // Study tab while the wiki is browsed.
+      if (windowSizeClassOf(context) != WindowSizeClass.compact) {
+        ref.read(studySelectionProvider.notifier).state = null;
+      }
+      if (path != null) {
+        ref.read(compactDestinationProvider.notifier).state =
+            HomeDestination.wiki;
+        ref.read(searchOpenProvider.notifier).state = false;
+      }
+    });
+    ref.listen(studySelectionProvider, (_, selection) {
+      if (selection != null) {
+        ref.read(compactDestinationProvider.notifier).state =
+            HomeDestination.study;
+      }
     });
     ref.listen(currentClassIdProvider, (_, _) {
       ref.read(studySelectionProvider.notifier).state = null;
       // The open page and the search belong to the previous Class.
       ref.read(currentWikiPagePathProvider.notifier).state = null;
       ref.read(searchQueryProvider.notifier).state = '';
+      ref.read(searchOpenProvider.notifier).state = false;
+      ref.read(sideSourceProvider.notifier).state = null;
     });
-    final studySelection = ref.watch(studySelectionProvider);
-    final sidebarWidth = ref.watch(_sidebarWidthProvider);
-    final chatWidth = ref.watch(_chatPanelWidthProvider);
-    final sidebarCollapsed = ref.watch(_sidebarCollapsedProvider);
-    final chatCollapsed = ref.watch(_chatPanelCollapsedProvider);
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         platformShortcut(LogicalKeyboardKey.keyK): () {
-          if (sidebarCollapsed) {
-            ref.read(_sidebarCollapsedProvider.notifier).state = false;
-          }
+          if (!expanded) return openSearch(ref);
+          ref.read(sidebarCollapsedProvider.notifier).state = false;
           ref.read(searchBarFocusNodeProvider).requestFocus();
         },
         platformShortcut(LogicalKeyboardKey.keyN): () {
           showCreateClassDialog(context, ref);
         },
+        // The side panes only collapse in the three-pane layout.
         platformShortcut(LogicalKeyboardKey.keyB): () {
-          ref.read(_sidebarCollapsedProvider.notifier).state =
-              !sidebarCollapsed;
+          if (!expanded) return;
+          final collapsed = ref.read(sidebarCollapsedProvider.notifier);
+          collapsed.state = !collapsed.state;
         },
         platformShortcut(LogicalKeyboardKey.keyJ): () {
-          ref.read(_chatPanelCollapsedProvider.notifier).state = !chatCollapsed;
+          if (!expanded) return;
+          final collapsed = ref.read(chatPanelCollapsedProvider.notifier);
+          collapsed.state = !collapsed.state;
         },
         const SingleActivator(LogicalKeyboardKey.escape): () {
-          final query = ref.read(searchQueryProvider);
-          if (query.isNotEmpty) {
-            ref.read(searchQueryProvider.notifier).state = '';
+          if (ref.read(searchQueryProvider).isNotEmpty ||
+              ref.read(searchOpenProvider)) {
+            closeSearch(ref);
           }
         },
       },
       child: Focus(
         focusNode: _focusNode,
         autofocus: true,
-        child: Scaffold(
-          body: SourceFileEvents(
-            child: DropTarget(
-              onDragEntered: (_) => setState(() => _isDragging = true),
-              onDragExited: (_) => setState(() => _isDragging = false),
-              onDragDone: (details) {
-                setState(() => _isDragging = false);
-                _handleDrop(details);
-              },
-              child: Stack(
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final widths = constrainPanelWidths(
-                        availableWidth: constraints.maxWidth,
-                        sidebarWidth: sidebarWidth,
-                        chatWidth: chatWidth,
-                        sidebarCollapsed: sidebarCollapsed,
-                        chatCollapsed: chatCollapsed,
-                      );
-                      void resizeSidebar(double delta) {
-                        final current = ref.read(_sidebarWidthProvider);
-                        ref.read(_sidebarWidthProvider.notifier).state =
-                            (current + delta).clamp(180, 400);
-                      }
-
-                      void resizeChat(double delta) {
-                        final current = ref.read(_chatPanelWidthProvider);
-                        ref.read(_chatPanelWidthProvider.notifier).state =
-                            (current + delta).clamp(280, 500);
-                      }
-
-                      return Row(
-                        children: [
-                          if (!sidebarCollapsed) ...[
-                            SizedBox(
-                              width: widths.sidebar,
-                              child: const Sidebar(),
-                            ),
-                            _DraggableDivider(
-                              label: 'Resize class sidebar',
-                              value: widths.sidebar,
-                              onDrag: resizeSidebar,
-                              onIncrease: () => resizeSidebar(16),
-                              onDecrease: () => resizeSidebar(-16),
-                            ),
-                          ] else
-                            _CollapsedPanelStrip(
-                              icon: Icons.menu,
-                              label: 'Show class sidebar',
-                              onTap: () =>
-                                  ref
-                                          .read(
-                                            _sidebarCollapsedProvider.notifier,
-                                          )
-                                          .state =
-                                      false,
-                            ),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                _TopBar(
-                                  sidebarCollapsed: sidebarCollapsed,
-                                  chatCollapsed: chatCollapsed,
-                                  onToggleSidebar: () =>
-                                      ref
-                                              .read(
-                                                _sidebarCollapsedProvider
-                                                    .notifier,
-                                              )
-                                              .state =
-                                          !sidebarCollapsed,
-                                  onToggleChat: () =>
-                                      ref
-                                              .read(
-                                                _chatPanelCollapsedProvider
-                                                    .notifier,
-                                              )
-                                              .state =
-                                          !chatCollapsed,
-                                ),
-                                Expanded(
-                                  child: switch (studySelection) {
-                                    StudySelection(
-                                      kind: StudyKind.deck,
-                                      :final id,
-                                    ) =>
-                                      FlashcardReview(
-                                        key: ValueKey('deck-$id'),
-                                        deckId: id,
-                                      ),
-                                    StudySelection(
-                                      kind: StudyKind.quiz,
-                                      :final id,
-                                    ) =>
-                                      QuizView(
-                                        key: ValueKey('quiz-$id'),
-                                        quizId: id,
-                                      ),
-                                    null => const WikiViewer(),
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          if (!chatCollapsed) ...[
-                            _DraggableDivider(
-                              label: 'Resize chat panel',
-                              value: widths.chat,
-                              reverseKeyboardDirection: true,
-                              onDrag: (delta) => resizeChat(-delta),
-                              onIncrease: () => resizeChat(16),
-                              onDecrease: () => resizeChat(-16),
-                            ),
-                            SizedBox(
-                              width: widths.chat,
-                              child: const ChatPanel(),
-                            ),
-                          ] else
-                            _CollapsedPanelStrip(
-                              icon: Icons.chat_bubble_outline,
-                              label: 'Show chat panel',
-                              onTap: () =>
-                                  ref
-                                          .read(
-                                            _chatPanelCollapsedProvider
-                                                .notifier,
-                                          )
-                                          .state =
-                                      false,
-                            ),
-                        ],
-                      );
+        child: HomePaneKeys(
+          keys: _paneKeys,
+          child: _BackHandler(
+            sizeClass: sizeClass,
+            child: SourceFileEvents(
+              child: _dropTarget(
+                Stack(
+                  children: [
+                    switch (sizeClass) {
+                      WindowSizeClass.compact => const CompactLayout(),
+                      WindowSizeClass.medium => const MediumLayout(),
+                      WindowSizeClass.expanded => const ExpandedLayout(),
                     },
-                  ),
-                  if (_isDragging) const _DropOverlay(),
-                ],
+                    if (_isDragging) const _DropOverlay(),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Accepts files dragged in from the file manager. Desktop only: phones and
+  /// tablets add files with the Add File button.
+  Widget _dropTarget(Widget child) {
+    if (!isDesktop) return child;
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _isDragging = true),
+      onDragExited: (_) => setState(() => _isDragging = false),
+      onDragDone: (details) {
+        setState(() => _isDragging = false);
+        _handleDrop(details);
+      },
+      child: child,
     );
   }
 
@@ -393,6 +245,64 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+/// Back (the Android back gesture or button) steps out of what's open, one
+/// step at a time, before it leaves the Class: search, then a source open
+/// beside the page, then the open deck, quiz or page, then (on a phone) back
+/// to the Wiki tab.
+class _BackHandler extends ConsumerWidget {
+  const _BackHandler({required this.sizeClass, required this.child});
+
+  final WindowSizeClass sizeClass;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final searching =
+        ref.watch(searchQueryProvider).isNotEmpty ||
+        (sizeClass != WindowSizeClass.expanded &&
+            ref.watch(searchOpenProvider));
+    final selection = ref.watch(studySelectionProvider);
+    final page = ref.watch(currentWikiPagePathProvider);
+    final tab = ref.watch(compactDestinationProvider);
+    final sideSource = ref.watch(sideSourceProvider);
+
+    void closeStudy() => ref.read(studySelectionProvider.notifier).state = null;
+    void closePage() =>
+        ref.read(currentWikiPagePathProvider.notifier).state = null;
+
+    final VoidCallback? step = searching
+        ? () => closeSearch(ref)
+        : switch (sizeClass) {
+            WindowSizeClass.compact => switch (tab) {
+              HomeDestination.study when selection != null => closeStudy,
+              HomeDestination.wiki when page != null => closePage,
+              HomeDestination.wiki => null,
+              _ => () => showDestination(ref, HomeDestination.wiki),
+            },
+            WindowSizeClass.medium =>
+              selection != null
+                  ? closeStudy
+                  : page != null
+                  ? closePage
+                  : null,
+            WindowSizeClass.expanded =>
+              sideSource != null
+                  ? () => ref.read(sideSourceProvider.notifier).state = null
+                  : selection != null
+                  ? closeStudy
+                  : null,
+          };
+
+    return PopScope(
+      canPop: step == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) step?.call();
+      },
+      child: child,
+    );
+  }
+}
+
 class _DropOverlay extends StatelessWidget {
   const _DropOverlay();
 
@@ -400,20 +310,15 @@ class _DropOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      color: theme.colorScheme.primary.withValues(alpha: 0.1),
+      color: HypatiaTokens.of(context).accentTint,
       child: Center(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: HypatiaTokens.cornersLarge,
             border: Border.all(color: theme.colorScheme.primary, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: theme.colorScheme.primary.withValues(alpha: 0.2),
-                blurRadius: 20,
-              ),
-            ],
+            boxShadow: HypatiaTokens.of(context).shadowHigh,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -431,151 +336,6 @@ class _DropOverlay extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.sidebarCollapsed,
-    required this.chatCollapsed,
-    required this.onToggleSidebar,
-    required this.onToggleChat,
-  });
-
-  final bool sidebarCollapsed;
-  final bool chatCollapsed;
-  final VoidCallback onToggleSidebar;
-  final VoidCallback onToggleChat;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
-        border: Border(bottom: BorderSide(color: theme.dividerColor)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(
-              sidebarCollapsed ? Icons.menu : Icons.menu_open,
-              size: 18,
-            ),
-            onPressed: onToggleSidebar,
-            tooltip: sidebarCollapsed
-                ? 'Show sidebar ($shortcutModifierLabel+B)'
-                : 'Hide sidebar ($shortcutModifierLabel+B)',
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-          const Expanded(child: Center(child: ActivityStatus())),
-          IconButton(
-            icon: Icon(
-              chatCollapsed ? Icons.chat_bubble_outline : Icons.chat_bubble,
-              size: 18,
-            ),
-            onPressed: onToggleChat,
-            tooltip: chatCollapsed
-                ? 'Show chat ($shortcutModifierLabel+J)'
-                : 'Hide chat ($shortcutModifierLabel+J)',
-            iconSize: 18,
-            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DraggableDivider extends StatelessWidget {
-  const _DraggableDivider({
-    required this.label,
-    required this.value,
-    required this.onDrag,
-    required this.onIncrease,
-    required this.onDecrease,
-    this.reverseKeyboardDirection = false,
-  });
-
-  final String label;
-  final double value;
-  final void Function(double dx) onDrag;
-  final VoidCallback onIncrease;
-  final VoidCallback onDecrease;
-  final bool reverseKeyboardDirection;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: label,
-      value: '${value.round()} pixels',
-      increasedValue: '${(value + 16).round()} pixels',
-      decreasedValue: '${math.max(0, value - 16).round()} pixels',
-      onIncrease: onIncrease,
-      onDecrease: onDecrease,
-      child: Focus(
-        onKeyEvent: (_, event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
-          if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            reverseKeyboardDirection ? onDecrease() : onIncrease();
-            return KeyEventResult.handled;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            reverseKeyboardDirection ? onIncrease() : onDecrease();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: MouseRegion(
-          cursor: SystemMouseCursors.resizeColumn,
-          child: GestureDetector(
-            onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
-            child: Container(
-              width: _dividerWidth,
-              color: Colors.transparent,
-              alignment: Alignment.center,
-              child: Container(width: 1, color: Theme.of(context).dividerColor),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CollapsedPanelStrip extends StatelessWidget {
-  const _CollapsedPanelStrip({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: label,
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: InkWell(
-            onTap: onTap,
-            child: SizedBox(
-              width: _collapsedStripWidth,
-              child: Center(child: Icon(icon, size: 18)),
-            ),
           ),
         ),
       ),

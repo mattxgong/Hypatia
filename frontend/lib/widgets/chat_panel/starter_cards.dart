@@ -14,32 +14,41 @@ class StarterCards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _StarterCard(
-            icon: Icons.question_answer_outlined,
-            title: 'Ask about my wiki',
-            subtitle: 'Query your knowledge base',
-            onTap: onAsk,
+    // Centered when there's room; scrolls on a short phone screen or with
+    // the keyboard up.
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: (constraints.maxHeight - 32).clamp(0, double.infinity),
           ),
-          const SizedBox(height: 12),
-          _StarterCard(
-            icon: Icons.summarize_outlined,
-            title: 'Summarize a topic',
-            subtitle: 'Generate a new wiki page',
-            onTap: onSummarize,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _StarterCard(
+                icon: Icons.question_answer_outlined,
+                title: 'Ask about my wiki',
+                subtitle: 'Query your knowledge base',
+                onTap: onAsk,
+              ),
+              const SizedBox(height: 12),
+              _StarterCard(
+                icon: Icons.summarize_outlined,
+                title: 'Summarize a topic',
+                subtitle: 'Generate a new wiki page',
+                onTap: onSummarize,
+              ),
+              const SizedBox(height: 12),
+              _StarterCard(
+                icon: Icons.upload_file_outlined,
+                title: 'Add files',
+                subtitle: 'Upload source material',
+                onTap: onAddFiles,
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          _StarterCard(
-            icon: Icons.upload_file_outlined,
-            title: 'Add files',
-            subtitle: 'Upload source material',
-            onTap: onAddFiles,
-          ),
-        ],
+        ),
       ),
     );
   }

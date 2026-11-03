@@ -43,6 +43,8 @@ async def test_run_migrations_creates_all_tables(isolated_data_dir: Path) -> Non
         "quizzes",
         "quiz_questions",
         "quiz_attempts",
+        "devices",
+        "flashcard_reviews",
     }.issubset(table_names)
 
 
@@ -226,5 +228,39 @@ def test_flashcard_learning_steps_migration_backfills(isolated_data_dir: Path) -
             ("learned", None, True),
             ("new", 0, False),
         ]
+    finally:
+        engine.dispose()
+
+
+def test_question_points_migration_defaults_existing_questions_to_one(
+    isolated_data_dir: Path,
+) -> None:
+    config = database._alembic_config()
+    isolated_data_dir.mkdir(parents=True)
+    command.upgrade(config, "c9d4e2f7a1b6")
+    engine = sa.create_engine(f"sqlite:///{isolated_data_dir / 'hypatia.db'}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO classes (id, name, created_at, updated_at) VALUES ('c1', 'C', '2026-01-01', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO quizzes (id, class_id, name, generation_method, created_at, updated_at) VALUES ('q1', 'c1', 'Q', 'heuristic', '2026-01-01', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO quiz_questions (id, quiz_id, position, question_type, prompt, answer_json, created_at) VALUES ('x1', 'q1', 0, 'mcq', 'P', '{}', '2026-01-01')"
+                )
+            )
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT points FROM quiz_questions")).scalar() == 1
+        command.downgrade(config, "c9d4e2f7a1b6")
+        columns = {c["name"] for c in sa.inspect(engine).get_columns("quiz_questions")}
+        assert "points" not in columns
     finally:
         engine.dispose()

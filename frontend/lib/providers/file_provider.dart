@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/source_file.dart';
 import '../services/api_client.dart';
+import 'foreground_provider.dart';
 import 'task_provider.dart';
 import 'wiki_provider.dart';
 
@@ -53,6 +54,7 @@ class FilePollingNotifier extends FamilyNotifier<bool, String> {
     if (_timer != null) return;
     state = true;
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!ref.read(appInForegroundProvider)) return;
       ref.invalidate(fileListProvider(arg));
       ref.read(taskListProvider.notifier).fetchTasks();
     });

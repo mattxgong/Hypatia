@@ -27,6 +27,9 @@ fi
 echo "==> Installing locked backend dependencies (requirements.lock)"
 "$VENV_PY" -m pip install --upgrade pip
 (cd "$BACKEND_DIR" && "$VENV_PY" -m pip install -r requirements.lock && "$VENV_PY" -m pip install --no-deps -e .)
+# The marker BackendLauncher checks, so the desktop app started directly
+# (`flutter run -d <desktop>`) doesn't reinstall the same packages.
+cp "$BACKEND_DIR/requirements.lock" "$BACKEND_DIR/.venv/.hypatia-installed-requirements.lock"
 
 # --- Frontend: Flutter dependencies ------------------------------------------
 echo "==> Running flutter pub get"

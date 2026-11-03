@@ -281,6 +281,26 @@ flutter run -d windows
 
 ---
 
+## Phone can't connect with remote access on
+
+**Symptom**: Remote access is on, but a paired phone can't reach the desktop, or Windows asked whether to allow Python through the firewall.
+
+**Cause**: Remote access listens for phones on port 8765 on every network interface. The first time, Windows Defender Firewall asks whether to allow that. A blocked prompt, or a network marked **Public**, keeps phones out.
+
+**Solution**: Allow it on **Private networks** only. Never allow it on public networks such as café or campus Wi-Fi; use Tailscale there instead. If you dismissed the prompt, allow Python in **Windows Security > Firewall & network protection > Allow an app through firewall**, for Private networks only. Mark your home network as Private in its Wi-Fi properties. The phone and the computer must be on the same network, or on the same tailnet with the Tailscale app connected on the phone. If another program uses port 8765, the backend won't start with remote access on; free the port or turn remote access off.
+
+---
+
+## Hypatia keeps running after closing the window
+
+**Symptom**: Closing the window doesn't quit Hypatia, or you can't find the window again.
+
+**Cause**: While remote access is on, closing the window keeps Hypatia running so paired phones stay connected. On Windows and macOS it goes to the system tray (menu bar); on Linux the window minimizes instead, because GNOME shows no tray icons without the AppIndicator extension.
+
+**Solution**: Click the Hypatia tray icon to open it, or right-click it and choose **Quit Hypatia**. On Linux, restore it from the taskbar or dock; to see the tray icon on GNOME, install the "AppIndicator and KStatusNotifierItem Support" extension. To make closing quit again, turn remote access off. If Linux reports a missing `libayatana-appindicator3` library at startup, install `libayatana-appindicator3-1` (see the README).
+
+---
+
 ## Logs location
 
 Backend logs are written to `~/.hypatia/logs/hypatia.log` (rotating, JSON-structured). Override with `HYPATIA_LOGS_DIR` in `.env`.

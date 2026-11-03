@@ -18,12 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.testclient import TestClient
 
 from app.main import app
-from app.models.db_models import QuizQuestion
+from app.models.db_models import QuestionType, Quiz, QuizQuestion, StudyMethod
 from app.services import wiki_engine
 from app.services.prompts.flashcard_prompt import FLASHCARD_SYSTEM_PROMPT
 from app.services.prompts.grading_prompt import GRADING_SYSTEM_PROMPT
 from app.services.prompts.ingest_prompt import INGEST_SYSTEM_PROMPT
+from app.services.prompts.query_prompt import ASK_SYSTEM_PROMPT
 from app.services.prompts.quiz_prompt import QUIZ_SYSTEM_PROMPT
+from app.services.prompts.review_prompt import REVIEW_SYSTEM_PROMPT
 from app.services.study import jobs
 from tests.e2e.conftest import MockLLMProvider
 
@@ -86,6 +88,9 @@ _QUIZ_OUTPUT = (
 )
 
 
+_REVIEW_OUTPUT = "Let's start with the question you missed. What does Viterbi return?"
+
+
 class StudyMockLLM(MockLLMProvider):
     """Answers the ingest and study prompts with well-formed tagged output."""
 
@@ -97,6 +102,7 @@ class StudyMockLLM(MockLLMProvider):
             FLASHCARD_SYSTEM_PROMPT: _CARDS_OUTPUT,
             QUIZ_SYSTEM_PROMPT: _QUIZ_OUTPUT,
             GRADING_SYSTEM_PROMPT: "<score>0.8</score><feedback>Names the key idea.</feedback>",
+            REVIEW_SYSTEM_PROMPT: _REVIEW_OUTPUT,
         }
         if system_prompt in responses:
             self.call_log.append({"system": system_prompt, "user": user_prompt})
@@ -303,3 +309,112 @@ class TestAIStudyFlow:
         assert final["content"].startswith('Created deck "viterbi flashcards" with 2 cards.')
         decks = (await e2e_client.get(f"/api/classes/{ingested_class}/decks")).json()
         assert [d["generation_method"] for d in decks] == ["llm"]
+
+
+def _chat(class_id: str, content: str) -> list[dict]:
+    with (
+        TestClient(app) as client,
+        client.websocket_connect(f"/api/classes/{class_id}/chat") as ws,
+    ):
+        ws.send_json({"type": "message", "content": content})
+        messages = []
+        for _ in range(500):
+            messages.append(ws.receive_json())
+            if messages[-1]["type"] in ("complete", "error"):
+                return messages
+    raise AssertionError("no complete or error frame")
+
+
+def _wrong(answer: dict) -> dict:
+    if "choice" in answer:
+        return {"choice": answer["choice"] + 1 if answer["choice"] == 0 else 0}
+    if "value" in answer:
+        return {"value": not answer["value"]}
+    if "pairs" in answer:
+        return {"pairs": list(reversed(answer["pairs"]))}
+    return {"text": "definitely not it"}
+
+
+class TestMistakeReview:
+    async def test_review_quiz_tutors_only_the_mistake(
+        self,
+        e2e_client: AsyncClient,
+        ingested_class: str,
+        e2e_session_factory: async_sessionmaker[AsyncSession],
+        mock_llm: MockLLMProvider,
+    ) -> None:
+        base = f"/api/classes/{ingested_class}"
+        quiz = (
+            await e2e_client.post(
+                f"{base}/quizzes/generate",
+                json={"count": 3, "question_types": ["mcq", "tf", "fill"], "seed": 2},
+            )
+        ).json()
+        questions = (await e2e_client.get(f"{base}/quizzes/{quiz['id']}")).json()["questions"]
+        answers = await _answers(e2e_session_factory, quiz["id"])
+        missed = questions[0]
+        answers[missed["id"]] = _wrong(answers[missed["id"]])
+        attempt = (
+            await e2e_client.post(
+                f"{base}/quizzes/{quiz['id']}/attempts", json={"answers": answers}
+            )
+        ).json()
+        assert attempt["score"] < attempt["max_score"]
+
+        final = _chat(ingested_class, f"/review-quiz {attempt['id']}")[-1]
+
+        assert final["type"] == "complete", final
+        [review_call] = [c for c in mock_llm.call_log if c["system"] == REVIEW_SYSTEM_PROMPT]
+        assert missed["prompt"] in review_call["user"]
+        for other in questions[1:]:
+            assert other["prompt"] not in review_call["user"]
+        history = (await e2e_client.get(f"{base}/chat/history")).json()
+        reply = next(m for m in history if m["id"] == final["message_id"])
+        assert reply["command"] == "review-quiz"
+        assert reply["content"].strip() == _REVIEW_OUTPUT
+
+    async def test_review_quiz_of_another_class_is_not_found(
+        self, e2e_client: AsyncClient, ingested_class: str
+    ) -> None:
+        final = _chat(ingested_class, f"/review-quiz {uuid.uuid4()}")[-1]
+
+        assert final["type"] == "error"
+        assert final["code"] == "NOT_FOUND"
+
+    async def test_ask_never_sees_quiz_answers(
+        self,
+        e2e_client: AsyncClient,
+        ingested_class: str,
+        e2e_session_factory: async_sessionmaker[AsyncSession],
+        mock_llm: MockLLMProvider,
+    ) -> None:
+        """A quiz in progress has no attempt yet; its answer key must stay out of /ask."""
+        secret = "Zanzibar-Quokka-42"
+        async with e2e_session_factory() as session:
+            quiz = Quiz(
+                class_id=uuid.UUID(ingested_class),
+                name="Viterbi quiz",
+                generation_method=StudyMethod.HEURISTIC,
+            )
+            session.add(quiz)
+            await session.flush()
+            session.add(
+                QuizQuestion(
+                    quiz_id=quiz.id,
+                    position=0,
+                    question_type=QuestionType.FILL,
+                    prompt="Viterbi finds the most probable _____.",
+                    answer_json={"accepted": [secret]},
+                    explanation=f"The answer is {secret}.",
+                    page_hashes={VITERBI: "x"},
+                )
+            )
+            await session.commit()
+
+        final = _chat(ingested_class, "What does the Viterbi algorithm find?")[-1]
+
+        assert final["type"] == "complete", final
+        assert VITERBI in {c["path"] for c in final["citations"]}
+        ask_calls = [c for c in mock_llm.call_log if c["system"] == ASK_SYSTEM_PROMPT]
+        assert ask_calls
+        assert all(secret not in c["user"] for c in ask_calls)

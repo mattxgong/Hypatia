@@ -35,8 +35,16 @@ final chatConnectionProvider = Provider<void>((ref) {
 
 final chatInputProvider = StateProvider<String>((ref) => '');
 
+/// Each Class's unsent chat text (keyed by Class ID, '' with none selected).
+/// Kept outside the input widget so it survives the chat panel collapsing,
+/// a layout change or a window resize.
+final chatDraftProvider = StateProvider.family<String, String>((ref, _) => '');
+
 /// Bumped to move keyboard focus to the chat input without changing its text.
 final chatInputFocusRequestProvider = StateProvider<int>((ref) => 0);
+
+/// Bumped to show the chat panel, e.g. after sending a message from elsewhere.
+final chatRevealRequestProvider = StateProvider<int>((ref) => 0);
 
 /// The long-running operation (/rebuild, /flashcards, ...) a Class's chat is
 /// following, if any; Stop cancels it.

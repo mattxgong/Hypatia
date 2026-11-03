@@ -10,7 +10,6 @@ class HypatiaAboutButton extends StatelessWidget {
     return IconButton(
       icon: const Icon(Icons.info_outline, size: 20),
       tooltip: 'About Hypatia',
-      visualDensity: VisualDensity.compact,
       onPressed: () => showHypatiaAboutDialog(context),
     );
   }

@@ -2,10 +2,11 @@
 # Upstream: https://github.com/foresightmobile/flutter_markdown_plus
 # Hypatia patch (search "Hypatia patch" in lib/src/builder.dart): paragraphs
 # containing inline widgets (e.g. TeX math) use a minimum line height instead of
-# a forced one, so tall inline math no longer overlaps neighbouring lines.
-# To upgrade: copy the new lib/ over this one and re-apply that patch.
+# a forced one, so tall inline math no longer overlaps neighbouring lines; and
+# tables with a MinColumnWidth scroll sideways like fixed and intrinsic ones.
+# To upgrade: copy the new lib/ over this one and re-apply those patches.
 name: flutter_markdown_plus
-description: A Markdown renderer for Flutter (vendored copy with a Hypatia patch).
+description: A Markdown renderer for Flutter (vendored copy with Hypatia patches).
 version: 1.0.12
 publish_to: none
 
