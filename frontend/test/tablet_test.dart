@@ -183,17 +183,13 @@ void main() {
     }, variant: windows);
   });
 
-  testWidgets(
-    'an iPad keyboard uses Cmd for shortcuts',
-    (tester) async {
-      await pumpHome(tester, _portrait);
+  testWidgets('an iPad keyboard uses Cmd for shortcuts', (tester) async {
+    await pumpHome(tester, _portrait);
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-      await tester.pumpAndSettle();
-      expect(container.read(searchOpenProvider), isTrue);
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
-  );
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(container.read(searchOpenProvider), isTrue);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }

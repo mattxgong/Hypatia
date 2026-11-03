@@ -151,23 +151,19 @@ void main() {
     expect(tester.getSize(entropy).height, greaterThanOrEqualTo(48));
   });
 
-  testWidgets(
-    'list rows stay compact on desktop',
-    (tester) async {
-      setSize(tester, const Size(1280, 800));
-      await pump(
-        tester,
-        const Scaffold(body: WikiTree(content: WikiTreeContent.pages)),
-      );
+  testWidgets('list rows stay compact on desktop', (tester) async {
+    setSize(tester, const Size(1280, 800));
+    await pump(
+      tester,
+      const Scaffold(body: WikiTree(content: WikiTreeContent.pages)),
+    );
 
-      final entropy = find.ancestor(
-        of: find.text('Entropy'),
-        matching: find.byType(ListTile),
-      );
-      expect(tester.getSize(entropy).height, lessThan(48));
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.windows),
-  );
+    final entropy = find.ancestor(
+      of: find.text('Entropy'),
+      matching: find.byType(ListTile),
+    );
+    expect(tester.getSize(entropy).height, lessThan(48));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('a long-pressed source file opens a bottom sheet on a phone', (
     tester,
